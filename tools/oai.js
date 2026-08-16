@@ -48,12 +48,16 @@ function agent() {
 }
 
 // Minimal proxy-aware HTTPS POST/GET returning {status, body}.
-function request(method, url, { headers = {}, body = null } = {}) {
+// `key` overrides the OpenAI key, so other providers (Meshy) reuse this transport without
+// duplicating the proxy/CA handling. It is still never logged and never an environment variable.
+function request(method, url, { headers = {}, body = null, key = null, noAuth = false } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const { proxy, opts } = agent();
-    const key = readKey();
-    const hdrs = Object.assign({ Authorization: 'Bearer ' + key }, headers);
+    // noAuth is for signed asset URLs (model/texture downloads): sending a bearer token to a
+    // third-party CDN leaks it for no reason.
+    const hdrs = noAuth ? Object.assign({}, headers)
+      : Object.assign({ Authorization: 'Bearer ' + (key || readKey()) }, headers);
 
     const done = (res, chunks) => resolve({ status: res.statusCode, body: Buffer.concat(chunks) });
 

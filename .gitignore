@@ -17,3 +17,7 @@ assets/raw/
 
 # Claude Code local permission cache — can capture command strings verbatim.
 .claude/settings.local.json
+
+# npm
+node_modules/
+package-lock.json

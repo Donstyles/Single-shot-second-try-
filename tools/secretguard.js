@@ -14,6 +14,7 @@ const PATTERNS = [
   [/sk-proj-[A-Za-z0-9_-]{20,}/, 'OpenAI project key'],
   [/sk-[A-Za-z0-9]{32,}/, 'OpenAI legacy key'],
   [/sk-ant-[A-Za-z0-9_-]{20,}/, 'Anthropic key'],
+  [/msy_[A-Za-z0-9]{24,}/, 'Meshy key'],
   [/gh[pousr]_[A-Za-z0-9]{30,}/, 'GitHub token'],
   [/AKIA[0-9A-Z]{16}/, 'AWS access key id'],
   [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/, 'private key block'],

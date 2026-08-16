@@ -1,0 +1,26 @@
+{
+  "name": "single-shot-second-try-",
+  "version": "1.0.0",
+  "description": "",
+  "main": "build.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Donstyles/Single-shot-second-try-.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Donstyles/Single-shot-second-try-/issues"
+  },
+  "homepage": "https://github.com/Donstyles/Single-shot-second-try-#readme",
+  "dependencies": {
+    "three": "^0.169.0"
+  }
+}

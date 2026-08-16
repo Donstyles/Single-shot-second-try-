@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>foundry</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<script type="importmap">
+{ "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ============================================================================================
+// THE LIGHT RIG. This is the single most important thing in the foundry.
+//
+// Two hundred sprites look like they came from one 1998 art department because the rig is
+// IDENTICAL for every one of them — not because the generator was consistent. Nothing here is
+// per-creature, nothing here is randomised, and nothing here should be tuned for an individual
+// model. Change it once and every asset must be re-rendered together.
+//
+// Hard warm key from the upper LEFT, matching the direction every generated texture is prompted
+// for. A sprite lit from the right fights every other thing in the frame.
+// ============================================================================================
+const RIG = {
+  key:  { colour: 0xfff0d8, intensity: 3.1, dir: [-1.00, 1.15, 0.75] },
+  fill: { colour: 0x8ea6c6, intensity: 0.50, dir: [1.10, -0.25, 0.55] },
+  rim:  { colour: 0xcfe0ff, intensity: 1.05, dir: [0.15, 0.85, -1.25] },
+  ambient: { colour: 0x3a4152, intensity: 0.95 },
+  // Sprites are seen from slightly above eye level, the way a party standing on the ground sees
+  // something a little shorter than itself. Flat-on renders read as paper dolls.
+  tiltDeg: 13,
+};
+
+let renderer = null;
+
+function makeRenderer(size) {
+  if (renderer) { renderer.dispose(); renderer.forceContextLoss(); }
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  document.body.appendChild(canvas);
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: false,          // hard pixels. Antialiasing fights palette quantisation and
+                               // produces a halo of half-tone indices around every silhouette.
+    preserveDrawingBuffer: true,
+  });
+  renderer.setPixelRatio(1);
+  renderer.setSize(size, size, false);
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.shadowMap.enabled = false;
+  return renderer;
+}
+
+function buildScene(model) {
+  const scene = new THREE.Scene();
+
+  const add = (spec) => {
+    const l = new THREE.DirectionalLight(spec.colour, spec.intensity);
+    l.position.set(spec.dir[0], spec.dir[1], spec.dir[2]).normalize().multiplyScalar(10);
+    scene.add(l);
+    return l;
+  };
+  add(RIG.key); add(RIG.fill); add(RIG.rim);
+  scene.add(new THREE.AmbientLight(RIG.ambient.colour, RIG.ambient.intensity));
+
+  const pivot = new THREE.Group();
+  pivot.add(model);
+  scene.add(pivot);
+  return { scene, pivot };
+}
+
+// Normalise the model: centre it on the origin in X/Z, sit it on y=0, and scale so its height is
+// exactly 1. Every creature then renders at a consistent size and the engine scales by its real
+// world height. Without this, one model arrives 400 units tall and another 0.02.
+function normalise(model) {
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const centre = box.getCenter(new THREE.Vector3());
+  const h = Math.max(size.y, 1e-6);
+  model.position.sub(centre);
+  model.position.y += size.y / 2;      // feet on the ground plane
+  const wrap = new THREE.Group();
+  wrap.add(model);
+  wrap.scale.setScalar(1 / h);
+  return { wrap, aspect: Math.max(size.x, size.z) / h };
+}
+
+window.FOUNDRY = {
+  async render(glbBase64, opts) {
+    const size = opts.size || 192;
+    const facings = opts.facings || 5;
+    const r = makeRenderer(size);
+
+    // Decode the GLB in-page. Passing bytes beats a file:// fetch, which Chromium blocks.
+    const bin = Uint8Array.from(atob(glbBase64), (c) => c.charCodeAt(0));
+    const loader = new GLTFLoader();
+    const gltf = await new Promise((res, rej) =>
+      loader.parse(bin.buffer, '', res, (e) => rej(new Error('GLTF parse failed: ' + e.message))));
+
+    const { wrap, aspect } = normalise(gltf.scene);
+    const { scene, pivot } = buildScene(wrap);
+
+    // Orthographic, because a perspective sprite has a vanishing point baked in that fights the
+    // engine's own projection when the same sprite is drawn at ten different distances.
+    const half = 0.62;
+    const cam = new THREE.OrthographicCamera(-half, half, half, -half, 0.01, 100);
+    const tilt = RIG.tiltDeg * Math.PI / 180;
+    cam.position.set(0, 0.5 + Math.sin(tilt) * 2.2, Math.cos(tilt) * 2.2);
+    cam.lookAt(0, 0.5, 0);
+
+    const out = [];
+    for (let i = 0; i < facings; i++) {
+      // Facings sweep 0..180 only. The other three eighths are MIRRORED at bake time, which
+      // halves the payload and is exactly what 1998 sprite sheets did.
+      const ang = (i / (facings - 1)) * Math.PI;
+      pivot.rotation.y = ang;
+      r.render(scene, cam);
+
+      const buf = new Uint8Array(size * size * 4);
+      const gl = r.getContext();
+      gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+
+      // readPixels is bottom-up; flip so downstream code deals in image order.
+      const flipped = new Uint8Array(size * size * 4);
+      for (let y = 0; y < size; y++) {
+        flipped.set(buf.subarray((size - 1 - y) * size * 4, (size - y) * size * 4), y * size * 4);
+      }
+      out.push({ facing: i, angle: ang, data: Array.from(flipped) });
+    }
+    return { size, aspect, frames: out };
+  },
+};
+
+window.__foundryReady = true;
+</script>
+</body>
+</html>

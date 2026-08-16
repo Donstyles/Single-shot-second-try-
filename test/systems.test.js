@@ -670,4 +670,54 @@ T.suite('items: shops');
   T.ok(gen.every((s) => !Items.ITEMS[s.id].quest), 'shops never sell quest items');
 }
 
+// ---------------------------------------------------------------- asset encoding
+T.suite('encoding: indexed png');
+{
+  const png = require('../tools/png.js');
+  const r = rng();
+
+  // A sprite that does not survive encode -> decode byte-identically is a corrupted asset, and
+  // the corruption would surface much later as "that one looks wrong", three stages from its cause.
+  const cases = [
+    { w: 1, h: 1 },
+    { w: 96, h: 96 },
+    { w: 37, h: 91 },     // odd dimensions: catches stride/filter mistakes
+    { w: 256, h: 3 },
+  ];
+  let allSame = true, sizes = [];
+  for (const c of cases) {
+    const data = new Uint8Array(c.w * c.h);
+    for (let i = 0; i < data.length; i++) data[i] = r.int(256);
+    const buf = png.encodeIndexed(data, c.w, c.h, Core.PAL, 0);
+    const back = png.decodeIndexed(buf);
+    if (back.w !== c.w || back.h !== c.h) allSame = false;
+    for (let i = 0; i < data.length; i++) if (back.indices[i] !== data[i]) { allSame = false; break; }
+    sizes.push(c.w + 'x' + c.h);
+  }
+  T.ok(allSame, 'indexed PNG round-trips byte-identically at ' + sizes.join(', '));
+
+  // Index 0 must be the transparent entry in the encoded tRNS chunk, and only index 0.
+  const buf = png.encodeIndexed(new Uint8Array([0, 1, 2, 3]), 4, 1, Core.PAL, 0);
+  const s = buf.toString('latin1');
+  const ti = s.indexOf('tRNS');
+  T.ok(ti > 0, 'a tRNS chunk is written');
+  T.eq(buf[ti + 4], 0, 'palette index 0 has alpha 0');
+
+  // The size claim this project depends on: real sprite data must compress far better than raw.
+  // Sprite-shaped data is large flat regions, not noise, so build a representative frame.
+  const w = 96, h = 96;
+  const sprite = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = x - 48, dy = y - 48;
+      sprite[y * w + x] = (dx * dx + dy * dy < 1600) ? Core.idx(6, 4 + ((x >> 3) & 7)) : 0;
+    }
+  }
+  const encoded = png.encodeIndexed(sprite, w, h, Core.PAL, 0).length;
+  const rleLen = png.rle(sprite).length;
+  T.ok(encoded < w * h / 3,
+    'indexed PNG beats raw indices by >3x on sprite-shaped data (' + encoded + 'B vs ' + (w * h) + 'B)');
+  T.ok(encoded < rleLen, 'and beats run-length encoding (' + encoded + 'B vs ' + rleLen + 'B)');
+}
+
 T.report('systems');
