@@ -1,0 +1,23 @@
+{
+  "entries": [
+    {
+      "n": 1,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "probe goblin (backfilled)"
+    },
+    {
+      "n": 2,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "probe goblin (backfilled)"
+    },
+    {
+      "n": 3,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "wall_anchor (backfilled)"
+    }
+  ],
+  "spent": 24
+}

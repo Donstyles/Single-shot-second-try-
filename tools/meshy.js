@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const oai = require('./oai.js');
+const spend = require('./spend.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const RAW = path.join(ROOT, 'assets', 'raw');
@@ -55,8 +56,13 @@ async function api(method, endpoint, body) {
 
 const balance = () => api('GET', '/v1/balance').then((j) => j.balance);
 
+// Measured credit costs. Used to RESERVE before spending; the ledger is then corrected with the
+// actual balance delta, because an estimated ledger drifts from reality and stops being a control.
+const COST = { preview: 5, refine: 10, 'nano-banana': 3, 'nano-banana-2': 6, 'nano-banana-pro': 9, 'gpt-image-2': 9 };
+
 // Start a preview (geometry-only) task. Returns a task id.
 async function createPreview(prompt, opts = {}) {
+  spend.reserve(COST.preview, 'mesh:preview');
   const body = Object.assign({
     mode: 'preview',
     prompt,
@@ -67,11 +73,13 @@ async function createPreview(prompt, opts = {}) {
     symmetry_mode: 'auto',
   }, opts);
   const j = await api('POST', '/v2/text-to-3d', body);
+  spend.record(COST.preview, 'mesh:preview', prompt.slice(0, 40));
   return j.result;
 }
 
 // Texture an existing preview. Returns a task id.
 async function createRefine(previewId, opts = {}) {
+  spend.reserve(COST.refine, 'mesh:refine');
   const body = Object.assign({
     mode: 'refine',
     preview_task_id: previewId,
@@ -79,6 +87,7 @@ async function createRefine(previewId, opts = {}) {
     texture_resolution: '2k',
   }, opts);
   const j = await api('POST', '/v2/text-to-3d', body);
+  spend.record(COST.refine, 'mesh:refine', previewId);
   return j.result;
 }
 
@@ -104,6 +113,8 @@ const STYLE_PREAMBLE =
   'no text, no watermark, no signature, no border, flat even background for masking. ';
 
 async function createImage(prompt, opts = {}) {
+  const model = (opts.body && opts.body.ai_model) || 'gpt-image-2';
+  spend.reserve(COST[model] || 9, 'image:' + model);
   const body = Object.assign({
     ai_model: 'gpt-image-2',
     prompt: (opts.raw ? '' : STYLE_PREAMBLE) + prompt,
@@ -111,6 +122,7 @@ async function createImage(prompt, opts = {}) {
   }, opts.body || {});
   delete body.raw;
   const j = await api('POST', '/v1/text-to-image', body);
+  spend.record(COST[model] || 9, 'image:' + model, prompt.slice(0, 40));
   return j.result || j.id;
 }
 
