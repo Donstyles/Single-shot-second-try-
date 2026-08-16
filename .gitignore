@@ -1,0 +1,19 @@
+node_modules/
+
+# Secrets — never, under any circumstances, in this repo.
+# The live key lives in the session scratchpad at chmod 600, outside this tree.
+*.key
+*.pem
+.env
+.env.*
+secrets/
+**/openai.key
+**/*apikey*
+**/*api_key*
+
+# Image-generation raw output is a BUILD INPUT, not an asset.
+# Only palette-quantised, reviewed, committed data enters the build.
+assets/raw/
+
+# Claude Code local permission cache — can capture command strings verbatim.
+.claude/settings.local.json
