@@ -84,6 +84,69 @@ async function createRefine(previewId, opts = {}) {
 
 const getTask = (id) => api('GET', '/v2/text-to-3d/' + id);
 
+// ---------------------------------------------------------------- text to image
+// Meshy proxies image generation, gpt-image-2 included. This is the OTHER half of the art
+// pipeline — the flat single-view surfaces a primitive-built mesh cannot do well: wall and floor
+// textures, portraits, sky bands, UI ornament, item icons.
+//
+// Measured credit costs: nano-banana 3, nano-banana-2 6, nano-banana-pro 9, gpt-image-2 9.
+const IMAGE_MODELS = ['nano-banana', 'nano-banana-2', 'nano-banana-pro', 'gpt-image-2'];
+
+// The fixed preamble every generated asset carries. Style consistency across ~150 assets comes
+// from this being IDENTICAL every time, not from describing the style afresh per asset.
+// NEUTRAL, not warm. The engine applies time of day by ramp arithmetic at draw time, so an asset
+// with a colour cast baked in is wrong at every hour except the one it was generated for. This
+// must stay in step with the foundry's light rig (tools/foundry/foundry.html) or generated
+// textures and rendered sprites will disagree in the same frame.
+const STYLE_PREAMBLE =
+  '1998 pre-rendered CRPG game asset, 256-colour palette era, neutral daylight with no colour ' +
+  'cast, directional key from the upper-left, no modern shading, no ambient occlusion halo, ' +
+  'no text, no watermark, no signature, no border, flat even background for masking. ';
+
+async function createImage(prompt, opts = {}) {
+  const body = Object.assign({
+    ai_model: 'gpt-image-2',
+    prompt: (opts.raw ? '' : STYLE_PREAMBLE) + prompt,
+    aspect_ratio: '1:1',
+  }, opts.body || {});
+  delete body.raw;
+  const j = await api('POST', '/v1/text-to-image', body);
+  return j.result || j.id;
+}
+
+const getImageTask = (id) => api('GET', '/v1/text-to-image/' + id);
+
+async function waitForImage(id, { timeoutMs = 6 * 60 * 1000, intervalMs = 4000, onTick } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const t = await getImageTask(id);
+    if (onTick) onTick(t);
+    if (t.status === 'SUCCEEDED') return t;
+    if (t.status === 'FAILED' || t.status === 'EXPIRED' || t.status === 'CANCELED') {
+      throw new Error('Meshy image task ' + id + ' ended ' + t.status + ': ' +
+        JSON.stringify(t.task_error || {}).slice(0, 300));
+    }
+    if (Date.now() - t0 > timeoutMs) throw new Error('Meshy image task ' + id + ' timed out');
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+// Generate one image and return the raw bytes. Raw RGB is a BUILD INPUT, not an asset: it is
+// downsampled and quantised through the palette before anything enters the build.
+async function image(prompt, opts = {}) {
+  const id = await createImage(prompt, opts);
+  const t = await waitForImage(id, opts);
+  const urls = t.image_urls || [];
+  if (!urls.length) throw new Error('image task ' + id + ' succeeded with no image_urls');
+  const bufs = [];
+  for (const u of urls) {
+    const r = await oai.request('GET', u, { noAuth: true });
+    if (r.status !== 200) throw new Error('image download ' + r.status);
+    bufs.push(r.body);
+  }
+  return { id, images: bufs, credits: t.consumed_credits, task: t };
+}
+
 // Poll to completion. Fails loudly on FAILED/EXPIRED rather than returning a half-built task —
 // a silent partial success here would put a broken mesh into the foundry and the defect would
 // surface as "that sprite looks wrong" three stages later.
@@ -112,7 +175,10 @@ async function download(url, dest) {
   return r.body.length;
 }
 
-module.exports = { readKey, balance, createPreview, createRefine, getTask, waitFor, download, RAW };
+module.exports = {
+  readKey, balance, createPreview, createRefine, getTask, waitFor, download, RAW,
+  IMAGE_MODELS, STYLE_PREAMBLE, createImage, getImageTask, waitForImage, image,
+};
 
 // --------------------------------------------------------------------------- CLI
 async function main() {
@@ -177,7 +243,37 @@ async function main() {
     return;
   }
 
-  console.log('usage: node tools/meshy.js balance | probe');
+  if (cmd === 'image') {
+    // Prove the image path and MEASURE the cost, rather than trusting the docs table.
+    const model = process.argv[3] || 'gpt-image-2';
+    const name = process.argv[4] || 'wall_anchor';
+    const prompt = process.argv[5] ||
+      'Seamless tiling stone wall texture for a fantasy dungeon. Weathered grey granite ashlar ' +
+      'blocks in regular courses, deep mortar joints, chipped edges, faint moss in the recesses. ' +
+      'Orthographic flat-on view, evenly lit, no perspective, no vignette, no shadows cast onto ' +
+      'the surface from outside it.';
+
+    const before = await balance();
+    console.log('model: ' + model + '   balance before: ' + before);
+    process.stdout.write('generating ... ');
+    const t0 = Date.now();
+    const r = await image(prompt, { body: { ai_model: model, aspect_ratio: '1:1' } });
+    const after = await balance();
+
+    fs.mkdirSync(path.join(RAW, 'img'), { recursive: true });
+    r.images.forEach((buf, i) => {
+      const dest = path.join(RAW, 'img', name + (r.images.length > 1 ? '_' + i : '') + '.png');
+      fs.writeFileSync(dest, buf);
+      console.log('  -> assets/raw/img/' + path.basename(dest) + '  ' + (buf.length / 1024).toFixed(0) + ' KB');
+    });
+    console.log('  time            : ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+    console.log('  consumed_credits: ' + r.credits);
+    console.log('  measured cost   : ' + (before - after) + ' credits');
+    console.log('  balance after   : ' + after);
+    return;
+  }
+
+  console.log('usage: node tools/meshy.js balance | probe | image [model] [name] [prompt]');
 }
 
 if (require.main === module) {

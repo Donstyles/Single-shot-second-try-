@@ -217,7 +217,7 @@ async function bake(creatureId, glbPath, opts = {}) {
     const b64 = fs.readFileSync(glbPath).toString('base64');
     const result = await page.evaluate(
       ([data, o]) => window.FOUNDRY.render(data, o),
-      [b64, { size: RENDER_SIZE, facings: FACINGS }]
+      [b64, { size: RENDER_SIZE, facings: opts.facings || FACINGS, rig: opts.rig || null }]
     );
 
     if (errors.length) throw new Error('render page errors: ' + errors.join(' | '));

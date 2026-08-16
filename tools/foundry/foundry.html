@@ -25,11 +25,27 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // Hard warm key from the upper LEFT, matching the direction every generated texture is prompted
 // for. A sprite lit from the right fights every other thing in the frame.
 // ============================================================================================
+// THE RIG IS NEUTRAL ON PURPOSE, and that was a correction paid for twice.
+//
+// 1. Exposure is a hue control. The first version ran the key at 3.1, clipping all three channels
+//    on any lit surface: mid-green goblin skin saturated to rgb(255,255,210), its hue collapsed,
+//    and 38.7% of its pixels quantised into the warm-stone ramp against 3.1% into grass. Total
+//    incident light on a key-facing surface must stay near 1.0 and roll off rather than clip.
+//
+// 2. A WARM key bakes a time of day into the asset. Sweeping the spectrum at fixed exposure moved
+//    green from 14.6% (warm key) to 22.3% (cool key) and warm ramps from 49.5% down to 14.3%.
+//    Baking warmth in is architecturally wrong here: the engine already applies light by ramp
+//    arithmetic at draw time, so a sprite baked for noon is wrong at midnight and in a torchlit
+//    crypt. Bake neutral; let the engine tint. Textures follow the same rule, so walls and
+//    creatures agree in every frame.
+//
+// The directional bias stays upper-left — that is about FORM, not colour, and it must match the
+// direction every generated texture is prompted for or sprites will fight their backdrop.
 const RIG = {
-  key:  { colour: 0xfff0d8, intensity: 3.1, dir: [-1.00, 1.15, 0.75] },
-  fill: { colour: 0x8ea6c6, intensity: 0.50, dir: [1.10, -0.25, 0.55] },
-  rim:  { colour: 0xcfe0ff, intensity: 1.05, dir: [0.15, 0.85, -1.25] },
-  ambient: { colour: 0x3a4152, intensity: 0.95 },
+  key:  { colour: 0xffffff, intensity: 1.50, dir: [-1.00, 1.15, 0.75] },
+  fill: { colour: 0x8ea6c6, intensity: 0.35, dir: [1.10, -0.25, 0.55] },
+  rim:  { colour: 0xcfe0ff, intensity: 0.50, dir: [0.15, 0.85, -1.25] },
+  ambient: { colour: 0x44566e, intensity: 1.00 },
   // Sprites are seen from slightly above eye level, the way a party standing on the ground sees
   // something a little shorter than itself. Flat-on renders read as paper dolls.
   tiltDeg: 13,
@@ -96,6 +112,11 @@ window.FOUNDRY = {
   async render(glbBase64, opts) {
     const size = opts.size || 192;
     const facings = opts.facings || 5;
+    // The rig is overridable ONLY so it can be swept and measured. Once chosen it is frozen for
+    // every asset: a per-creature rig is exactly the drift this whole design exists to prevent.
+    if (opts.rig) {
+      for (const k of Object.keys(opts.rig)) Object.assign(RIG[k], opts.rig[k]);
+    }
     const r = makeRenderer(size);
 
     // Decode the GLB in-page. Passing bytes beats a file:// fetch, which Chromium blocks.
