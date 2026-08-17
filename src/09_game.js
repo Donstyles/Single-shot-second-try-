@@ -101,10 +101,19 @@ const Game = (() => {
     const members = s.map((m, i) => {
       const ch = Rules.makeCharacter(m, i);
       ch.spells = {};
-      // Starting spells: tier 1 of every school the class can actually use.
+      // Starting spells: tiers 1-3 of every school the class is TRAINED in, plus a guaranteed
+      // heal for divine casters and a guaranteed attack cantrip for arcane ones. A party that
+      // cannot heal or hurt anything at level 1 is not a party.
       for (const id of Spellcraft.SPELL_IDS) {
         const sp = Spellcraft.SPELLS[id];
-        if (sp.tier === 1 && Rules.classCap(ch.cls, sp.school) > 0 && ch.skills[sp.school]) ch.spells[id] = true;
+        if (sp.tier <= 3 && Rules.classCap(ch.cls, sp.school) > 0 && ch.skills[sp.school]) ch.spells[id] = true;
+      }
+      for (const guaranteed of ['first_aid', 'fire_bolt', 'mind_blast', 'light_bolt', 'cure_weak', 'torch_light']) {
+        const sp = Spellcraft.SPELLS[guaranteed];
+        if (Rules.classCap(ch.cls, sp.school) > 0) {
+          if (!ch.skills[sp.school]) ch.skills[sp.school] = { lvl: 1, mastery: Rules.MASTERY.NOVICE };
+          ch.spells[guaranteed] = true;
+        }
       }
       return ch;
     });
@@ -432,6 +441,40 @@ const Game = (() => {
       Log.push('The ' + def.name + ' misses ' + victim.name + '.', 'info');
     }
     e.recovery = def.speed * 8;
+  }
+
+  // Defeat is a terminal event with a cost, the way MM6 handled it: you wake at the temple,
+  // poorer, a day later. It must NEVER be a state the player can walk around in, and it must never
+  // be something a save can silently capture.
+  function checkDefeat() {
+    if (!state.party || state.defeated) return false;
+    const anyUp = state.party.members.some((c) => Rules.canAct(c));
+    if (anyUp) return false;
+    state.defeated = true;
+    state.screen = 'defeat';
+    return true;
+  }
+
+  function reviveAtTemple() {
+    const p = state.party;
+    const toll = Math.min(p.gold, Math.max(0, Math.round(p.gold * 0.4)));
+    p.gold -= toll;
+    for (const c of p.members) {
+      c.cond.dead = false; c.cond.unconscious = false; c.cond.asleep = false;
+      c.cond.afraid = false; c.cond.weak = false;
+      c.hp = Math.max(1, Math.round(Rules.maxHP(c) * 0.5));
+      c.sp = Math.round(Rules.maxSP(c) * 0.5);
+    }
+    Clock.skip(1440);
+    const home = state.world.maps.harrowgate;
+    enterMap('harrowgate');
+    p.x = home.town.x + 0.5; p.y = home.town.y + 3.5;
+    p.z = World.walkHeight(state.map, p.x, p.y);
+    p.ang = -Math.PI / 2;
+    state.defeated = false;
+    state.screen = null;
+    Log.push('You wake in the Harrowgate temple. The priests took ' + toll + ' gold.', 'sys');
+    return true;
   }
 
   // ---------------------------------------------------------------- interaction
@@ -1034,7 +1077,8 @@ const Game = (() => {
   }
 
   function openScreen(name) {
-    if (name === 'menu') { save(0); Log.push('Saved.', 'sys'); return null; }
+    // MNU used to be a silent one-slot save. A player looking for a menu after a party wipe
+    // overwrote their only save with the corpse and lost the run.
     state.screen = state.screen === name ? null : name;
     return state.screen;
   }
@@ -1059,9 +1103,15 @@ const Game = (() => {
       case 'btn': openScreen(r.data); break;
       case 'act': {
         // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
-        if (state.combat.active && nearestEnemy(reachOf(state.party.members[state.active]))) {
-          const r = partyAttack();
-          if (!r.ok) Log.push(r.why, 'info');
+        if (state.combat.active && nearestEnemy(18)) {
+          // Commit the WHOLE party, the way MM6's Attack did. Swinging one character at a time
+          // while the other three stand idle is not a combat system.
+          let any = false, why = null;
+          for (let i = 0; i < state.party.members.length; i++) {
+            const r = partyAttack(i);
+            if (r.ok) any = true; else if (!why) why = r.why;
+          }
+          if (!any && why) Log.push(why, 'info');
         } else interact();
         break;
       }
@@ -1072,20 +1122,29 @@ const Game = (() => {
       case 'doequip': equipFromPack(r.data); break;
       case 'drop': dropFromPack(r.data); break;
       case 'equip': unequip(r.data); break;
-      case 'school': state.bookSchool = r.data; break;
+      case 'school': state.bookSchool = r.data; state.bookPage = 0; break;
+      case 'bookpage': state.bookPage = clamp((state.bookPage || 0) + r.data, 0, 2); break;
       case 'buy': buy(r.data); break;
-      case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } break;
-      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } break;
-      case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; } break;
+      case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } else Log.push('Not enough gold — the temple asks ' + r.data + ', you have ' + state.party.gold + '.', 'info'); break;
+      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } else Log.push('Not enough gold for a bed (' + r.data + ').', 'info'); break;
+      case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; Log.push('Bought rations.', 'good'); } else Log.push('Not enough gold for rations.', 'info'); break;
       case 'train': doTrain(r.data); break;
       case 'skillup': doSkillUp(r.data); break;
       case 'acceptquest': acceptQuest(r.data); break;
       case 'turnin': turnInQuest(r.data); closeScreens(); break;
       case 'dorest': doRest(); break;
       case 'newgame': startCreation(); break;
+      case 'saveslot': if (save(r.data)) Log.push('Saved to slot ' + (r.data + 1) + '.', 'sys'); else Log.push('Could not save.', 'hit'); break;
+      case 'loadslot': if (load(r.data)) Log.push('Loaded slot ' + (r.data + 1) + '.', 'sys'); else Log.push('Slot ' + (r.data + 1) + ' is empty.', 'info'); break;
+      case 'revive': reviveAtTemple(); break;
+      case 'usepack': useFromPack(r.data); break;
+      case 'titlescreen': state.screen = 'title'; break;
       case 'continue': if (!load(0)) { startCreation(); } else state.screen = null; break;
       case 'cslot': state.createSlot = r.data; break;
       case 'cclass': state.createSpec[state.createSlot].cls = r.data; break;
+      case 'cname': cycleName(state.createSlot, r.data); break;
+      case 'csex': cycleSex(state.createSlot); break;
+      case 'cport': cyclePortrait(state.createSlot, r.data); break;
       case 'statup': bumpStat(r.data, 1); break;
       case 'statdn': bumpStat(r.data, -1); break;
       case 'startgame': newParty(state.createSpec); state.screen = null; break;
@@ -1120,6 +1179,41 @@ const Game = (() => {
     return true;
   }
 
+  // USE a consumable. This did not exist: the inventory offered EQUIP and DROP, so eight healing
+  // potions sat in the pack while the party died.
+  function useFromPack(i, who) {
+    const ch = state.party.members[who === undefined ? state.active : who];
+    const st = ch.pack[i];
+    if (!st) return false;
+    const it = Items.def(st);
+    if (!it) return false;
+
+    if (it.kind === 'food') {
+      state.party.food += it.food || 1;
+      Log.push(ch.name + ' stows rations.', 'good');
+    } else if (it.kind === 'potion') {
+      if (Rules.isDead(ch)) { Log.push(ch.name + ' cannot drink.', 'info'); return false; }
+      let did = false;
+      if (it.heal) { const h = Rules.healTo(ch, it.heal); if (h) { Log.push(ch.name + ' recovers ' + h + ' HP.', 'good'); did = true; } }
+      if (it.mana) { const before = ch.sp; ch.sp = Math.min(Rules.maxSP(ch), ch.sp + it.mana);
+        if (ch.sp > before) { Log.push(ch.name + ' recovers ' + (ch.sp - before) + ' SP.', 'good'); did = true; } }
+      if (it.cure) { for (const c of it.cure) if (ch.cond[c]) { ch.cond[c] = false; did = true; }
+        if (did) Log.push(ch.name + ' is cured.', 'good'); }
+      if (!did) { Log.push('That would do nothing right now.', 'info'); return false; }
+    } else if (it.kind === 'tool' && it.light) {
+      setBuff('light', it.light, 240);
+      Log.push(ch.name + ' lights a torch.', 'good');
+    } else {
+      Log.push('You cannot use that.', 'info');
+      return false;
+    }
+
+    st.qty = (st.qty || 1) - 1;
+    if (st.qty <= 0) ch.pack.splice(i, 1);
+    state.selectedItem = null;
+    return true;
+  }
+
   function dropFromPack(i) {
     const ch = state.party.members[state.active];
     const st = ch.pack[i];
@@ -1135,7 +1229,10 @@ const Game = (() => {
     const st = state.shopStock[i];
     if (!st) return false;
     const price = Rules.buyPrice(Items.value(st), ch);
-    if (state.party.gold < price) { Log.push('Not enough gold.', 'info'); return false; }
+    if (state.party.gold < price) {
+      Log.push('Not enough gold — ' + Items.ITEMS[st.id].name + ' costs ' + price + ', you have ' + state.party.gold + '.', 'info');
+      return false;
+    }
     state.party.gold -= price;
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
@@ -1185,10 +1282,37 @@ const Game = (() => {
     return true;
   }
 
+  const NAME_POOL = [
+    ['Alder', 'Bree', 'Cass', 'Dorn', 'Edrik', 'Fenn', 'Gwen', 'Hale'],
+    ['Isolde', 'Jarn', 'Kesta', 'Lyril', 'Maud', 'Neris', 'Orrin', 'Pell'],
+    ['Quill', 'Rowan', 'Sela', 'Tarn', 'Ulric', 'Vesta', 'Wray', 'Yarrow'],
+    ['Ansel', 'Brann', 'Corvin', 'Dara', 'Eska', 'Fyn', 'Garrick', 'Hesper'],
+  ];
+
   function startCreation() {
     state.createSpec = defaultSpec();
     state.createSlot = 0;
     state.screen = 'creation';
+  }
+
+  // Cycle the name, sex and portrait of the character being created. Creation that ignores what
+  // you chose and hands you the same four people is not character creation.
+  function cycleName(slot, dir) {
+    const spec = state.createSpec[slot];
+    const pool = NAME_POOL[slot];
+    const i = pool.indexOf(spec.name);
+    spec.name = pool[((i < 0 ? 0 : i) + (dir || 1) + pool.length) % pool.length];
+    return spec.name;
+  }
+  function cycleSex(slot) {
+    const spec = state.createSpec[slot];
+    spec.sex = spec.sex === 'f' ? 'm' : 'f';
+    return spec.sex;
+  }
+  function cyclePortrait(slot, dir) {
+    const spec = state.createSpec[slot];
+    spec.portrait = (((spec.portrait === undefined ? slot : spec.portrait) + (dir || 1)) + 12) % 12;
+    return spec.portrait;
   }
 
   function bumpStat(s, d) {
@@ -1222,6 +1346,7 @@ const Game = (() => {
     state.seen = seen;
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
+    state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
 
     state.world = World.build(7);
     state.createSpec = defaultSpec();
@@ -1249,9 +1374,13 @@ const Game = (() => {
   }
 
   function update(dt) {
-    Clock.advance(dt);
     Art.step();
+    // The clock runs only during PLAY. It ran through the title screen and character creation, so
+    // a new game could begin at 21:47 in the dark, and it ran behind every open menu, so reading
+    // an inventory cost six game hours.
     if (state.screen === 'title' || state.screen === 'creation' || !state.party) return;
+    if (!state.screen) Clock.advance(dt);
+    else return;
 
     if (!state.screen) move(dt);
 
@@ -1280,6 +1409,7 @@ const Game = (() => {
       if (e.alerted) anyAlerted = true;
     }
     state.combat.active = anyAlerted && !!nearestEnemy(AGGRO);
+    checkDefeat();
   }
 
   function render() {
@@ -1431,7 +1561,8 @@ const Game = (() => {
     },
     acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
     partyAttack, reachOf, nearestEnemy, liveEnemies,
-    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, usePortal, giveStack,
+    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
+    checkDefeat, reviveAtTemple, cycleName, cycleSex, cyclePortrait, NAME_POOL,
     buff, setBuff, SPECIALS, isUndead,
     get party() { return state.party; },
     get map() { return state.map; },

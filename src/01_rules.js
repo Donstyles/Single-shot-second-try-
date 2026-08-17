@@ -320,13 +320,13 @@ const Rules = (() => {
 
   function healCost(ch) {
     const missing = Math.max(0, maxHP(ch) - ch.hp);
-    let c = missing * 2;
+    let c = missing;
     if (ch.cond) {
-      if (ch.cond.poison) c += 60;
-      if (ch.cond.disease) c += 120;
-      if (ch.cond.curse) c += 200;
-      if (ch.cond.dead) c += 600;
-      if (ch.cond.unconscious) c += 40;
+      if (ch.cond.poison) c += 25;
+      if (ch.cond.disease) c += 50;
+      if (ch.cond.curse) c += 90;
+      if (ch.cond.dead) c += 250;
+      if (ch.cond.unconscious) c += 10;
     }
     return Math.max(0, Math.round(c));
   }

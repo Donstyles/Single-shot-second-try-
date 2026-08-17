@@ -227,7 +227,163 @@
       "op": "mesh:preview",
       "credits": 5,
       "note": "An animated skeleton warrior, bare yello"
+    },
+    {
+      "n": 39,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ed1-b88c-7f3e-b598-b44edda3dc35"
+    },
+    {
+      "n": 40,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A shambling zombie, grey rotted flesh, t"
+    },
+    {
+      "n": 41,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ed3-89eb-7321-8b23-607939756658"
+    },
+    {
+      "n": 42,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A crouching ghoul, grey hairless skin dr"
+    },
+    {
+      "n": 43,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ed5-ae13-7c8f-8d8c-68006a13fc61"
+    },
+    {
+      "n": 44,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A hooded wraith, tattered dark robes, no"
+    },
+    {
+      "n": 45,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ed7-4af1-706c-8e37-ba51c68fb579"
+    },
+    {
+      "n": 46,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A giant cave spider, eight long segmente"
+    },
+    {
+      "n": 47,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ed9-462c-70bf-8bf6-153b4d13f5e0"
+    },
+    {
+      "n": 48,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A small kobold miner, reddish scaled ski"
+    },
+    {
+      "n": 49,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00edc-4426-74e6-a4a3-eceee363f7ed"
+    },
+    {
+      "n": 50,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A kobold shaman, scaled skin, bone headd"
+    },
+    {
+      "n": 51,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ede-91fa-7559-b5c0-5c506e3dae3f"
+    },
+    {
+      "n": 52,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A hulking ogre, thick grey-brown hide, e"
+    },
+    {
+      "n": 53,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ee0-df7a-75c5-bb7e-6cd1c8b513d4"
+    },
+    {
+      "n": 54,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A gaunt marsh troll, mottled green rubbe"
+    },
+    {
+      "n": 55,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ee3-32f0-7675-9613-a671b6be874f"
+    },
+    {
+      "n": 56,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A harpy, woman-headed bird creature, rag"
+    },
+    {
+      "n": 57,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ee5-9f2e-76ed-9bdc-8b93e595e119"
+    },
+    {
+      "n": 58,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An elemental of burning ash and cinders,"
+    },
+    {
+      "n": 59,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ee8-0105-734e-82bb-cc11a1b40d9e"
+    },
+    {
+      "n": 60,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An armoured undead knight in blackened d"
+    },
+    {
+      "n": 61,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00eea-01bf-7813-85c9-32641cf67edb"
+    },
+    {
+      "n": 62,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A lich in decayed archmage robes, skull "
+    },
+    {
+      "n": 63,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00eec-86b3-78a4-9c59-3b01b8465f3d"
+    },
+    {
+      "n": 64,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A towering armoured wraith-king wearing "
     }
   ],
-  "spent": 317
+  "spent": 512
 }

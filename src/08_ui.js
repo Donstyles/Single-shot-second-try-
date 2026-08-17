@@ -30,7 +30,7 @@ const UI = (() => {
   const PORTRAIT = { w: 72, h: 88, y: 358, pitch: 78, x0: 6 };
 
   // ---------------------------------------------------------------- hud
-  function drawHUD(g) {
+  function drawHUD(g, interactive) {
     const En = E();
     Art.panel(En, HUD.x, HUD.y, HUD.w, HUD.h, 13, true);
     En.hline(0, HUD.y, 640, Core.idx(13, 11));
@@ -58,7 +58,7 @@ const UI = (() => {
       const cond = Rules.worstCondition(ch);
       if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
 
-      reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
+      if (interactive) reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
     });
 
     // ---- message log
@@ -97,7 +97,7 @@ const UI = (() => {
       const bx = BX + (i % 2) * (BW + 4);
       const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
       Art.button(En, bx, by, BW, BH, b[0], g.pressed === b[1], 2);
-      reg('btn', bx, by, BW, BH, b[1]);
+      if (interactive) reg('btn', bx, by, BW, BH, b[1]);
     });
   }
 
@@ -146,6 +146,20 @@ const UI = (() => {
   }
 
   // ---------------------------------------------------------------- screens
+  // Panels cover the HUD portraits, and several screens are per-character. Give them their own
+  // selector rather than relying on a strip the panel is sitting on top of.
+  function pcSelector(g, x, y) {
+    const En = E();
+    g.party.members.forEach((ch, i) => {
+      const bx = x + i * 92;
+      const on = g.active === i;
+      Art.button(En, bx, y, 88, 30, ch.name.slice(0, 7).toUpperCase(), on, 2);
+      if (Rules.isDead(ch)) En.frameRect(bx, y, 88, 30, Core.idx(11, 12));
+      reg('pc', bx, y, 88, 30, i);
+    });
+    return y + 36;
+  }
+
   function screenFrame(title, w, h) {
     const En = E();
     const x = (640 - w) >> 1, y = (480 - h) >> 1;
@@ -162,11 +176,12 @@ const UI = (() => {
   function charSheet(g) {
     const En = E();
     const f = screenFrame('CHARACTER', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const p = Sprites.portrait(ch.portrait, ch.cls, ch.sex);
-    En.blitScaled(p, f.x + 20, f.inner, 96, 108, 0);
+    En.blitScaled(p, f.x + 20, f.inner + 40, 96, 108, 0);
 
-    let y = f.inner;
+    let y = f.inner + 40;
     Art.text(En, f.x + 130, y, ch.name, Core.idx(13, 14), 2); y += 22;
     Art.text(En, f.x + 130, y, Rules.CLASSES[ch.cls].name + '  Level ' + ch.level, Core.idx(0, 13), 2); y += 20;
     Art.text(En, f.x + 130, y, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(2, 12), 2); y += 20;
@@ -175,19 +190,19 @@ const UI = (() => {
     Art.text(En, f.x + 130, y, 'AC ' + g.acOf(ch) + '   Skill pts ' + ch.skillPts, Core.idx(0, 13), 2);
 
     // Stats in two columns.
-    y = f.inner + 124;
+    y = f.inner + 164;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 24 + (i % 2) * 200;
       const cy = y + Math.floor(i / 2) * 22;
       const v = Rules.effStat(ch, s);
       const b = Rules.statBonus(v);
       Art.text(En, cx, cy, Rules.STAT_NAME[s], Core.idx(0, 11), 2);
-      Art.text(En, cx + 130, cy, String(v), Core.idx(13, 14), 2);
-      Art.text(En, cx + 160, cy, (b >= 0 ? '+' : '') + b, Core.idx(b >= 0 ? 6 : 11, 12), 2);
+      Art.text(En, cx + 150, cy, String(v), Core.idx(13, 14), 2);
+      Art.text(En, cx + 192, cy, (b >= 0 ? '+' : '') + b, Core.idx(b >= 0 ? 6 : 11, 12), 2);
     });
 
     // Skills, scrollable-free: only trained ones are listed, which is always few enough to fit.
-    y = f.inner + 124 + 96;
+    y = f.inner + 164 + 92;
     Art.text(En, f.x + 24, y, 'SKILLS', Core.idx(13, 13), 2); y += 20;
     const trained = Object.keys(ch.skills).filter((k) => ch.skills[k].mastery > 0);
     trained.slice(0, 12).forEach((k, i) => {
@@ -201,6 +216,7 @@ const UI = (() => {
   function inventory(g) {
     const En = E();
     const f = screenFrame('INVENTORY', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
     // Paperdoll on the left: slots as boxes, equipped items as icons.
@@ -210,7 +226,7 @@ const UI = (() => {
       ['weapon', 0, 92], ['offhand', 120, 92], ['belt', 60, 92],
       ['bow', 0, 138], ['boots', 60, 138], ['ring1', 120, 138],
     ];
-    const px0 = f.x + 24, py0 = f.inner;
+    const px0 = f.x + 24, py0 = f.inner + 40;
     for (const [slot, ox, oy] of SLOTS) {
       const x = px0 + ox, y = py0 + oy;
       Art.panel(En, x, y, 42, 42, 4, true);
@@ -227,7 +243,7 @@ const UI = (() => {
     }
 
     // Pack grid on the right.
-    const gx = f.x + 220, gy = f.inner;
+    const gx = f.x + 220, gy = f.inner + 40;
     Art.text(En, gx, gy - 16, 'PACK  ' + ch.pack.length + '/30', Core.idx(13, 13), 2);
     for (let i = 0; i < 30; i++) {
       const x = gx + (i % 6) * 58, y = gy + Math.floor(i / 6) * 52;
@@ -248,10 +264,18 @@ const UI = (() => {
       Art.text(En, f.x + 22, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
       const it = Items.def(st);
       const line = (it.dmg ? 'Dmg ' + it.dmg.n + 'd' + it.dmg.sides + (it.dmg.plus ? '+' + it.dmg.plus : '') + '  ' : '') +
-        (it.ac ? 'AC ' + it.ac + '  ' : '') + 'Value ' + Items.value(st) + 'g';
+        (it.ac ? 'AC ' + it.ac + '  ' : '') + (it.heal ? 'Heals ' + it.heal + '  ' : '') + 'Value ' + Items.unitValue(st) + 'g each';
       Art.text(En, f.x + 22, f.y + f.h - 36, line, Core.idx(0, 12), 2);
-      Art.button(En, f.x + f.w - 200, f.y + f.h - 56, 84, 38, 'EQUIP', false, 2);
-      reg('doequip', f.x + f.w - 200, f.y + f.h - 56, 84, 38, sel);
+      // USE is the verb the game was missing entirely: eight healing potions the party could not
+      // drink, offered only EQUIP and DROP.
+      const usable = it && (it.kind === 'potion' || it.kind === 'food' || (it.kind === 'tool' && it.light));
+      if (usable) {
+        Art.button(En, f.x + f.w - 290, f.y + f.h - 56, 84, 38, 'USE', false, 2);
+        reg('usepack', f.x + f.w - 290, f.y + f.h - 56, 84, 38, sel);
+      } else if (it && it.slot) {
+        Art.button(En, f.x + f.w - 290, f.y + f.h - 56, 84, 38, 'EQUIP', false, 2);
+        reg('doequip', f.x + f.w - 290, f.y + f.h - 56, 84, 38, sel);
+      }
       Art.button(En, f.x + f.w - 108, f.y + f.h - 56, 84, 38, 'DROP', false, 2);
       reg('drop', f.x + f.w - 108, f.y + f.h - 56, 84, 38, sel);
     }
@@ -260,11 +284,12 @@ const UI = (() => {
   function spellbook(g) {
     const En = E();
     const f = screenFrame('SPELLBOOK', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
     // School tabs down the left.
     Spellcraft.SCHOOL_IDS.forEach((s, i) => {
-      const x = f.x + 16, y = f.inner + i * 40;
+      const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
       Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
@@ -281,10 +306,17 @@ const UI = (() => {
     });
 
     const school = g.bookSchool || 'fire';
-    const ids = Spellcraft.bySchool(school);
+    const all = Spellcraft.bySchool(school);
+    const page = g.bookPage || 0;
+    const ids = all.slice(page * 4, page * 4 + 4);
+    Art.button(En, f.x + f.w - 150, f.y + f.h - 46, 60, 34, '<', false, 2);
+    reg('bookpage', f.x + f.w - 150, f.y + f.h - 46, 60, 34, -1);
+    Art.button(En, f.x + f.w - 84, f.y + f.h - 46, 60, 34, '>', false, 2);
+    reg('bookpage', f.x + f.w - 84, f.y + f.h - 46, 60, 34, 1);
+    Art.text(En, f.x + f.w - 250, f.y + f.h - 38, 'TIER ' + (page * 4 + 1) + '-' + Math.min(11, page * 4 + 4), Core.idx(13, 13), 2);
     ids.forEach((id, i) => {
       const sp = Spellcraft.SPELLS[id];
-      const x = f.x + 130, y = f.inner + i * 76;
+      const x = f.x + 130, y = f.inner + 40 + i * 76;
       const known = ch.spells && ch.spells[id];
       const can = Spellcraft.canCast(ch, id, { underground: g.map.kind === 'dungeon' });
       Art.panel(En, x, y, f.w - 160, 68, can.ok ? 13 : 4, !can.ok);
@@ -336,10 +368,11 @@ const UI = (() => {
     const En = E();
     const kind = g.shopKind;
     const f = screenFrame(kind.toUpperCase(), 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
 
-    Art.text(En, f.x + 20, f.inner + 2, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
+    Art.text(En, f.x + 20, f.inner + 42, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -382,14 +415,15 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 24 + Math.floor(i / 2) * 54;
+      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 66 + Math.floor(i / 2) * 54;
       if (y > f.y + f.h - 80) return;
-      const price = Rules.buyPrice(Items.value(st), ch);
+      const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
       Art.panel(En, x, y, 272, 48, afford ? 4 : 4, true);
       En.blitScaled(Sprites.icon(st.id), x + 6, y + 8, 32, 32, 0);
       Art.text(En, x + 46, y + 8, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 13 : 7), 2);
       Art.text(En, x + 46, y + 28, price + 'g', Core.idx(13, afford ? 13 : 7), 2);
+      if (!afford) Art.text(En, x + 150, y + 28, 'too dear', Core.idx(11, 9), 1);
       if (afford) reg('buy', x, y, 272, 48, i);
     });
   }
@@ -443,6 +477,38 @@ const UI = (() => {
     reg('dorest', f.x + 24, f.inner + 70, 220, 50, 1);
   }
 
+  function defeat(g) {
+    const En = E();
+    En.rect(0, 0, 640, 480, Core.idx(0, 1));
+    for (let y = 0; y < 480; y += 2) En.hline(0, y, 640, Core.idx(11, 2));
+    Art.panel(En, 90, 130, 460, 220, 13, false);
+    Art.textCentred(En, 320, 158, 'YOUR PARTY HAS FALLEN', Core.idx(11, 13), 3);
+    Art.textCentred(En, 320, 210, 'The priests of Harrowgate will take you in,', Core.idx(0, 12), 2);
+    Art.textCentred(En, 320, 232, 'for a share of what you carry.', Core.idx(0, 12), 2);
+    Art.button(En, 170, 268, 300, 56, 'WAKE AT THE TEMPLE', false, 2);
+    reg('revive', 170, 268, 300, 56, 1);
+  }
+
+  function menu(g) {
+    const En = E();
+    const f = screenFrame('MENU', 520, 400);
+    Art.text(En, f.x + 30, f.inner + 6, 'SAVE', Core.idx(13, 14), 2);
+    for (let i = 0; i < 3; i++) {
+      Art.button(En, f.x + 30, f.inner + 32 + i * 48, 190, 42, 'SLOT ' + (i + 1), false, 2);
+      reg('saveslot', f.x + 30, f.inner + 32 + i * 48, 190, 42, i);
+    }
+    Art.text(En, f.x + 260, f.inner + 6, 'LOAD', Core.idx(13, 14), 2);
+    for (let i = 0; i < 3; i++) {
+      const has = g.slotUsed ? g.slotUsed(i) : true;
+      Art.button(En, f.x + 260, f.inner + 32 + i * 48, 190, 42, has ? 'SLOT ' + (i + 1) : 'EMPTY', false, 2);
+      if (has) reg('loadslot', f.x + 260, f.inner + 32 + i * 48, 190, 42, i);
+    }
+    Art.button(En, f.x + 30, f.y + f.h - 62, 200, 44, 'TITLE SCREEN', false, 2);
+    reg('titlescreen', f.x + 30, f.y + f.h - 62, 200, 44, 1);
+    Art.text(En, f.x + 250, f.y + f.h - 50, 'Three slots. Saving never', Core.idx(0, 11), 1);
+    Art.text(En, f.x + 250, f.y + f.h - 38, 'overwrites without you choosing.', Core.idx(0, 11), 1);
+  }
+
   // ---------------------------------------------------------------- title & creation
   function title(g) {
     const En = E();
@@ -485,6 +551,19 @@ const UI = (() => {
       reg('cslot', x, y, 90, 34, i);
     }
 
+    // Name, sex and portrait. Creation that ignores all three and hands you the same four people
+    // is not character creation.
+    let ny = f.inner + 2;
+    Art.button(En, f.x + 16, ny, 34, 30, '<', false, 2); reg('cname', f.x + 16, ny, 34, 30, -1);
+    Art.text(En, f.x + 58, ny + 8, spec.name, Core.idx(13, 14), 2);
+    Art.button(En, f.x + 170, ny, 34, 30, '>', false, 2); reg('cname', f.x + 170, ny, 34, 30, 1);
+    Art.button(En, f.x + 214, ny, 70, 30, spec.sex === 'f' ? 'FEMALE' : 'MALE', false, 2);
+    reg('csex', f.x + 214, ny, 70, 30, 1);
+    Art.button(En, f.x + 292, ny, 34, 30, '<', false, 2); reg('cport', f.x + 292, ny, 34, 30, -1);
+    const pv = Sprites.portrait(spec.portrait === undefined ? slot : spec.portrait, spec.cls, spec.sex);
+    En.blitScaled(pv, f.x + 330, ny - 4, 36, 40, 0);
+    Art.button(En, f.x + 372, ny, 34, 30, '>', false, 2); reg('cport', f.x + 372, ny, 34, 30, 1);
+
     let y = f.inner + 40;
     Art.text(En, f.x + 16, y, 'CLASS', Core.idx(13, 13), 2);
     Rules.CLASS_IDS.forEach((cid, i) => {
@@ -494,9 +573,17 @@ const UI = (() => {
     });
 
     y += 110;
-    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(0, 74), Core.idx(0, 11), 1);
-    y += 18;
-    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(74, 148), Core.idx(0, 11), 1);
+    // Word-wrap the blurb. Slicing at a fixed character count broke it mid-word, and it is the
+    // first prose a new player reads.
+    {
+      const words = Rules.CLASSES[spec.cls].blurb.split(' ');
+      let line = '', ly = y;
+      for (const w of words) {
+        if (line && (line + ' ' + w).length > 74) { Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1); ly += 12; line = w; }
+        else line = line ? line + ' ' + w : w;
+      }
+      if (line) Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1);
+    }
 
     // Point buy.
     y += 26;
@@ -506,12 +593,12 @@ const UI = (() => {
     y += 24;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;
-      Art.text(En, cx, cy + 8, Rules.STAT_NAME[s], Core.idx(0, 12), 2);
-      Art.button(En, cx + 130, cy, 34, 30, '-', false, 2);
-      reg('statdn', cx + 130, cy, 34, 30, s);
-      Art.text(En, cx + 176, cy + 8, String(spec.base[s]), Core.idx(13, 14), 2);
-      Art.button(En, cx + 210, cy, 34, 30, '+', false, 2);
-      reg('statup', cx + 210, cy, 34, 30, s);
+      Art.text(En, cx, cy + 8, Rules.STAT_NAME[s].slice(0, 11), Core.idx(0, 12), 2);
+      Art.button(En, cx + 148, cy, 34, 30, '-', false, 2);
+      reg('statdn', cx + 148, cy, 34, 30, s);
+      Art.text(En, cx + 192, cy + 8, String(spec.base[s]), Core.idx(13, 14), 2);
+      Art.button(En, cx + 228, cy, 34, 30, '+', false, 2);
+      reg('statup', cx + 228, cy, 34, 30, s);
     });
 
     const errs = Rules.validateCreation({ members: g.createSpec });
@@ -523,16 +610,19 @@ const UI = (() => {
   // ---------------------------------------------------------------- dispatch
   const SCREENS = {
     sheet: charSheet, inv: inventory, book: spellbook, map: automap,
-    shop, dialogue, rest: restScreen, title, creation,
+    shop, dialogue, rest: restScreen, title, creation, menu, defeat,
   };
 
   function draw(g) {
     clearRegions();
     if (g.screen === 'title') { title(g); return; }
     if (g.screen === 'creation') { creation(g); return; }
+    if (g.screen === 'defeat') { defeat(g); return; }
 
     Art.gameFrame(E());
-    drawHUD(g);
+    // HUD is drawn NON-INTERACTIVE behind a modal: it used to render on top of every panel and
+    // stay clickable through it, so pressing where RST sits opened Make Camp through the sheet.
+    drawHUD(g, !g.screen);
     if (!g.screen) drawTouchControls(g);
     else if (SCREENS[g.screen]) SCREENS[g.screen](g);
   }

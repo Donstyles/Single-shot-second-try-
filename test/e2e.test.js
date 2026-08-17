@@ -289,6 +289,99 @@ const T = require('./_harness.js');
   T.ok(buffs.inDungeon, 'the barrow is a dungeon');
   T.eq(buffs.lit, 6, 'Torch Light is readable by the renderer');
 
+  // ---- regressions from the r3 cold veteran review (NO-SHIP 4/10). Each of these was a real
+  // defect a player hit in the first ten minutes; none may come back silently.
+  T.suite('veteran regressions');
+
+  const vet = await page.evaluate(`(() => {
+    const out = {};
+    Game.state.screen = null;
+    Game.newParty([
+      { name: 'A', cls: 'knight', sex: 'f', base: { mig: 16, int: 8, per: 8, end: 15, acc: 13, spd: 12, lck: 10 } },
+      { name: 'B', cls: 'priest', sex: 'm', base: { mig: 10, int: 10, per: 17, end: 13, acc: 11, spd: 12, lck: 10 } },
+      { name: 'C', cls: 'mage',   sex: 'f', base: { mig: 8, int: 18, per: 10, end: 12, acc: 10, spd: 13, lck: 10 } },
+      { name: 'D', cls: 'ranger', sex: 'm', base: { mig: 12, int: 10, per: 10, end: 13, acc: 18, spd: 13, lck: 10 } },
+    ]);
+
+    // 1. Casters must START knowing a heal and an attack spell.
+    const priest = Game.state.party.members[1], mage = Game.state.party.members[2];
+    out.priestKnows = Object.keys(priest.spells || {}).length;
+    out.mageKnows = Object.keys(mage.spells || {}).length;
+    out.priestHeal = !!(priest.spells && priest.spells.first_aid);
+    out.mageBolt = !!(mage.spells && mage.spells.fire_bolt);
+
+    // 2. Potions must be DRINKABLE.
+    const knight = Game.state.party.members[0];
+    knight.hp = 3;
+    const potIdx = knight.pack.findIndex(st => st.id === 'potion_heal');
+    out.hadPotion = potIdx >= 0;
+    Game.state.active = 0;
+    out.used = potIdx >= 0 ? Game.useFromPack(potIdx, 0) : false;
+    out.hpAfterPotion = knight.hp;
+
+    // 3. Shop price must be near item VALUE, not ten times it (stack qty was multiplying in).
+    const stock = Items.shopStock(Core.RNG.world('t:shop'), 'general', 2);
+    const potion = stock.find(st => st.id === 'potion_heal') || { id: 'potion_heal', qty: 10 };
+    out.unitValue = Items.unitValue(potion);
+    out.shopPrice = Rules.buyPrice(Items.unitValue(potion), knight);
+    out.priceRatio = out.shopPrice / Math.max(1, out.unitValue);
+
+    // 4. A party wipe must be a TERMINAL event, not a state you walk around in.
+    for (const c of Game.state.party.members) { c.hp = -5; c.cond.unconscious = true; }
+    Game.update(16);
+    out.defeatScreen = Game.state.screen;
+    const beforeX = Game.state.party.x;
+    Game.state.keys.fwd = true; Game.update(16); Game.update(16); Game.state.keys.fwd = false;
+    out.movedWhileDead = Math.abs(Game.state.party.x - beforeX) > 0.001;
+    Game.reviveAtTemple();
+    out.revivedAlive = Game.state.party.members.filter(c => Rules.canAct(c)).length;
+    out.revivedMap = Game.state.map.id;
+
+    // 5. The clock must NOT run behind an open menu.
+    Game.state.screen = null;
+    const t0 = Core.Clock.t;
+    for (let i = 0; i < 200; i++) Game.update(16);
+    const played = Core.Clock.t - t0;
+    Game.state.screen = 'inv';
+    const t1 = Core.Clock.t;
+    for (let i = 0; i < 200; i++) Game.update(16);
+    out.clockPlaying = played;
+    out.clockInMenu = Core.Clock.t - t1;
+    Game.state.screen = null;
+
+    return out;
+  })()`);
+
+  T.ok(vet.priestKnows >= 3, 'a level-1 priest starts knowing spells (' + vet.priestKnows + ')');
+  T.ok(vet.mageKnows >= 3, 'a level-1 mage starts knowing spells (' + vet.mageKnows + ')');
+  T.ok(vet.priestHeal, 'the priest starts with a heal');
+  T.ok(vet.mageBolt, 'the mage starts with an attack spell');
+  T.ok(vet.hadPotion, 'the party starts with healing potions');
+  T.ok(vet.used, 'a healing potion can be USED');
+  T.ok(vet.hpAfterPotion > 3, 'drinking it actually heals (' + vet.hpAfterPotion + ' HP)');
+  T.ok(vet.priceRatio <= 2.0,
+    'a shop prices ONE unit, not the stack (value ' + vet.unitValue + ' -> price ' + vet.shopPrice + ')');
+  T.eq(vet.defeatScreen, 'defeat', 'a party wipe raises a defeat screen');
+  T.eq(vet.movedWhileDead, false, 'a defeated party cannot walk around');
+  T.eq(vet.revivedAlive, 4, 'waking at the temple revives the whole party');
+  T.eq(vet.revivedMap, 'harrowgate', 'and puts them in Harrowgate');
+  T.ok(vet.clockPlaying > 0, 'the clock runs during play (' + vet.clockPlaying + ' minutes)');
+  T.eq(vet.clockInMenu, 0, 'the clock does NOT run behind an open menu');
+
+  // 6. The HUD must not be clickable through a modal.
+  const modal = await page.evaluate(`(() => {
+    Game.state.screen = null;
+    UI.draw(Game.state);
+    const openCount = UI.regions().filter(r => r.id === 'btn').length;
+    Game.state.screen = 'sheet';
+    UI.draw(Game.state);
+    const modalCount = UI.regions().filter(r => r.id === 'btn').length;
+    Game.state.screen = null;
+    return { openCount, modalCount };
+  })()`);
+  T.ok(modal.openCount >= 6, 'the HUD registers its buttons during play (' + modal.openCount + ')');
+  T.eq(modal.modalCount, 0, 'and registers NONE of them behind a modal panel');
+
   T.eq(errors, [], 'still no page errors after exercising the harness');
 
   await browser.close();

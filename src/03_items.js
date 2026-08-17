@@ -76,8 +76,8 @@ const Items = (() => {
     mine_ledger:   { name: "Foreman's Ledger",    kind: 'quest', quest: true, value: 0, tier: 0 },
     ash_key:       { name: 'Ashen Key',           kind: 'quest', quest: true, value: 0, tier: 0 },
     crown_shard:   { name: 'Shard of the Crown',  kind: 'quest', quest: true, value: 0, tier: 0 },
-    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 0, tier: 0, stack: 8 },
-    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 0, tier: 0, stack: 6 },
+    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 },
+    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 },
   };
 
   const ITEM_IDS = Object.keys(ITEMS);
@@ -173,12 +173,18 @@ const Items = (() => {
 
   function def(stack) { return ITEMS[stack.id] || null; }
 
-  function value(stack) {
+  // Value of ONE unit. The stack total is a separate question and must be asked explicitly:
+  // conflating them priced a 100g potion at 1050g because shop stock carries ten of them.
+  function unitValue(stack) {
     const it = ITEMS[stack.id];
     if (!it) return 0;
     let v = it.value || 0;
     if (stack.ench !== undefined && ENCHANTS[stack.ench]) v += ENCHANTS[stack.ench].value;
-    return v * (stack.qty || 1);
+    return v;
+  }
+
+  function value(stack) {
+    return unitValue(stack) * (stack.qty || 1);
   }
 
   function displayName(stack) {
@@ -221,7 +227,7 @@ const Items = (() => {
 
   return {
     ITEMS, ITEM_IDS, MONSTERS, MONSTER_IDS, LOOT_TIERS, ENCHANTS,
-    rollLoot, sortForPickup, isQuest, def, value, displayName, maxStack, shopStock,
+    rollLoot, sortForPickup, isQuest, def, value, unitValue, displayName, maxStack, shopStock,
   };
 })();
 

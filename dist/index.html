@@ -686,13 +686,13 @@ const Rules = (() => {
 
   function healCost(ch) {
     const missing = Math.max(0, maxHP(ch) - ch.hp);
-    let c = missing * 2;
+    let c = missing;
     if (ch.cond) {
-      if (ch.cond.poison) c += 60;
-      if (ch.cond.disease) c += 120;
-      if (ch.cond.curse) c += 200;
-      if (ch.cond.dead) c += 600;
-      if (ch.cond.unconscious) c += 40;
+      if (ch.cond.poison) c += 25;
+      if (ch.cond.disease) c += 50;
+      if (ch.cond.curse) c += 90;
+      if (ch.cond.dead) c += 250;
+      if (ch.cond.unconscious) c += 10;
     }
     return Math.max(0, Math.round(c));
   }
@@ -1275,8 +1275,8 @@ const Items = (() => {
     mine_ledger:   { name: "Foreman's Ledger",    kind: 'quest', quest: true, value: 0, tier: 0 },
     ash_key:       { name: 'Ashen Key',           kind: 'quest', quest: true, value: 0, tier: 0 },
     crown_shard:   { name: 'Shard of the Crown',  kind: 'quest', quest: true, value: 0, tier: 0 },
-    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 0, tier: 0, stack: 8 },
-    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 0, tier: 0, stack: 6 },
+    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 },
+    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 },
   };
 
   const ITEM_IDS = Object.keys(ITEMS);
@@ -1372,12 +1372,18 @@ const Items = (() => {
 
   function def(stack) { return ITEMS[stack.id] || null; }
 
-  function value(stack) {
+  // Value of ONE unit. The stack total is a separate question and must be asked explicitly:
+  // conflating them priced a 100g potion at 1050g because shop stock carries ten of them.
+  function unitValue(stack) {
     const it = ITEMS[stack.id];
     if (!it) return 0;
     let v = it.value || 0;
     if (stack.ench !== undefined && ENCHANTS[stack.ench]) v += ENCHANTS[stack.ench].value;
-    return v * (stack.qty || 1);
+    return v;
+  }
+
+  function value(stack) {
+    return unitValue(stack) * (stack.qty || 1);
   }
 
   function displayName(stack) {
@@ -1420,7 +1426,7 @@ const Items = (() => {
 
   return {
     ITEMS, ITEM_IDS, MONSTERS, MONSTER_IDS, LOOT_TIERS, ENCHANTS,
-    rollLoot, sortForPickup, isQuest, def, value, displayName, maxStack, shopStock,
+    rollLoot, sortForPickup, isQuest, def, value, unitValue, displayName, maxStack, shopStock,
   };
 })();
 
@@ -3533,7 +3539,7 @@ const UI = (() => {
   const PORTRAIT = { w: 72, h: 88, y: 358, pitch: 78, x0: 6 };
 
   // ---------------------------------------------------------------- hud
-  function drawHUD(g) {
+  function drawHUD(g, interactive) {
     const En = E();
     Art.panel(En, HUD.x, HUD.y, HUD.w, HUD.h, 13, true);
     En.hline(0, HUD.y, 640, Core.idx(13, 11));
@@ -3561,7 +3567,7 @@ const UI = (() => {
       const cond = Rules.worstCondition(ch);
       if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
 
-      reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
+      if (interactive) reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
     });
 
     // ---- message log
@@ -3600,7 +3606,7 @@ const UI = (() => {
       const bx = BX + (i % 2) * (BW + 4);
       const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
       Art.button(En, bx, by, BW, BH, b[0], g.pressed === b[1], 2);
-      reg('btn', bx, by, BW, BH, b[1]);
+      if (interactive) reg('btn', bx, by, BW, BH, b[1]);
     });
   }
 
@@ -3649,6 +3655,20 @@ const UI = (() => {
   }
 
   // ---------------------------------------------------------------- screens
+  // Panels cover the HUD portraits, and several screens are per-character. Give them their own
+  // selector rather than relying on a strip the panel is sitting on top of.
+  function pcSelector(g, x, y) {
+    const En = E();
+    g.party.members.forEach((ch, i) => {
+      const bx = x + i * 92;
+      const on = g.active === i;
+      Art.button(En, bx, y, 88, 30, ch.name.slice(0, 7).toUpperCase(), on, 2);
+      if (Rules.isDead(ch)) En.frameRect(bx, y, 88, 30, Core.idx(11, 12));
+      reg('pc', bx, y, 88, 30, i);
+    });
+    return y + 36;
+  }
+
   function screenFrame(title, w, h) {
     const En = E();
     const x = (640 - w) >> 1, y = (480 - h) >> 1;
@@ -3665,11 +3685,12 @@ const UI = (() => {
   function charSheet(g) {
     const En = E();
     const f = screenFrame('CHARACTER', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const p = Sprites.portrait(ch.portrait, ch.cls, ch.sex);
-    En.blitScaled(p, f.x + 20, f.inner, 96, 108, 0);
+    En.blitScaled(p, f.x + 20, f.inner + 40, 96, 108, 0);
 
-    let y = f.inner;
+    let y = f.inner + 40;
     Art.text(En, f.x + 130, y, ch.name, Core.idx(13, 14), 2); y += 22;
     Art.text(En, f.x + 130, y, Rules.CLASSES[ch.cls].name + '  Level ' + ch.level, Core.idx(0, 13), 2); y += 20;
     Art.text(En, f.x + 130, y, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(2, 12), 2); y += 20;
@@ -3678,19 +3699,19 @@ const UI = (() => {
     Art.text(En, f.x + 130, y, 'AC ' + g.acOf(ch) + '   Skill pts ' + ch.skillPts, Core.idx(0, 13), 2);
 
     // Stats in two columns.
-    y = f.inner + 124;
+    y = f.inner + 164;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 24 + (i % 2) * 200;
       const cy = y + Math.floor(i / 2) * 22;
       const v = Rules.effStat(ch, s);
       const b = Rules.statBonus(v);
       Art.text(En, cx, cy, Rules.STAT_NAME[s], Core.idx(0, 11), 2);
-      Art.text(En, cx + 130, cy, String(v), Core.idx(13, 14), 2);
-      Art.text(En, cx + 160, cy, (b >= 0 ? '+' : '') + b, Core.idx(b >= 0 ? 6 : 11, 12), 2);
+      Art.text(En, cx + 150, cy, String(v), Core.idx(13, 14), 2);
+      Art.text(En, cx + 192, cy, (b >= 0 ? '+' : '') + b, Core.idx(b >= 0 ? 6 : 11, 12), 2);
     });
 
     // Skills, scrollable-free: only trained ones are listed, which is always few enough to fit.
-    y = f.inner + 124 + 96;
+    y = f.inner + 164 + 92;
     Art.text(En, f.x + 24, y, 'SKILLS', Core.idx(13, 13), 2); y += 20;
     const trained = Object.keys(ch.skills).filter((k) => ch.skills[k].mastery > 0);
     trained.slice(0, 12).forEach((k, i) => {
@@ -3704,6 +3725,7 @@ const UI = (() => {
   function inventory(g) {
     const En = E();
     const f = screenFrame('INVENTORY', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
     // Paperdoll on the left: slots as boxes, equipped items as icons.
@@ -3713,7 +3735,7 @@ const UI = (() => {
       ['weapon', 0, 92], ['offhand', 120, 92], ['belt', 60, 92],
       ['bow', 0, 138], ['boots', 60, 138], ['ring1', 120, 138],
     ];
-    const px0 = f.x + 24, py0 = f.inner;
+    const px0 = f.x + 24, py0 = f.inner + 40;
     for (const [slot, ox, oy] of SLOTS) {
       const x = px0 + ox, y = py0 + oy;
       Art.panel(En, x, y, 42, 42, 4, true);
@@ -3730,7 +3752,7 @@ const UI = (() => {
     }
 
     // Pack grid on the right.
-    const gx = f.x + 220, gy = f.inner;
+    const gx = f.x + 220, gy = f.inner + 40;
     Art.text(En, gx, gy - 16, 'PACK  ' + ch.pack.length + '/30', Core.idx(13, 13), 2);
     for (let i = 0; i < 30; i++) {
       const x = gx + (i % 6) * 58, y = gy + Math.floor(i / 6) * 52;
@@ -3751,10 +3773,18 @@ const UI = (() => {
       Art.text(En, f.x + 22, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
       const it = Items.def(st);
       const line = (it.dmg ? 'Dmg ' + it.dmg.n + 'd' + it.dmg.sides + (it.dmg.plus ? '+' + it.dmg.plus : '') + '  ' : '') +
-        (it.ac ? 'AC ' + it.ac + '  ' : '') + 'Value ' + Items.value(st) + 'g';
+        (it.ac ? 'AC ' + it.ac + '  ' : '') + (it.heal ? 'Heals ' + it.heal + '  ' : '') + 'Value ' + Items.unitValue(st) + 'g each';
       Art.text(En, f.x + 22, f.y + f.h - 36, line, Core.idx(0, 12), 2);
-      Art.button(En, f.x + f.w - 200, f.y + f.h - 56, 84, 38, 'EQUIP', false, 2);
-      reg('doequip', f.x + f.w - 200, f.y + f.h - 56, 84, 38, sel);
+      // USE is the verb the game was missing entirely: eight healing potions the party could not
+      // drink, offered only EQUIP and DROP.
+      const usable = it && (it.kind === 'potion' || it.kind === 'food' || (it.kind === 'tool' && it.light));
+      if (usable) {
+        Art.button(En, f.x + f.w - 290, f.y + f.h - 56, 84, 38, 'USE', false, 2);
+        reg('usepack', f.x + f.w - 290, f.y + f.h - 56, 84, 38, sel);
+      } else if (it && it.slot) {
+        Art.button(En, f.x + f.w - 290, f.y + f.h - 56, 84, 38, 'EQUIP', false, 2);
+        reg('doequip', f.x + f.w - 290, f.y + f.h - 56, 84, 38, sel);
+      }
       Art.button(En, f.x + f.w - 108, f.y + f.h - 56, 84, 38, 'DROP', false, 2);
       reg('drop', f.x + f.w - 108, f.y + f.h - 56, 84, 38, sel);
     }
@@ -3763,11 +3793,12 @@ const UI = (() => {
   function spellbook(g) {
     const En = E();
     const f = screenFrame('SPELLBOOK', 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
     // School tabs down the left.
     Spellcraft.SCHOOL_IDS.forEach((s, i) => {
-      const x = f.x + 16, y = f.inner + i * 40;
+      const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
       Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
@@ -3784,10 +3815,17 @@ const UI = (() => {
     });
 
     const school = g.bookSchool || 'fire';
-    const ids = Spellcraft.bySchool(school);
+    const all = Spellcraft.bySchool(school);
+    const page = g.bookPage || 0;
+    const ids = all.slice(page * 4, page * 4 + 4);
+    Art.button(En, f.x + f.w - 150, f.y + f.h - 46, 60, 34, '<', false, 2);
+    reg('bookpage', f.x + f.w - 150, f.y + f.h - 46, 60, 34, -1);
+    Art.button(En, f.x + f.w - 84, f.y + f.h - 46, 60, 34, '>', false, 2);
+    reg('bookpage', f.x + f.w - 84, f.y + f.h - 46, 60, 34, 1);
+    Art.text(En, f.x + f.w - 250, f.y + f.h - 38, 'TIER ' + (page * 4 + 1) + '-' + Math.min(11, page * 4 + 4), Core.idx(13, 13), 2);
     ids.forEach((id, i) => {
       const sp = Spellcraft.SPELLS[id];
-      const x = f.x + 130, y = f.inner + i * 76;
+      const x = f.x + 130, y = f.inner + 40 + i * 76;
       const known = ch.spells && ch.spells[id];
       const can = Spellcraft.canCast(ch, id, { underground: g.map.kind === 'dungeon' });
       Art.panel(En, x, y, f.w - 160, 68, can.ok ? 13 : 4, !can.ok);
@@ -3839,10 +3877,11 @@ const UI = (() => {
     const En = E();
     const kind = g.shopKind;
     const f = screenFrame(kind.toUpperCase(), 600, 430);
+    pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
 
-    Art.text(En, f.x + 20, f.inner + 2, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
+    Art.text(En, f.x + 20, f.inner + 42, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -3885,14 +3924,15 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 24 + Math.floor(i / 2) * 54;
+      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 66 + Math.floor(i / 2) * 54;
       if (y > f.y + f.h - 80) return;
-      const price = Rules.buyPrice(Items.value(st), ch);
+      const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
       Art.panel(En, x, y, 272, 48, afford ? 4 : 4, true);
       En.blitScaled(Sprites.icon(st.id), x + 6, y + 8, 32, 32, 0);
       Art.text(En, x + 46, y + 8, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 13 : 7), 2);
       Art.text(En, x + 46, y + 28, price + 'g', Core.idx(13, afford ? 13 : 7), 2);
+      if (!afford) Art.text(En, x + 150, y + 28, 'too dear', Core.idx(11, 9), 1);
       if (afford) reg('buy', x, y, 272, 48, i);
     });
   }
@@ -3946,6 +3986,38 @@ const UI = (() => {
     reg('dorest', f.x + 24, f.inner + 70, 220, 50, 1);
   }
 
+  function defeat(g) {
+    const En = E();
+    En.rect(0, 0, 640, 480, Core.idx(0, 1));
+    for (let y = 0; y < 480; y += 2) En.hline(0, y, 640, Core.idx(11, 2));
+    Art.panel(En, 90, 130, 460, 220, 13, false);
+    Art.textCentred(En, 320, 158, 'YOUR PARTY HAS FALLEN', Core.idx(11, 13), 3);
+    Art.textCentred(En, 320, 210, 'The priests of Harrowgate will take you in,', Core.idx(0, 12), 2);
+    Art.textCentred(En, 320, 232, 'for a share of what you carry.', Core.idx(0, 12), 2);
+    Art.button(En, 170, 268, 300, 56, 'WAKE AT THE TEMPLE', false, 2);
+    reg('revive', 170, 268, 300, 56, 1);
+  }
+
+  function menu(g) {
+    const En = E();
+    const f = screenFrame('MENU', 520, 400);
+    Art.text(En, f.x + 30, f.inner + 6, 'SAVE', Core.idx(13, 14), 2);
+    for (let i = 0; i < 3; i++) {
+      Art.button(En, f.x + 30, f.inner + 32 + i * 48, 190, 42, 'SLOT ' + (i + 1), false, 2);
+      reg('saveslot', f.x + 30, f.inner + 32 + i * 48, 190, 42, i);
+    }
+    Art.text(En, f.x + 260, f.inner + 6, 'LOAD', Core.idx(13, 14), 2);
+    for (let i = 0; i < 3; i++) {
+      const has = g.slotUsed ? g.slotUsed(i) : true;
+      Art.button(En, f.x + 260, f.inner + 32 + i * 48, 190, 42, has ? 'SLOT ' + (i + 1) : 'EMPTY', false, 2);
+      if (has) reg('loadslot', f.x + 260, f.inner + 32 + i * 48, 190, 42, i);
+    }
+    Art.button(En, f.x + 30, f.y + f.h - 62, 200, 44, 'TITLE SCREEN', false, 2);
+    reg('titlescreen', f.x + 30, f.y + f.h - 62, 200, 44, 1);
+    Art.text(En, f.x + 250, f.y + f.h - 50, 'Three slots. Saving never', Core.idx(0, 11), 1);
+    Art.text(En, f.x + 250, f.y + f.h - 38, 'overwrites without you choosing.', Core.idx(0, 11), 1);
+  }
+
   // ---------------------------------------------------------------- title & creation
   function title(g) {
     const En = E();
@@ -3988,6 +4060,19 @@ const UI = (() => {
       reg('cslot', x, y, 90, 34, i);
     }
 
+    // Name, sex and portrait. Creation that ignores all three and hands you the same four people
+    // is not character creation.
+    let ny = f.inner + 2;
+    Art.button(En, f.x + 16, ny, 34, 30, '<', false, 2); reg('cname', f.x + 16, ny, 34, 30, -1);
+    Art.text(En, f.x + 58, ny + 8, spec.name, Core.idx(13, 14), 2);
+    Art.button(En, f.x + 170, ny, 34, 30, '>', false, 2); reg('cname', f.x + 170, ny, 34, 30, 1);
+    Art.button(En, f.x + 214, ny, 70, 30, spec.sex === 'f' ? 'FEMALE' : 'MALE', false, 2);
+    reg('csex', f.x + 214, ny, 70, 30, 1);
+    Art.button(En, f.x + 292, ny, 34, 30, '<', false, 2); reg('cport', f.x + 292, ny, 34, 30, -1);
+    const pv = Sprites.portrait(spec.portrait === undefined ? slot : spec.portrait, spec.cls, spec.sex);
+    En.blitScaled(pv, f.x + 330, ny - 4, 36, 40, 0);
+    Art.button(En, f.x + 372, ny, 34, 30, '>', false, 2); reg('cport', f.x + 372, ny, 34, 30, 1);
+
     let y = f.inner + 40;
     Art.text(En, f.x + 16, y, 'CLASS', Core.idx(13, 13), 2);
     Rules.CLASS_IDS.forEach((cid, i) => {
@@ -3997,9 +4082,17 @@ const UI = (() => {
     });
 
     y += 110;
-    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(0, 74), Core.idx(0, 11), 1);
-    y += 18;
-    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(74, 148), Core.idx(0, 11), 1);
+    // Word-wrap the blurb. Slicing at a fixed character count broke it mid-word, and it is the
+    // first prose a new player reads.
+    {
+      const words = Rules.CLASSES[spec.cls].blurb.split(' ');
+      let line = '', ly = y;
+      for (const w of words) {
+        if (line && (line + ' ' + w).length > 74) { Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1); ly += 12; line = w; }
+        else line = line ? line + ' ' + w : w;
+      }
+      if (line) Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1);
+    }
 
     // Point buy.
     y += 26;
@@ -4009,12 +4102,12 @@ const UI = (() => {
     y += 24;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;
-      Art.text(En, cx, cy + 8, Rules.STAT_NAME[s], Core.idx(0, 12), 2);
-      Art.button(En, cx + 130, cy, 34, 30, '-', false, 2);
-      reg('statdn', cx + 130, cy, 34, 30, s);
-      Art.text(En, cx + 176, cy + 8, String(spec.base[s]), Core.idx(13, 14), 2);
-      Art.button(En, cx + 210, cy, 34, 30, '+', false, 2);
-      reg('statup', cx + 210, cy, 34, 30, s);
+      Art.text(En, cx, cy + 8, Rules.STAT_NAME[s].slice(0, 11), Core.idx(0, 12), 2);
+      Art.button(En, cx + 148, cy, 34, 30, '-', false, 2);
+      reg('statdn', cx + 148, cy, 34, 30, s);
+      Art.text(En, cx + 192, cy + 8, String(spec.base[s]), Core.idx(13, 14), 2);
+      Art.button(En, cx + 228, cy, 34, 30, '+', false, 2);
+      reg('statup', cx + 228, cy, 34, 30, s);
     });
 
     const errs = Rules.validateCreation({ members: g.createSpec });
@@ -4026,16 +4119,19 @@ const UI = (() => {
   // ---------------------------------------------------------------- dispatch
   const SCREENS = {
     sheet: charSheet, inv: inventory, book: spellbook, map: automap,
-    shop, dialogue, rest: restScreen, title, creation,
+    shop, dialogue, rest: restScreen, title, creation, menu, defeat,
   };
 
   function draw(g) {
     clearRegions();
     if (g.screen === 'title') { title(g); return; }
     if (g.screen === 'creation') { creation(g); return; }
+    if (g.screen === 'defeat') { defeat(g); return; }
 
     Art.gameFrame(E());
-    drawHUD(g);
+    // HUD is drawn NON-INTERACTIVE behind a modal: it used to render on top of every panel and
+    // stay clickable through it, so pressing where RST sits opened Make Camp through the sheet.
+    drawHUD(g, !g.screen);
     if (!g.screen) drawTouchControls(g);
     else if (SCREENS[g.screen]) SCREENS[g.screen](g);
   }
@@ -4150,10 +4246,19 @@ const Game = (() => {
     const members = s.map((m, i) => {
       const ch = Rules.makeCharacter(m, i);
       ch.spells = {};
-      // Starting spells: tier 1 of every school the class can actually use.
+      // Starting spells: tiers 1-3 of every school the class is TRAINED in, plus a guaranteed
+      // heal for divine casters and a guaranteed attack cantrip for arcane ones. A party that
+      // cannot heal or hurt anything at level 1 is not a party.
       for (const id of Spellcraft.SPELL_IDS) {
         const sp = Spellcraft.SPELLS[id];
-        if (sp.tier === 1 && Rules.classCap(ch.cls, sp.school) > 0 && ch.skills[sp.school]) ch.spells[id] = true;
+        if (sp.tier <= 3 && Rules.classCap(ch.cls, sp.school) > 0 && ch.skills[sp.school]) ch.spells[id] = true;
+      }
+      for (const guaranteed of ['first_aid', 'fire_bolt', 'mind_blast', 'light_bolt', 'cure_weak', 'torch_light']) {
+        const sp = Spellcraft.SPELLS[guaranteed];
+        if (Rules.classCap(ch.cls, sp.school) > 0) {
+          if (!ch.skills[sp.school]) ch.skills[sp.school] = { lvl: 1, mastery: Rules.MASTERY.NOVICE };
+          ch.spells[guaranteed] = true;
+        }
       }
       return ch;
     });
@@ -4481,6 +4586,40 @@ const Game = (() => {
       Log.push('The ' + def.name + ' misses ' + victim.name + '.', 'info');
     }
     e.recovery = def.speed * 8;
+  }
+
+  // Defeat is a terminal event with a cost, the way MM6 handled it: you wake at the temple,
+  // poorer, a day later. It must NEVER be a state the player can walk around in, and it must never
+  // be something a save can silently capture.
+  function checkDefeat() {
+    if (!state.party || state.defeated) return false;
+    const anyUp = state.party.members.some((c) => Rules.canAct(c));
+    if (anyUp) return false;
+    state.defeated = true;
+    state.screen = 'defeat';
+    return true;
+  }
+
+  function reviveAtTemple() {
+    const p = state.party;
+    const toll = Math.min(p.gold, Math.max(0, Math.round(p.gold * 0.4)));
+    p.gold -= toll;
+    for (const c of p.members) {
+      c.cond.dead = false; c.cond.unconscious = false; c.cond.asleep = false;
+      c.cond.afraid = false; c.cond.weak = false;
+      c.hp = Math.max(1, Math.round(Rules.maxHP(c) * 0.5));
+      c.sp = Math.round(Rules.maxSP(c) * 0.5);
+    }
+    Clock.skip(1440);
+    const home = state.world.maps.harrowgate;
+    enterMap('harrowgate');
+    p.x = home.town.x + 0.5; p.y = home.town.y + 3.5;
+    p.z = World.walkHeight(state.map, p.x, p.y);
+    p.ang = -Math.PI / 2;
+    state.defeated = false;
+    state.screen = null;
+    Log.push('You wake in the Harrowgate temple. The priests took ' + toll + ' gold.', 'sys');
+    return true;
   }
 
   // ---------------------------------------------------------------- interaction
@@ -5083,7 +5222,8 @@ const Game = (() => {
   }
 
   function openScreen(name) {
-    if (name === 'menu') { save(0); Log.push('Saved.', 'sys'); return null; }
+    // MNU used to be a silent one-slot save. A player looking for a menu after a party wipe
+    // overwrote their only save with the corpse and lost the run.
     state.screen = state.screen === name ? null : name;
     return state.screen;
   }
@@ -5108,9 +5248,15 @@ const Game = (() => {
       case 'btn': openScreen(r.data); break;
       case 'act': {
         // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
-        if (state.combat.active && nearestEnemy(reachOf(state.party.members[state.active]))) {
-          const r = partyAttack();
-          if (!r.ok) Log.push(r.why, 'info');
+        if (state.combat.active && nearestEnemy(18)) {
+          // Commit the WHOLE party, the way MM6's Attack did. Swinging one character at a time
+          // while the other three stand idle is not a combat system.
+          let any = false, why = null;
+          for (let i = 0; i < state.party.members.length; i++) {
+            const r = partyAttack(i);
+            if (r.ok) any = true; else if (!why) why = r.why;
+          }
+          if (!any && why) Log.push(why, 'info');
         } else interact();
         break;
       }
@@ -5121,20 +5267,29 @@ const Game = (() => {
       case 'doequip': equipFromPack(r.data); break;
       case 'drop': dropFromPack(r.data); break;
       case 'equip': unequip(r.data); break;
-      case 'school': state.bookSchool = r.data; break;
+      case 'school': state.bookSchool = r.data; state.bookPage = 0; break;
+      case 'bookpage': state.bookPage = clamp((state.bookPage || 0) + r.data, 0, 2); break;
       case 'buy': buy(r.data); break;
-      case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } break;
-      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } break;
-      case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; } break;
+      case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } else Log.push('Not enough gold — the temple asks ' + r.data + ', you have ' + state.party.gold + '.', 'info'); break;
+      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } else Log.push('Not enough gold for a bed (' + r.data + ').', 'info'); break;
+      case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; Log.push('Bought rations.', 'good'); } else Log.push('Not enough gold for rations.', 'info'); break;
       case 'train': doTrain(r.data); break;
       case 'skillup': doSkillUp(r.data); break;
       case 'acceptquest': acceptQuest(r.data); break;
       case 'turnin': turnInQuest(r.data); closeScreens(); break;
       case 'dorest': doRest(); break;
       case 'newgame': startCreation(); break;
+      case 'saveslot': if (save(r.data)) Log.push('Saved to slot ' + (r.data + 1) + '.', 'sys'); else Log.push('Could not save.', 'hit'); break;
+      case 'loadslot': if (load(r.data)) Log.push('Loaded slot ' + (r.data + 1) + '.', 'sys'); else Log.push('Slot ' + (r.data + 1) + ' is empty.', 'info'); break;
+      case 'revive': reviveAtTemple(); break;
+      case 'usepack': useFromPack(r.data); break;
+      case 'titlescreen': state.screen = 'title'; break;
       case 'continue': if (!load(0)) { startCreation(); } else state.screen = null; break;
       case 'cslot': state.createSlot = r.data; break;
       case 'cclass': state.createSpec[state.createSlot].cls = r.data; break;
+      case 'cname': cycleName(state.createSlot, r.data); break;
+      case 'csex': cycleSex(state.createSlot); break;
+      case 'cport': cyclePortrait(state.createSlot, r.data); break;
       case 'statup': bumpStat(r.data, 1); break;
       case 'statdn': bumpStat(r.data, -1); break;
       case 'startgame': newParty(state.createSpec); state.screen = null; break;
@@ -5169,6 +5324,41 @@ const Game = (() => {
     return true;
   }
 
+  // USE a consumable. This did not exist: the inventory offered EQUIP and DROP, so eight healing
+  // potions sat in the pack while the party died.
+  function useFromPack(i, who) {
+    const ch = state.party.members[who === undefined ? state.active : who];
+    const st = ch.pack[i];
+    if (!st) return false;
+    const it = Items.def(st);
+    if (!it) return false;
+
+    if (it.kind === 'food') {
+      state.party.food += it.food || 1;
+      Log.push(ch.name + ' stows rations.', 'good');
+    } else if (it.kind === 'potion') {
+      if (Rules.isDead(ch)) { Log.push(ch.name + ' cannot drink.', 'info'); return false; }
+      let did = false;
+      if (it.heal) { const h = Rules.healTo(ch, it.heal); if (h) { Log.push(ch.name + ' recovers ' + h + ' HP.', 'good'); did = true; } }
+      if (it.mana) { const before = ch.sp; ch.sp = Math.min(Rules.maxSP(ch), ch.sp + it.mana);
+        if (ch.sp > before) { Log.push(ch.name + ' recovers ' + (ch.sp - before) + ' SP.', 'good'); did = true; } }
+      if (it.cure) { for (const c of it.cure) if (ch.cond[c]) { ch.cond[c] = false; did = true; }
+        if (did) Log.push(ch.name + ' is cured.', 'good'); }
+      if (!did) { Log.push('That would do nothing right now.', 'info'); return false; }
+    } else if (it.kind === 'tool' && it.light) {
+      setBuff('light', it.light, 240);
+      Log.push(ch.name + ' lights a torch.', 'good');
+    } else {
+      Log.push('You cannot use that.', 'info');
+      return false;
+    }
+
+    st.qty = (st.qty || 1) - 1;
+    if (st.qty <= 0) ch.pack.splice(i, 1);
+    state.selectedItem = null;
+    return true;
+  }
+
   function dropFromPack(i) {
     const ch = state.party.members[state.active];
     const st = ch.pack[i];
@@ -5184,7 +5374,10 @@ const Game = (() => {
     const st = state.shopStock[i];
     if (!st) return false;
     const price = Rules.buyPrice(Items.value(st), ch);
-    if (state.party.gold < price) { Log.push('Not enough gold.', 'info'); return false; }
+    if (state.party.gold < price) {
+      Log.push('Not enough gold — ' + Items.ITEMS[st.id].name + ' costs ' + price + ', you have ' + state.party.gold + '.', 'info');
+      return false;
+    }
     state.party.gold -= price;
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
@@ -5234,10 +5427,37 @@ const Game = (() => {
     return true;
   }
 
+  const NAME_POOL = [
+    ['Alder', 'Bree', 'Cass', 'Dorn', 'Edrik', 'Fenn', 'Gwen', 'Hale'],
+    ['Isolde', 'Jarn', 'Kesta', 'Lyril', 'Maud', 'Neris', 'Orrin', 'Pell'],
+    ['Quill', 'Rowan', 'Sela', 'Tarn', 'Ulric', 'Vesta', 'Wray', 'Yarrow'],
+    ['Ansel', 'Brann', 'Corvin', 'Dara', 'Eska', 'Fyn', 'Garrick', 'Hesper'],
+  ];
+
   function startCreation() {
     state.createSpec = defaultSpec();
     state.createSlot = 0;
     state.screen = 'creation';
+  }
+
+  // Cycle the name, sex and portrait of the character being created. Creation that ignores what
+  // you chose and hands you the same four people is not character creation.
+  function cycleName(slot, dir) {
+    const spec = state.createSpec[slot];
+    const pool = NAME_POOL[slot];
+    const i = pool.indexOf(spec.name);
+    spec.name = pool[((i < 0 ? 0 : i) + (dir || 1) + pool.length) % pool.length];
+    return spec.name;
+  }
+  function cycleSex(slot) {
+    const spec = state.createSpec[slot];
+    spec.sex = spec.sex === 'f' ? 'm' : 'f';
+    return spec.sex;
+  }
+  function cyclePortrait(slot, dir) {
+    const spec = state.createSpec[slot];
+    spec.portrait = (((spec.portrait === undefined ? slot : spec.portrait) + (dir || 1)) + 12) % 12;
+    return spec.portrait;
   }
 
   function bumpStat(s, d) {
@@ -5271,6 +5491,7 @@ const Game = (() => {
     state.seen = seen;
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
+    state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
 
     state.world = World.build(7);
     state.createSpec = defaultSpec();
@@ -5298,9 +5519,13 @@ const Game = (() => {
   }
 
   function update(dt) {
-    Clock.advance(dt);
     Art.step();
+    // The clock runs only during PLAY. It ran through the title screen and character creation, so
+    // a new game could begin at 21:47 in the dark, and it ran behind every open menu, so reading
+    // an inventory cost six game hours.
     if (state.screen === 'title' || state.screen === 'creation' || !state.party) return;
+    if (!state.screen) Clock.advance(dt);
+    else return;
 
     if (!state.screen) move(dt);
 
@@ -5329,6 +5554,7 @@ const Game = (() => {
       if (e.alerted) anyAlerted = true;
     }
     state.combat.active = anyAlerted && !!nearestEnemy(AGGRO);
+    checkDefeat();
   }
 
   function render() {
@@ -5480,7 +5706,8 @@ const Game = (() => {
     },
     acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
     partyAttack, reachOf, nearestEnemy, liveEnemies,
-    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, usePortal, giveStack,
+    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
+    checkDefeat, reviveAtTemple, cycleName, cycleSex, cyclePortrait, NAME_POOL,
     buff, setBuff, SPECIALS, isUndead,
     get party() { return state.party; },
     get map() { return state.map; },
