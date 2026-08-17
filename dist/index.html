@@ -3611,6 +3611,7 @@ const Font = (() => {
   def("'", 12, [s(6, CAP - 12, 6, CAP, 5)]);
   def('"', 19, [s(6, CAP - 12, 6, CAP, 5), s(14, CAP - 12, 14, CAP, 5)]);
   def('-', 20, [r(3, 18, 18, 22)]);
+  def('_', 24, [r(0, -8, 24, -4)]);
   // The UI writes an EM DASH — "MAP — HARROWGATE VALE", "Rest the night — 10 gold". It was not in
   // the face, so five separate screens rendered a '?' where the separator belonged.
   def('\u2014', 34, [r(1, 18, 33, 22)]);
@@ -5718,8 +5719,30 @@ const Sprites = (() => {
     if (kind === 'weapon') {
       const sk = it.skill;
       if (sk === 'bow') {
-        for (let a = -14; a <= 14; a++) put(10 + Math.round(Math.cos(a / 18) * 7), 16 + a, 4, 8);
-        for (let y = 2; y < 30; y++) put(18, y, 0, 10);
+        // A BOW IS A CURVE WITH A STRING ACROSS ITS CHORD. The old icon walked cos(a/18) for a in
+        // -14..14 — a span of 0.78 radians, which bulges by two pixels over twenty-nine rows. That
+        // is a straight line. A critic: "the War Bow icon is a 1px vertical line with a slight
+        // kink. There is no bow. It reads as a hairline crack in the panel background."
+        // Size scales CONTINUOUSLY with draw weight. A single >=12 threshold put the long bow and
+        // the war bow on the same side of it, and they came out pixel-identical.
+        const power = (it.dmg && it.dmg.n * it.dmg.sides) || 6;
+        const span = Math.max(9, Math.min(14, Math.round(7 + power * 0.45)));
+        const bulge = Math.max(5, Math.min(10, Math.round(3 + power * 0.42)));
+        const strX = 22;                             // the string; the limb bows away to its left
+        for (let a = -span; a <= span; a++) {
+          const t = a / span;
+          const x = strX - Math.round(bulge * (1 - t * t)) - 2;
+          const th = Math.abs(t) > 0.86 ? 0 : (Math.abs(t) < 0.24 ? 2 : 1);
+          for (let k = -th; k <= th; k++) put(x + k, 16 + a, 4, 9 - Math.abs(k));
+        }
+        for (let y = 16 - span; y <= 16 + span; y++) put(strX, y, 0, 11);   // string, taut
+        put(strX - 1, 16 - span, 13, 13); put(strX - 1, 16 + span, 13, 13); // nocks
+        for (let y = 13; y <= 19; y++) {                                    // leather grip
+          for (let k = -2; k <= 2; k++) put(strX - bulge - 2 + k, y, 13, 8 - Math.abs(k));
+        }
+        // A nocked arrow, so the silhouette reads as archery and not as a bent stick.
+        for (let x = strX - bulge - 1; x < strX + 6; x++) put(x, 16, 4, 11);
+        put(strX + 6, 16, 14, 13); put(strX + 5, 15, 14, 12); put(strX + 5, 17, 14, 12);
       } else if (sk === 'axe') {
         for (let y = 4; y < 29; y++) put(20, y, 4, 7);                       // haft
         for (let y = 4; y < 16; y++) {
@@ -5727,12 +5750,32 @@ const Sprites = (() => {
           for (let x = 0; x < wdt; x++) put(19 - x, y, 14, 12 - (x >> 1));   // blade
         }
       } else if (sk === 'mace') {
-        for (let y = 12; y < 29; y++) put(16, y, 4, 7);                      // haft
-        for (let y = 3; y < 13; y++) for (let x = -5; x <= 5; x++) {
-          if (Math.hypot(x, y - 8) > 5.4) continue;
-          put(16 + x, y, 14, 11 - Math.abs(x) / 2);                          // head
+        // A CLUB IS WOOD AND A MACE IS STEEL. Both were drawn as the same flanged metal head at
+        // two scales, and a critic reported them as one icon serving two products.
+        const heavy = (it.dmg && it.dmg.sides >= 7);
+        if (heavy) {
+          for (let y = 12; y < 29; y++) put(16, y, 4, 7);                    // haft
+          for (let y = 3; y < 13; y++) for (let x = -5; x <= 5; x++) {
+            if (Math.hypot(x, y - 8) > 5.4) continue;
+            put(16 + x, y, 14, 11 - Math.abs(x) / 2);                        // steel head
+          }
+          for (const [fx, fy] of [[-7, 8], [7, 8], [0, 1], [0, 15]]) put(16 + fx, fy, 14, 13);
+          for (let y = 24; y < 29; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 13, 9);
+        } else {
+          // A cudgel: one piece of wood, thin at the grip and swelling to the striking end, with
+          // grain and a couple of knots. No metal anywhere.
+          for (let y = 2; y < 30; y++) {
+            const t = (y - 2) / 28;                                          // 0 head, 1 grip
+            const ww = Math.max(1, Math.round(5.5 - t * 4));
+            for (let x = -ww; x <= ww; x++) {
+              let sh = 9 - Math.abs(x) * 0.9;
+              if (((x * 3 + y * 5) & 7) === 0) sh -= 1;                      // grain
+              put(16 + x, y, 4, Core.clamp(Math.round(sh), 3, 12));
+            }
+          }
+          put(13, 8, 4, 5); put(14, 9, 4, 5); put(18, 17, 4, 5);             // knots
+          for (let y = 24; y < 29; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 13, 7);
         }
-        for (const [fx, fy] of [[-7, 8], [7, 8], [0, 1], [0, 15]]) put(16 + fx, fy, 14, 13);
       } else if (sk === 'staff') {
         for (let y = 1; y < 30; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 4, 8 - Math.abs(x));
         for (let x = -4; x <= 4; x++) put(16 + x, 4, 4, 6);                   // binding
@@ -5742,6 +5785,16 @@ const Sprites = (() => {
         for (let y = 1; y < 9; y++) {
           const wdt = Math.max(0, 3 - Math.abs(y - 5));
           for (let x = -wdt; x <= wdt; x++) put(16 + x, y, 14, 12 - Math.abs(x));
+        }
+        // A HALBERD IS A SPEAR WITH AN AXE ON IT. Both carry skill 'spear', so they were the same
+        // drawing and only their price differed.
+        if (it.dmg && it.dmg.n >= 2) {
+          for (let y = 6; y < 17; y++) {
+            const wdt = Math.round(7 - Math.abs(y - 11) * 0.55);
+            for (let x = 0; x < wdt; x++) put(17 + x, y, 14, 13 - (x >> 1));   // blade
+          }
+          for (let y = 8; y < 14; y++) put(13, y, 14, 11);                     // rear spike
+          for (let x = -3; x <= 3; x++) put(16 + x, 17, 13, 10);               // langet
         }
       } else if (sk === 'dagger') {
         for (let y = 8; y < 21; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 14, 12 - Math.abs(x));
@@ -5770,9 +5823,84 @@ const Sprites = (() => {
           put(16 + x, y, 13, 12 - Math.abs(x));                                    // pommel
         }
       }
+    } else if (kind === 'armour' && it.slot !== 'armour') {
+      // EVERY SLOT IS ITS OWN OBJECT. All of these are kind:'armour', and the painter only ever
+      // drew a torso — so a buckler, a helm, boots, a cloak, gauntlets and a belt were one icon
+      // between them. A duplicate-detector over the whole equipment table found twenty-two
+      // identical pairs; a critic had already spotted the five that reach a shop shelf.
+      const tier = (it.ac || 1);
+      const metal = tier >= 3;
+      const ramp = metal ? (tier >= 5 ? 14 : 1) : 4;
+      const slot = it.slot;
+      if (slot === 'offhand') {                       // shield: heater or round, by size
+        const big = tier >= 6;
+        for (let y = 3; y < 29; y++) {
+          const t = (y - 3) / 26;
+          const ww = big ? Math.round(11 * Math.sqrt(Math.max(0, 1 - t * t * 0.75)))
+            : Math.round(9 * Math.sqrt(Math.max(0, 1 - (t - 0.15) * (t - 0.15) * 1.6)));
+          for (let x = -ww; x <= ww; x++) {
+            let sh = 11 - Math.round((x + ww) / (ww * 2 + 1) * 6);
+            if (Math.abs(x) < 2) sh += 1;             // central spine
+            put(16 + x, y, ramp, clamp(sh, 3, 14));
+          }
+        }
+        for (let y = 5; y < 27; y += 7) for (let x = -8; x <= 8; x++) put(16 + x, y, 13, 9);
+        put(16, 16, 13, 14); put(15, 16, 13, 12); put(17, 16, 13, 12);   // boss
+      } else if (slot === 'helm') {                   // dome, brow band, nasal
+        for (let y = 6; y < 22; y++) {
+          const t = (y - 6) / 16;
+          const ww = Math.round(9 * Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t) * 0.9)));
+          for (let x = -ww; x <= ww; x++) {
+            put(16 + x, y, ramp, clamp(11 - Math.round((x + ww) / (ww * 2 + 1) * 6), 3, 14));
+          }
+        }
+        for (let x = -9; x <= 9; x++) put(16 + x, 21, 13, 10);
+        if (tier >= 4) for (let y = 21; y < 27; y++) put(16, y, ramp, 12);  // nasal bar
+        if (tier >= 5) for (let x = -3; x <= 3; x++) put(16 + x, 5, 13, 13); // crest
+      } else if (slot === 'boots') {                  // a pair, toes apart
+        for (const sgn of [-1, 1]) {
+          const bx = 16 + sgn * 6;
+          for (let y = 8; y < 24; y++) for (let x = -3; x <= 3; x++) {
+            put(bx + x, y, ramp, clamp(10 - Math.abs(x), 3, 13));
+          }
+          for (let x = -3; x <= 6 * sgn + 3 * sgn; x += 1) put(bx + x * sgn, 24, ramp, 9);
+          for (let y = 24; y < 28; y++) for (let x = -4; x <= 5; x++) {
+            put(bx + x * sgn, y, ramp, clamp(9 - Math.abs(x) / 2, 3, 12));
+          }
+        }
+      } else if (slot === 'cloak') {                  // shoulders, fall, hem
+        for (let y = 5; y < 28; y++) {
+          const ww = Math.round(4 + (y - 5) * 0.42);
+          for (let x = -ww; x <= ww; x++) {
+            let sh = 10 - Math.round((x + ww) / (ww * 2 + 1) * 5);
+            if (((x * 5 + y * 3) & 7) === 0) sh -= 1;                       // weave
+            put(16 + x, y, ramp, clamp(sh, 3, 13));
+          }
+        }
+        for (let x = -5; x <= 5; x++) put(16 + x, 5, 13, 11);              // collar
+        put(16, 7, 13, 14);                                                 // clasp
+      } else if (slot === 'gaunt') {                  // a gauntlet: cuff, back, fingers
+        for (let y = 16; y < 27; y++) for (let x = -7; x <= 7; x++) {
+          put(16 + x, y, ramp, clamp(11 - Math.abs(x), 3, 14));
+        }
+        for (let i = 0; i < 4; i++) {
+          for (let y = 6; y < 17; y++) put(11 + i * 3, y, ramp, 10 - (i & 1));
+        }
+        for (let x = -8; x <= 8; x++) put(16 + x, 26, 13, 10);              // cuff band
+      } else {                                        // belt: strap, buckle, tongue
+        for (let x = 2; x < 30; x++) for (let y = 13; y < 20; y++) {
+          put(x, y, ramp, clamp(10 - Math.abs(y - 16), 3, 13));
+        }
+        for (let y = 11; y < 22; y++) for (let x = 20; x < 27; x++) {
+          if (x > 21 && x < 25 && y > 13 && y < 19) continue;               // the hole
+          put(x, y, 13, 12);
+        }
+        for (let x = 4; x < 18; x += 4) put(x, 16, 13, 6);                  // punch holes
+      }
     } else if (kind === 'armour') {
       // Three genuinely different silhouettes, because plate, chain and leather priced 165g apart
-      // must not be the same grey lozenge at three brightnesses.
+      // must not be the same grey lozenge at three brightnesses. WITHIN a class the tier still has
+      // to read: padded, leather and studded all skill:'leather' came out pixel-identical.
       const ramp = it.skill === 'plate' ? 14 : it.skill === 'chain' ? 1 : 4;
       const plate = it.skill === 'plate';
       for (let y = 6; y < 27; y++) {
@@ -5782,6 +5910,11 @@ const Sprites = (() => {
           let sh = clamp(11 - Math.round((x + ww) / (ww * 2 + 1) * 6), 3, 14);
           if (it.skill === 'chain' && ((x + y) & 1)) sh = clamp(sh - 3, 2, 14);   // mail texture
           if (plate && Math.abs(x) < 2 && y > 9) sh = clamp(sh + 2, 3, 15);       // centre ridge
+          // Tier inside the class: studs at the low end, banding at the high end, so two items of
+          // the same material and different price are not the same picture.
+          const tier = it.ac || 1;
+          if (tier >= 8 && ((x * 3 + y * 3) % 11) === 0) sh = clamp(sh + 3, 3, 15);
+          if (tier >= 16 && (y % 6) === 0) sh = clamp(sh + 2, 3, 15);
           put(16 + x, y, ramp, sh);
         }
       }
@@ -5813,6 +5946,31 @@ const Sprites = (() => {
       for (let y = 8; y < 25; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 13, clamp(12 - ((x + y) & 3), 8, 15));
     } else {
       for (let y = 9; y < 24; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 4, 8);
+    }
+
+    // ---- tier ornament, BEFORE the outline pass so decoration gets outlined with everything else.
+    //
+    // A shop shelf shows items whose prices span thirty to two thousand two hundred gold, and the
+    // eye should be able to rank them. A duplicate check over the whole equipment table found
+    // twelve pairs still pixel-identical after their silhouettes were separated — short sword and
+    // long sword, hand axe and battle axe, iron helm and great helm — because tier had no visual
+    // consequence at all. Finer gear carries more work: a rivet, then studs and a band, then a gem
+    // and etching. It is how the period drew value, and it makes every price its own picture.
+    if ((kind === 'weapon' || kind === 'armour') && it.value) {
+      const v = it.value;
+      // Only ever ON existing ink, so ornament decorates the object instead of floating beside it.
+      const onInk = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h && d[y * w + x]) put(x, y, ramp, sh); };
+      if (v >= 60) { onInk(16, 26, 13, 14); onInk(15, 26, 13, 11); }
+      if (v >= 200) for (const yy of [10, 20]) { onInk(12, yy, 13, 13); onInk(20, yy, 13, 13); }
+      if (v >= 600) {
+        for (let y = 6; y < 26; y += 3) onInk(16, y, 13, 12);
+        onInk(16, 8, 12, 15); onInk(15, 8, 12, 13); onInk(17, 8, 12, 13);
+      }
+      if (v >= 1500) {
+        for (const g of [[11, 14], [21, 14], [16, 23]]) {
+          onInk(g[0], g[1], 12, 15); onInk(g[0] - 1, g[1], 12, 12); onInk(g[0] + 1, g[1], 12, 12);
+        }
+      }
     }
 
     const out = Uint8Array.from(d);

@@ -1212,6 +1212,42 @@ const T = require('./_harness.js');
     T.ok(night.skyL > night.groundL,
       'the night sky stays brighter than the ground (' + night.skyL.toFixed(1) + ' vs ' + night.groundL.toFixed(1) + ')');
 
+    // ---- NO TWO ITEMS MAY SHARE AN ICON, and no icon may be a hairline. A critic found the War
+    // Bow drawn as "a 1px vertical line with a slight kink — it reads as a hairline crack in the
+    // panel background", and Long Sword and Broadsword pixel-identical but for two pixels of blade.
+    // Club and Mace were the same flanged steel head at two scales, wood and metal alike.
+    const icons = await page.evaluate(`(() => {
+      const ids = Items.ITEM_IDS.filter((id) => {
+        const k = Items.ITEMS[id].kind;
+        return k === 'weapon' || k === 'armour' || k === 'bow';
+      });
+      const seen = new Map(), dupes = [], thin = [];
+      for (const id of ids) {
+        const ic = Sprites.icon(id);
+        if (!ic) continue;
+        let ink = 0, x0 = 99, x1 = -1, y0 = 99, y1 = -1, key = '';
+        for (let y = 0; y < ic.h; y++) {
+          for (let x = 0; x < ic.w; x++) {
+            const pi = ic.data[y * ic.w + x];
+            key += pi ? String.fromCharCode(65 + (pi & 31)) : '.';
+            if (!pi) continue;
+            ink++;
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+          }
+        }
+        const w = x1 - x0 + 1, h = y1 - y0 + 1;
+        // A silhouette narrower than 4px, or filling under 4% of its cell, is a scratch.
+        if (ink < ic.w * ic.h * 0.04 || w < 4) thin.push(id + ' (' + w + 'x' + h + ', ' + ink + 'px)');
+        if (seen.has(key)) dupes.push(seen.get(key) + ' == ' + id);
+        else seen.set(key, id);
+      }
+      return { n: ids.length, dupes, thin };
+    })()`);
+    T.ok(icons.n > 10, 'there are equipment icons to check (' + icons.n + ')');
+    T.eq(icons.dupes, [], 'no two equipment items share a pixel-identical icon');
+    T.eq(icons.thin, [], 'no equipment icon is a hairline');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

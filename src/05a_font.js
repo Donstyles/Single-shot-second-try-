@@ -201,6 +201,7 @@ const Font = (() => {
   def("'", 12, [s(6, CAP - 12, 6, CAP, 5)]);
   def('"', 19, [s(6, CAP - 12, 6, CAP, 5), s(14, CAP - 12, 14, CAP, 5)]);
   def('-', 20, [r(3, 18, 18, 22)]);
+  def('_', 24, [r(0, -8, 24, -4)]);
   // The UI writes an EM DASH — "MAP — HARROWGATE VALE", "Rest the night — 10 gold". It was not in
   // the face, so five separate screens rendered a '?' where the separator belonged.
   def('\u2014', 34, [r(1, 18, 33, 22)]);
