@@ -457,8 +457,15 @@ const Engine = (() => {
             // window, no lantern, no warm pool". Night was a global multiply, and a global multiply
             // is a filter, not a time of day. A window is a hole in a wall with a fire behind it,
             // and it must ignore the sun term entirely or it goes out with everything else.
-            const lampLit = !dungeon && sun <= -1 && Art.isBuilding(mat);
-            const lampSeed = lampLit ? (Core.hashStr('win' + cx + ':' + cy + ':' + face) >>> 0) : 0;
+            // WINDOWS EXIST IN DAYLIGHT TOO. They were drawn only after dark, so by day every
+            // facade in town was a flat slab with a door decal on it — a direct A/B against the
+            // real game put our plaza beside its town gate, and theirs carries a signboard, a
+            // lintel, glazing bars and shutters where ours had nothing above the doorway.
+            // The same generator serves both: at night the glass is lit from within, by day it is
+            // dark glass in a frame, which is exactly the difference a real window shows.
+            const hasWindows = !dungeon && Art.isBuilding(mat);
+            const lampLit = hasWindows && sun <= -1;
+            const lampSeed = hasWindows ? (Core.hashStr('win' + cx + ':' + cy + ':' + face) >>> 0) : 0;
             for (let y = top; y < ybuf; y++) {
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
@@ -478,8 +485,8 @@ const Engine = (() => {
               // 0.719. The defect was never in the art. It was one divisor in the sampler.
               const vs = (topH - wh) / STOREY;
               const v = (topH - wh) / TEX_UNIT;
-              if (lampLit) {
-                const lit = Art.windowTexel(u, vs, lampSeed, storeys);
+              if (hasWindows) {
+                const lit = Art.windowTexel(u, vs, lampSeed, storeys, lampLit);
                 if (lit) { buf[y * W + px] = lit; continue; }
               }
               // Banded wall: a lower course of a contrasting material, with a bright moulding at

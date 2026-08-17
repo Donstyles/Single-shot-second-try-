@@ -493,7 +493,10 @@ const Art = (() => {
   // the framebuffer so the sun term never touches it. Which storeys are lit, and which of the two
   // window columns, comes from the cell hash — so a street has some rooms awake and some not, and
   // it is the same street every night.
-  function windowTexel(u, v, seed, storeys) {
+  // `lit` decides whether there is a fire behind the glass. By day the SAME opening is dark glass
+  // with a sky sheen on it, which is what a real window looks like from outside — and drawing it
+  // is the difference between a facade and a slab.
+  function windowTexel(u, v, seed, storeys, lit) {
     const st = Math.floor(v);                        // which storey of this wall
     if (st < 0 || st >= (storeys || 1)) return 0;
     const fv = v - st;
@@ -503,13 +506,19 @@ const Art = (() => {
     const fu = col ? (u - 0.5) * 2 : u * 2;
     if (fu < 0.26 || fu > 0.74) return 0;
     const bit = (seed >>> ((st * 2 + col) & 15)) & 1;
-    if (!bit) return 0;                              // that room is dark
-    // Frame, then glow, then a mullion cross.
+    if (lit && !bit) return 0;                       // that room is dark; show the wall
+    // Frame, then glass, then a mullion cross.
     const edge = fu < 0.32 || fu > 0.68 || fv < 0.35 || fv > 0.67;
-    if (edge) return Core.idx(4, 2);
-    if (Math.abs(fu - 0.5) < 0.035 || Math.abs(fv - 0.51) < 0.028) return Core.idx(4, 3);
-    const warm = 12 + (((u * 97 + v * 61) | 0) & 1);
-    return Core.idx(15, warm);
+    if (edge) return Core.idx(4, lit ? 2 : 3);
+    if (Math.abs(fu - 0.5) < 0.035 || Math.abs(fv - 0.51) < 0.028) return Core.idx(4, lit ? 3 : 4);
+    if (lit) {
+      const warm = 12 + (((u * 97 + v * 61) | 0) & 1);
+      return Core.idx(15, warm);
+    }
+    // Daylight glass: dark, with the sky caught across the upper panes so it reads as glazing and
+    // not as a hole punched in the wall.
+    const sheen = fv < 0.47 ? 1 : 0;
+    return Core.idx(9, sheen ? 6 : 3);
   }
 
   function wallTexel(mat, u, v, face, lod) {

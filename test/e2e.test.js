@@ -1009,6 +1009,32 @@ const T = require('./_harness.js');
     T.eq(dungeons.filter((d) => !(d.trimH > 0.5 && d.trimH < 2.5)), [],
       'every dungeon trim sits at a plausible dado height');
 
+    // ---- A BUILDING FACADE IS NOT A SLAB. Windows were drawn only after dark, so by day every
+    // building in town was a flat wall with a door decal. Counted: emissive/glazed pixels in the
+    // viewport at noon must be non-zero, and night must still be brighter than day on that count.
+    const facades = await page.evaluate(`(() => {
+      const h = window.__game;
+      h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0);
+      const V = Engine.VIEW, buf = Engine.buf, W = Engine.W;
+      const count = (ramps) => {
+        let n = 0;
+        for (let y = 0; y < V.h; y++) {
+          for (let x = 0; x < V.w; x++) {
+            const pi = buf[(V.y + y) * W + (V.x + x)];
+            if (ramps.indexOf((pi >> 4) & 0xf) >= 0) n++;
+          }
+        }
+        return n;
+      };
+      h.setTime(720); h.settle(2); h.redraw();
+      const dayGlass = count([9]);          // daylight glazing sits on the sky ramp
+      h.setTime(1320); h.settle(2); h.redraw();
+      const nightLit = count([15]);         // lit windows are the warm ramp
+      return { dayGlass, nightLit };
+    })()`);
+    T.ok(facades.dayGlass > 0, 'buildings show glazing in daylight (' + facades.dayGlass + 'px)');
+    T.ok(facades.nightLit > 0, 'and windows are lit from within after dark (' + facades.nightLit + 'px)');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),
