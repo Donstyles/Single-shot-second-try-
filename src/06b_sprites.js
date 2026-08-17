@@ -53,7 +53,7 @@ const Sprites = (() => {
         }
         facings.push({ w: f.w, h: f.h, data });
       }
-      out[id] = { facings, h: m.h, aspect: m.aspect };
+      out[id] = { facings, h: m.h, aspect: m.aspect, pxPerUnit: m.pxPerUnit || (m.h / 1.24) };
     }
     return out;
   }
@@ -151,10 +151,21 @@ const Sprites = (() => {
 
   function creature(kind, facing) {
     const baked = BAKED.__ready && BAKED.__ready[kind];
-    if (baked) return baked.facings[clamp(facing || 0, 0, baked.facings.length - 1)];
+    if (baked) {
+      const f = baked.facings[clamp(facing || 0, 0, baked.facings.length - 1)];
+      f.pxPerUnit = baked.pxPerUnit;
+      return f;
+    }
     const k = 'c:' + kind;
     if (!cache[k]) cache[k] = paintCreature(kind, 48, 64);
     return cache[k];
+  }
+
+  // World height a sprite should be drawn at, given the creature's real height. A trimmed frame is
+  // only part of the model, so drawing it at the creature's full height inflates everything.
+  function worldHeight(spr, creatureHeight) {
+    if (!spr.pxPerUnit) return creatureHeight;
+    return (spr.h / spr.pxPerUnit) * creatureHeight;
   }
 
   // ---------------------------------------------------------------- decor
@@ -382,7 +393,7 @@ const Sprites = (() => {
 
   return {
     installBaked, prepareBaked, BAKED,
-    creature, decor, DECOR_HEIGHT, portrait, icon,
+    creature, decor, DECOR_HEIGHT, portrait, icon, worldHeight,
     paintCreature, paintDecor, paintPortrait, paintIcon,
   };
 })();

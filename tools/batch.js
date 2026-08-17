@@ -21,9 +21,18 @@ const TEX = path.join(ROOT, 'assets', 'tex');
 
 // One fixed clause per class, appended to the shared style preamble. Consistency across hundreds
 // of assets comes from these being IDENTICAL every time, never re-described per asset.
-const CREATURE_STYLE =
-  ' Low-poly game character, clean readable silhouette, standing in a T-pose, ' +
-  'no base, no ground plane, no scenery, single character only.';
+const BIPED_STYLE =
+  ' Low-poly game character, clean readable silhouette, standing upright in a T-pose with arms out ' +
+  'to the sides, no base, no ground plane, no scenery, single character only.';
+
+// Quadrupeds and vermin must NOT be T-posed. Applying one pose clause to everything produced a
+// wolf shaped like a woman with her arms out, which no amount of rendering fixes.
+const QUADRUPED_STYLE =
+  ' Low-poly game creature standing on all four legs in a neutral side-on stance, clean readable ' +
+  'silhouette, no base, no ground plane, no scenery, single creature only.';
+
+const QUADRUPEDS = new Set(['rat', 'wolf', 'spider']);
+const styleFor = (id) => (QUADRUPEDS.has(id) ? QUADRUPED_STYLE : BIPED_STYLE);
 
 // 21 monsters + NPC kinds. Prompts are deliberately silhouette-first: what must read at 40px tall.
 const CREATURES = {
@@ -105,11 +114,28 @@ function log(...a) {
   console.log(line);
 }
 
+// Props are objects, not characters: no pose clause at all.
+async function doCreatureRaw(id, prompt) {
+  const glb = path.join(RAW, 'meshy', id + '.glb');
+  if (fs.existsSync(glb)) { log('  skip mesh (exists) ' + id); return glb; }
+  const pid = await meshy.createPreview(prompt, { target_polycount: 4000 });
+  await meshy.waitFor(pid);
+  const rid = await meshy.createRefine(pid);
+  const t = await meshy.waitFor(rid);
+  if (!t.model_urls || !t.model_urls.glb) throw new Error(id + ': no glb in result');
+  const n = await meshy.download(t.model_urls.glb, glb);
+  log('  prop ' + id + '  ' + (n / 1024 | 0) + ' KB');
+  return glb;
+}
+
 async function doCreature(id, prompt) {
   const glb = path.join(RAW, 'meshy', id + '.glb');
   if (fs.existsSync(glb)) { log('  skip mesh (exists) ' + id); return glb; }
 
-  const pid = await meshy.createPreview(prompt + CREATURE_STYLE, { target_polycount: 6000, pose_mode: 't-pose' });
+  const quad = QUADRUPEDS.has(id);
+  const opts = { target_polycount: 6000 };
+  if (!quad) opts.pose_mode = 't-pose';   // a t-pose request is what turned the wolf bipedal
+  const pid = await meshy.createPreview(prompt + styleFor(id), opts);
   await meshy.waitFor(pid);
   const rid = await meshy.createRefine(pid);
   const t = await meshy.waitFor(rid);
@@ -158,7 +184,7 @@ async function main() {
   if (what === 'props' || what === 'all') {
     log('-- props (' + Object.keys(PROPS).length + ') --');
     for (const id of Object.keys(PROPS)) {
-      try { await doCreature(id, PROPS[id] + ' Single object, no ground plane, no scenery.'); }
+      try { await doCreatureRaw(id, PROPS[id] + ' Single static object, no base, no ground plane, no scenery, no character.'); }
       catch (e) { log('  FAIL prop ' + id + ': ' + e.message.split('\n')[0]); if (/SPEND CAP/.test(e.message)) return; }
     }
   }

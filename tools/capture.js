@@ -109,8 +109,9 @@ async function main() {
         }
         if (s === null) {
           // Combat: put two monsters in front of the party and alert them.
-          window.__game.spawn('goblin', Game.state.party.x + 3, Game.state.party.y + 0.6);
-          window.__game.spawn('wolf', Game.state.party.x + 4.2, Game.state.party.y - 1.4);
+          window.__game.spawn('goblin', Game.state.party.x + 7.0, Game.state.party.y + 1.1);
+          window.__game.spawn('skeleton', Game.state.party.x + 9.5, Game.state.party.y - 2.2);
+          window.__game.spawn('ogre', Game.state.party.x + 13.0, Game.state.party.y + 3.0);
           Game.state.combat.active = true;
         }
         Game.state.screen = s;

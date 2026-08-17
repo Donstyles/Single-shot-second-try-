@@ -383,7 +383,43 @@
       "op": "mesh:preview",
       "credits": 5,
       "note": "A towering armoured wraith-king wearing "
+    },
+    {
+      "n": 65,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00eef-71d9-7971-b668-122f2a12663c"
+    },
+    {
+      "n": 66,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A town guard captain in chainmail and a "
+    },
+    {
+      "n": 67,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef1-b052-79d4-971c-1d4d3a439bcc"
+    },
+    {
+      "n": 68,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A mine foreman in a leather coat and fla"
+    },
+    {
+      "n": 69,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef3-d56d-75a4-ae26-777e024ab924"
+    },
+    {
+      "n": 70,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A giant sewer rat the size of a dog, mat"
     }
   ],
-  "spent": 512
+  "spent": 557
 }

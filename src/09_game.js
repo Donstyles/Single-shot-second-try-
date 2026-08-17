@@ -1449,18 +1449,21 @@ const Game = (() => {
     for (const n of m.npcs || []) {
       const dist = Math.hypot(n.x - cam.x, n.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.creature('npc_' + n.role), x: n.x, y: n.y,
-        z: World.H(m, n.x, n.y), h: 1.8 });
+      const nspr = Sprites.creature('npc_' + n.role);
+      list.push({ dist, spr: nspr, x: n.x, y: n.y,
+        z: World.H(m, n.x, n.y), h: Sprites.worldHeight(nspr, 1.8) });
     }
     for (const e of (m.live || [])) {
       if (e.dead) continue;
       const dist = Math.hypot(e.x - cam.x, e.y - cam.y);
       if (dist > m.fogEnd) continue;
       const f = Engine.facingFor(e.ang, cam.x, cam.y, e.x, e.y, 5);
-      const def = Items.MONSTERS[e.kind];
-      list.push({ dist, spr: Sprites.creature(e.kind, f.index), mirror: f.mirror,
+      const spr = Sprites.creature(e.kind, f.index);
+      const real = /ogre|troll|elemental|crown|knight_ash/.test(e.kind) ? 2.8
+        : /rat|spider/.test(e.kind) ? 0.8 : /wolf/.test(e.kind) ? 1.1 : 1.8;
+      list.push({ dist, spr, mirror: f.mirror,
         x: e.x, y: e.y, z: World.walkHeight(m, e.x, e.y, e.z),
-        h: /ogre|troll|elemental|crown|knight/.test(e.kind) ? 2.9 : /rat|spider/.test(e.kind) ? 0.9 : 1.9 });
+        h: Sprites.worldHeight(spr, real) });
     }
 
     list.sort((a, b) => b.dist - a.dist);

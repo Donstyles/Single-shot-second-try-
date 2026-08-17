@@ -258,7 +258,12 @@ async function main() {
   fs.mkdirSync(path.join(RAW, 'sheets'), { recursive: true });
 
   let totalBytes = 0, rejected = 0;
-  const manifest = { id, aspect: Number(aspect.toFixed(3)), h: SPRITE_H, facings: [] };
+  // Pixels per NORMALISED MODEL HEIGHT. foundry.html frames the model (normalised to height 1) in
+  // an orthographic box of half-extent 0.62, so the render covers 1.24 model-heights vertically.
+  // Without this the engine cannot know what fraction of a creature a trimmed frame represents.
+  const PX_PER_UNIT = SPRITE_H / 1.24;
+  const manifest = { id, aspect: Number(aspect.toFixed(3)), h: SPRITE_H,
+    pxPerUnit: Number(PX_PER_UNIT.toFixed(3)), facings: [] };
 
   frames.forEach((f) => {
     const buf = png.encodeIndexed(f.data, f.w, f.h, Core.PAL, 0);
