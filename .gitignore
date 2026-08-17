@@ -30,3 +30,7 @@ critique/discriminator/
 # Throwaway probe captures. Named rounds (r0, r1, ...) are the record and ARE committed;
 # probe rounds are scratch measurements taken between them.
 critique/shots/probe*/
+
+# Generated for publishing only: `node tools/artifact.js` rebuilds it from dist/index.html.
+# Committing it would carry a second 900 KB copy of the game on every build.
+dist/artifact.html
