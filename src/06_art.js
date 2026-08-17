@@ -45,6 +45,25 @@ const Art = (() => {
     m: ['.....', '.....', '##.##', '#.#.#', '#.#.#', '#.#.#', '#.#.#', '.....', '.....'],
     // 'Q' needs its tail to be distinguishable from 'O' at phone size.
     Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#', '.....', '.....'],
+
+    // Letters the stock 5x7 table renders ambiguously at 1x, each one caught by a critic reading
+    // the game's own words back wrong. The party's first character was printed "Rlder" and the
+    // town "IIarrowgate": a flat-topped A with a mid-height bar IS an R at this size, and an H
+    // whose crossbar shares a row with nothing else disappears into two bars.
+    A: ['..#..', '.###.', '#...#', '#...#', '#####', '#...#', '#...#', '.....', '.....'],
+    H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#', '.....', '.....'],
+    M: ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#', '.....', '.....'],
+    N: ['#...#', '##..#', '#.#.#', '#.#.#', '#..##', '#...#', '#...#', '.....', '.....'],
+    // V and W squared off into U and UU; both need their diagonals to actually converge.
+    V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..', '.....', '.....'],
+    W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '##.##', '#...#', '.....', '.....'],
+    U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.', '.....', '.....'],
+    // Lowercase 'o' was open at the top, so "Dorn" read "Durn".
+    o: ['.....', '.....', '.###.', '#...#', '#...#', '#...#', '.###.', '.....', '.....'],
+    // 'w' collapsed toward 'u' — same fix as the capital.
+    w: ['.....', '.....', '#...#', '#...#', '#.#.#', '#.#.#', '.#.#.', '.....', '.....'],
+    // 'n' lost its right leg at the baseline.
+    n: ['.....', '.....', '####.', '#...#', '#...#', '#...#', '#...#', '.....', '.....'],
   };
 
   const GLYPH_H = 9;
@@ -131,6 +150,12 @@ const Art = (() => {
 
   function textCentred(E, cx, y, str, pi, scale) {
     return text(E, Math.round(cx - textWidth(str, scale) / 2), y, str, pi, scale);
+  }
+
+  // Centred AND shadowed. Numerals printed over a coloured bar need both or they vanish into it.
+  function textCentredShadow(E, cx, y, str, pi, scale) {
+    const x = Math.round(cx - textWidth(str, scale) / 2);
+    return textShadow(E, x, y, str, pi, scale);
   }
 
   // ---------------------------------------------------------------- textures
@@ -406,6 +431,65 @@ const Art = (() => {
     }
   }
 
+  // Carved stone course-work, for the chrome the viewport is set into. A flat panel is a margin; a
+  // coursed one is a frame, and the frame is now load-bearing — it holds the touch controls that
+  // used to float over the world.
+  function stonework(E, x, y, w, h) {
+    // Ramp 2 (warm stone), DARK. Ramp 13 is gold/brass and at these shades it painted the chrome
+    // brighter than the daylit world inside the viewport, which inverts the whole frame: the eye
+    // goes to the border instead of the game. Gold is now an accent only, on the rivets.
+    const COURSE = 16;
+    for (let ry = 0; ry < h; ry += COURSE) {
+      const row = (ry / COURSE) | 0;
+      for (let sy = 0; sy < COURSE && ry + sy < h; sy++) {
+        // A top-lit gradient per course, so each block has a lip and a shadow under it. The whole
+        // range sits BELOW the daylit world's value: chrome brighter than the game inverts the
+        // frame and the eye goes to the border instead of through it.
+        const sh = sy === 0 ? 6 : sy === 1 ? 5 : sy >= COURSE - 2 ? 1 : 3 - ((sy > COURSE / 2) ? 1 : 0);
+        E.hline(x, y + ry + sy, w, Core.idx(2, sh));
+      }
+      // Staggered vertical joint.
+      const jx = x + ((row & 1) ? (w >> 1) : (w >> 2));
+      for (let sy = 1; sy < COURSE - 2 && ry + sy < h; sy++) {
+        E.px(jx, y + ry + sy, Core.idx(2, 0));
+        E.px(jx + 1, y + ry + sy, Core.idx(2, 5));
+      }
+      // Weathering: a deterministic speckle keyed to position, never Math.random.
+      for (let i = 0; i < 7; i++) {
+        const hx = Core.hashStr('stone' + row + ':' + i) >>> 0;
+        const px2 = x + 2 + (hx % Math.max(1, w - 4));
+        const py2 = y + ry + 3 + ((hx >>> 8) % Math.max(1, COURSE - 6));
+        if (py2 < y + h) E.px(px2, py2, Core.idx(2, (hx >>> 16) & 1 ? 1 : 5));
+      }
+      // A brass rivet at the course line: the one place gold belongs.
+      if ((row & 1) === 0 && ry + 2 < h) {
+        const rx = x + w - 7;
+        E.rect(rx, y + ry + 2, 3, 3, Core.idx(13, 9));
+        E.px(rx, y + ry + 2, Core.idx(13, 13));
+        E.px(rx + 2, y + ry + 4, Core.idx(13, 4));
+      }
+    }
+  }
+
+  // Movement arrows, drawn as solid triangles. The old pad used '<' '>' '^' 'v' from the text font,
+  // which a player described as "four brown squares in a diamond, each with a glyph so faint I had
+  // to guess — I still don't know if < and > are turns or strafes".
+  function arrowGlyph(E, cx, cy, dir, pi) {
+    const R = 8;
+    for (let i = 0; i < R; i++) {
+      const half = R - i;
+      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2, pi);
+      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2, pi);
+      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2, pi);
+      else E.vline(cx + (R >> 1) - i, cy - half, half * 2, pi);
+    }
+    // Turn arrows get a curved tail so they cannot be read as strafe.
+    if (dir === 'left' || dir === 'right') {
+      const s = dir === 'left' ? 1 : -1;
+      for (let i = 0; i < 7; i++) E.px(cx + s * (2 + i), cy - 4 + ((i * i) >> 3), pi);
+    }
+  }
+
   // The ornate outer frame: the viewport hole must stay index 0 so nothing paints over the 3D view.
   function gameFrame(E) {
     const V = E.VIEW;
@@ -413,6 +497,8 @@ const Art = (() => {
     panel(E, 0, 0, E.W, V.y, 13, true);
     panel(E, 0, V.y, V.x, V.h, 13, true);
     panel(E, V.x + V.w, V.y, E.W - V.x - V.w, V.h, 13, true);
+    stonework(E, 2, V.y, V.x - 4, V.h);
+    stonework(E, V.x + V.w + 2, V.y, E.W - V.x - V.w - 4, V.h);
     E.frameRect(V.x - 1, V.y - 1, V.w + 2, V.h + 2, Core.idx(13, 9));
     // Corner rosettes.
     for (const [cx, cy] of [[V.x - 1, V.y - 1], [V.x + V.w - 3, V.y - 1],
@@ -490,11 +576,11 @@ const Art = (() => {
 
   return {
     TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
-    text, textShadow, textCentred, textWidth,
+    text, textShadow, textCentred, textCentredShadow, textWidth,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
-    panel, button, gameFrame, bar, step, hudIcon, shopSign,
+    panel, button, gameFrame, stonework, arrowGlyph, bar, step, hudIcon, shopSign,
     get tick() { return tick; },
   };
 })();

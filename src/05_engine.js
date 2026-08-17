@@ -146,12 +146,24 @@ const Engine = (() => {
   // Design decisions calibrated to the 640x480 frame. NOT measurements of MM6 — real measured
   // numbers belong in critique/MM6_REFERENCE.md, which needs reference material this build does
   // not have. See ARCHITECTURE.md §11.
-  const VIEW = { x: 8, y: 8, w: 624, h: 344 };
+  // The 3D view is INSET, with carved chrome to its left and right that holds the touch controls.
+  // Three separate reviews reported the same thing and the art critic ranked it first of five:
+  // "get the movement D-pad and the USE/ATK/CST buttons out of the 3D viewport — translucent
+  // buttons floating inside the world is mobile-game grammar that did not exist in 1998, and it is
+  // why nine of these shots have nowhere for the eye to go: the near ground plane is covered by
+  // UI." It also costs nothing in art. The world gets narrower; it stops being a phone game.
+  const CHROME_W = 88;
+  const VIEW = { x: CHROME_W + 8, y: 8, w: 640 - 2 * (CHROME_W + 8), h: 344 };
+  const CHROME_L = { x: 0, y: 0, w: CHROME_W, h: 352 };
+  const CHROME_R = { x: 640 - CHROME_W, y: 0, w: CHROME_W, h: 352 };
   const HUD = { x: 0, y: 352, w: 640, h: 128 };
 
   // Projection scale, from the vertical FOV implied by a 70 degree horizontal FOV at VIEW's
   // aspect. Computed once; the march and the sprite pass both read it.
-  const FOV_H = 70 * Math.PI / 180;
+  // 57 degrees horizontal on the new 448x344 viewport gives ~46 degrees VERTICAL, which is what
+  // MM6 framed with. Vertical FOV is the one that decides how much ground and sky a screenshot
+  // holds; keeping 70 on a squarer view would have widened it to 56 and fish-eyed every frame.
+  const FOV_H = 57 * Math.PI / 180;
   const FOV_V = 2 * Math.atan(Math.tan(FOV_H / 2) * (VIEW.h / VIEW.w));
   const PROJ = VIEW.h / (2 * Math.tan(FOV_V / 2));
 
@@ -188,21 +200,60 @@ const Engine = (() => {
   const bandY0 = new Int16Array(16);
   const bandY1 = new Int16Array(16);
 
-  // Fade a texel toward the sky by moving its SHADE, and only dither across the narrow band where
-  // the ramp finally gives out. A full-frame checkerboard is a screen door, not haze.
-  function fogShade(texel, light, fog, skyBand, y, fogRow, fogJit) {
-    const ramp = texel & 0xf0;
-    const shade = (texel & 0x0f) + light;
-    if (!skyBand || fog <= 0.02) return Core.shade(ramp, shade);
-    const skyPi = skyBand[y - VIEW.y];
-    if (fog >= 0.90) return skyPi;
-    const skyShade = skyPi & 0x0f;
-    // Walk the shade toward the sky's brightness. Most of the fade happens here, in-ramp.
-    const lerped = Math.round(shade + (skyShade - shade) * fog);
-    if (fog < 0.62) return Core.shade(ramp, lerped);
-    // Crossover: dither between the faded surface and the sky over ~0.28 of the range only.
-    const t = (fog - 0.62) / 0.28;
-    return (t > FOG_BAYER[fogRow + (y & 7)] + fogJit) ? skyPi : Core.shade(ramp, lerped);
+  // ------------------------------------------------------------------ fog
+  // Fog is a TRUE COLOUR BLEND toward the horizon, quantised to the palette afterwards — not a
+  // stencil. Every previous attempt (threshold-swap, then shade-walk plus a crossover dither) put
+  // an ordered lattice on the screen, and three separate cold reviews called it out by name: "I
+  // can trace unbroken vertical columns of blue pixels straight across the black, crossing wall,
+  // floor and void without deviating." A framebuffer-wide screen door is a post-process from a
+  // different decade. So: lerp RGB, find the nearest palette entry, cache the answer.
+  //
+  // The cache is what makes this affordable. 17 fog steps x 256 source colours per target colour,
+  // built once per distinct horizon colour and kept for the life of the page. A sky band holds
+  // only a handful of distinct indices, so the whole day cycle costs a few dozen tables.
+  const FOG_STEPS = 17;
+  const fogLuts = new Map();
+
+  function fogLut(target) {
+    let lut = fogLuts.get(target);
+    if (lut) return lut;
+    lut = new Uint8Array(256 * FOG_STEPS);
+    const tr = Core.PAL[target * 3], tg = Core.PAL[target * 3 + 1], tb = Core.PAL[target * 3 + 2];
+    for (let i = 0; i < 256; i++) {
+      const r = Core.PAL[i * 3], g = Core.PAL[i * 3 + 1], b = Core.PAL[i * 3 + 2];
+      for (let q = 0; q < FOG_STEPS; q++) {
+        const t = q / (FOG_STEPS - 1);
+        lut[i * FOG_STEPS + q] = Core.palIdx(
+          Math.round(r + (tr - r) * t), Math.round(g + (tg - g) * t), Math.round(b + (tb - b) * t));
+      }
+    }
+    fogLuts.set(target, lut);
+    return lut;
+  }
+
+  // The one legitimate use of the Bayer matrix that survives: dithering the fog PARAMETER between
+  // two adjacent LUT steps, so a slow gradient does not band. This dithers the blend; it does not
+  // punch holes in the image.
+  function fogShade(texel, light, fog, band, y, fogRow, fogJit) {
+    const pi = Core.shade(texel & 0xf0, (texel & 0x0f) + light);
+    if (!band || fog <= 0.01) return pi;
+    const target = band[y - VIEW.y];
+    if (fog >= 0.999) return target;
+    let q = fog * (FOG_STEPS - 1) + (FOG_BAYER[fogRow + (y & 7)] + fogJit) - 0.5;
+    q = q < 0 ? 0 : (q > FOG_STEPS - 1 ? FOG_STEPS - 1 : q) | 0;
+    return fogLut(target)[pi * FOG_STEPS + q];
+  }
+
+  // A dungeon has no sky. Distance in a sealed corridor resolves to BLACK, and the unmarched part
+  // of a column is void, not daylight. Feeding the outdoor sky band to both put a bright pale-blue
+  // panel at the end of every barrow corridor — an art critic reported it as "the skybox is
+  // leaking into a sealed dungeon", which is exactly what it was.
+  let voidBandCache = null;
+  function voidBand() {
+    if (!voidBandCache || voidBandCache.length !== VIEW.h) {
+      voidBandCache = new Uint8Array(VIEW.h);          // index 0 is true black
+    }
+    return voidBandCache;
   }
 
   function render3D(cam, world) {
@@ -213,11 +264,23 @@ const Engine = (() => {
 
     const dungeon = map.kind === 'dungeon';
     const horizon = VIEW.y + (VIEW.h >> 1) + (cam.horizon || 0);
-    const eyeZ = cam.z + EYE;
+    // The camera may never sit at or below the surface it stands on. When it did, the ground
+    // projected ABOVE the horizon and the entire frame turned inside out — a first-time player
+    // reported "trees hanging upside down from the top of the sky, trunks pointing up, canopies
+    // below them" and concluded the renderer had come apart. It had not; the eye was underwater.
+    let eyeZ = cam.z + EYE;
+    if (dungeon) {
+      if (eyeZ > CEIL - 0.25) eyeZ = CEIL - 0.25;
+      if (eyeZ < 0.35) eyeZ = 0.35;
+    } else {
+      const standing = World.H(map, cam.x, cam.y);
+      const floorZ = (standing > map.sea ? standing : map.sea) + 0.30;
+      if (eyeZ < floorZ) eyeZ = floorZ;
+    }
     const cosA = Math.cos(cam.ang), sinA = Math.sin(cam.ang);
     const halfFov = Math.tan(FOV_H / 2);
 
-    const skyBand = Art.skyBand ? Art.skyBand() : null;
+    const skyBand = dungeon ? voidBand() : (Art.skyBand ? Art.skyBand() : null);
     const light = map.light === undefined ? 1 : map.light;
     const sun = Art.sunShade ? Art.sunShade(light) : 0;
     const fogStart = map.fogStart, fogEnd = map.fogEnd;
@@ -280,20 +343,36 @@ const Engine = (() => {
           const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
           const top = yS < VIEW.y ? VIEW.y : yS;
           if (top < ybuf) {
-            // Distance LOD. Without it the far ground point-samples a high-frequency texture and
-            // aliases into noise of the SAME apparent scale as the foreground, which reads as a
-            // vertical curtain rather than a receding plane.
-            const lod = Art.lodFor(dist);
-            const texel = Art.groundTexel(mat, wx, wy, map, lod);
-            // Slope shading: the dot of the surface normal with the key direction. This is what
-            // makes hills read as hills rather than as a painted gradient.
+            // PER-ROW ground cast. This is the defect an art critic diagnosed better than I did:
+            // "the ground plane is 1-pixel vertical streaks that are the same width at the bottom
+            // of the frame as at the horizon, so nothing foreshortens." The march took ONE texel
+            // per step and filled the whole vertical run with it, smearing a single sample down
+            // dozens of screen rows. A plane rendered that way is wallpaper, not ground.
+            //
+            // Each screen row below the horizon sees the ground at its OWN distance:
+            //     y = horizon + (eyeZ - h) * PROJ / d   =>   d = (eyeZ - h) * PROJ / (y - horizon)
+            // so solve per row and sample there. Near rows advance slowly in world space (large
+            // texels), rows near the horizon advance fast (small texels). That IS perspective.
             const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
-            const light = sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
+            const baseLight = sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
+            const rise = eyeZ - surfH;
+            const fogSpan = Math.max(1, fogEnd - fogStart);
             for (let y = top; y < ybuf; y++) {
-              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              buf[y * W + px] = (fog > t && skyBand)
-                ? skyBand[y - VIEW.y]
-                : Core.shade(texel & 0xf0, (texel & 0x0f) + light);
+              const rows = y - horizon;
+              // Ground above eye level projects ABOVE the horizon, where the row-to-distance
+              // solve flips sign; fall back to the march distance rather than mirroring the world.
+              let rd = dist;
+              if (rows > 0 && rise > 0.02) {
+                rd = rise * PROJ / rows;
+                if (rd < 0.30) rd = 0.30; else if (rd > dist + 6) rd = dist + 6;
+              }
+              const rx = cam.x + dx * rd, ry = cam.y + dy * rd;
+              // Distance LOD, now genuinely per row: the far ground would otherwise point-sample a
+              // high-frequency texture and alias into noise at the SAME apparent scale as the
+              // foreground, which is the other half of why it read as a vertical curtain.
+              const texel = Art.groundTexel(mat, rx, ry, map, Art.lodFor(rd));
+              const rfog = clamp((rd - fogStart) / fogSpan, 0, 1);
+              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit);
             }
             ybuf = top;
           }
@@ -450,7 +529,7 @@ const Engine = (() => {
     W, H, buf, zb,
     clip, clipReset, clear, px, pxFast, hline, vline, rect, frameRect, blit, blitScaled,
     present, testCard, render3D, drawSprite, facingFor, dungeonLight,
-    VIEW, HUD, FOV_H, FOV_V, PROJ, STOREY, EYE,
+    VIEW, CHROME_L, CHROME_R, HUD, FOV_H, FOV_V, PROJ, STOREY, EYE,
   };
 })();
 

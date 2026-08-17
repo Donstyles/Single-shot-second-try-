@@ -51,9 +51,20 @@ const UI = (() => {
       // Name, then HP and SP bars. The bars are the only thing a player actually reads mid-fight,
       // so they get the width.
       Art.text(En, x + 2, y + 58, ch.name.slice(0, 8), Core.idx(0, dead ? 6 : 14), 1);
-      Art.bar(En, x + 2, y + 68, PORTRAIT.w - 4, 8, ch.hp / Math.max(1, Rules.maxHP(ch)), 11);
+      // NUMBERS on the bars. A cold player spent fifteen minutes watching two coloured bars that
+      // never moved and wrote: "I could not tell what my party is doing. To learn that Alder has
+      // 31/31 HP I had to open a separate full-screen sheet." A bar shows a ratio; a player needs
+      // the value, and the party bar is the only thing on screen during a fight.
+      const hpMax = Math.max(1, Rules.maxHP(ch));
+      Art.bar(En, x + 2, y + 68, PORTRAIT.w - 4, 9, ch.hp / hpMax, 11);
+      Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 69, ch.hp + "/" + hpMax, Core.idx(0, 15), 1);
       const spMax = Rules.maxSP(ch);
-      if (spMax > 0) Art.bar(En, x + 2, y + 78, PORTRAIT.w - 4, 8, ch.sp / spMax, 12);
+      if (spMax > 0) {
+        Art.bar(En, x + 2, y + 79, PORTRAIT.w - 4, 9, ch.sp / spMax, 12);
+        Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 80, ch.sp + "/" + spMax, Core.idx(0, 15), 1);
+      } else {
+        Art.text(En, x + 2, y + 80, 'LV ' + ch.level, Core.idx(13, 12), 1);
+      }
 
       const cond = Rules.worstCondition(ch);
       if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
@@ -67,18 +78,32 @@ const UI = (() => {
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
-    const wrapped = [];
-    for (const l of Core.Log.tail(6)) {
+    // Fill the window from the NEWEST message backwards, whole messages only. Wrapping oldest-first
+    // and then keeping the last four lines left the previous message's tail orphaned at the top and
+    // cut the current one mid-sentence — a player read "ahead. / Nothing here. A / door is 4 paces
+    // / ahead." and never saw the front of the sentence that mattered ("The water is too deep").
+    const LINES = 4;
+    const wrapMsg = (l) => {
       const c = l.kind === 'hit' ? Core.idx(11, 12) : l.kind === 'good' ? Core.idx(6, 12)
         : l.kind === 'sys' ? Core.idx(9, 11) : Core.idx(0, 13);
+      const out = [];
       let line = '';
       for (const w of String(l.text).split(' ')) {
-        if (line && (line + ' ' + w).length > perLine) { wrapped.push([line, c]); line = w; }
+        if (line && (line + ' ' + w).length > perLine) { out.push([line, c]); line = w; }
         else line = line ? line + ' ' + w : w;
       }
-      if (line) wrapped.push([line, c]);
+      if (line) out.push([line, c]);
+      return out;
+    };
+    const recent = Core.Log.tail(8);
+    const shown = [];
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const block = wrapMsg(recent[i]);
+      if (shown.length && shown.length + block.length > LINES) break;
+      shown.unshift(...block.slice(0, LINES));
+      if (shown.length >= LINES) break;
     }
-    wrapped.slice(-4).forEach((row, i) => {
+    shown.slice(0, LINES).forEach((row, i) => {
       Art.text(En, lx + 5, HUD.y + 11 + i * 17, row[0], row[1], 2);
     });
 
@@ -102,50 +127,44 @@ const UI = (() => {
   }
 
   // ---------------------------------------------------------------- touch controls
-  // Drawn INSIDE the 3D viewport, translucent-by-dither so they never hide the world entirely.
+  // Drawn in the CARVED CHROME either side of the viewport, never over the world. Movement under
+  // the left thumb, verbs under the right, which is also where they fall when the phone is held in
+  // landscape. Nothing here overlaps a single pixel of the 3D view.
   function drawTouchControls(g) {
-    const En = E(), V = En.VIEW;
-    const S = 44, pad = 4;
-    const bx = V.x + pad, by = V.y + V.h - S * 2 - pad * 2;
+    const En = E(), L = En.CHROME_L, R = En.CHROME_R;
 
-    const pad4 = [
-      ['fwd', bx + S, by, '^'],
-      ['back', bx + S, by + S + 4, 'v'],
-      ['turnL', bx, by + S / 2 + 2, '<'],
-      ['turnR', bx + S * 2, by + S / 2 + 2, '>'],
+    // ---- movement cluster, bottom of the left column
+    const bw = 80, bh = 34, gap = 3;
+    const mx = L.x + 4;
+    const my = L.y + L.h - (bh * 3 + gap * 2) - 8;
+    const half = (bw - gap) >> 1;
+    const moves = [
+      ['fwd', mx, my, bw, bh, 'up'],
+      ['turnL', mx, my + bh + gap, half, bh, 'left'],
+      ['turnR', mx + half + gap, my + bh + gap, half, bh, 'right'],
+      ['back', mx, my + (bh + gap) * 2, bw, bh, 'down'],
     ];
-    for (const [id, x, y, label] of pad4) {
-      ghostButton(x, y, S, S, label, g.keys[id]);
-      reg('move', x, y, S, S, id);
+    for (const [id, x, y, w, h, glyph] of moves) {
+      const down = !!g.keys[id] || (g.keyLatch && g.keyLatch[id] > 0);
+      Art.button(En, x, y, w, h, null, down, 2);
+      Art.arrowGlyph(En, x + w / 2, y + h / 2, glyph, Core.idx(13, down ? 15 : 13));
+      reg('move', x, y, w, h, id);
     }
+    Art.textCentred(En, L.x + L.w / 2, my - 13, 'MOVE', Core.idx(13, 10), 1);
 
-    // Attack / interact on the right, where a thumb actually is.
-    const ax = V.x + V.w - S - pad, ay = V.y + V.h - S - pad;
-    ghostButton(ax, ay, S, S, g.combat.active ? 'ATK' : 'USE', g.pressed === 'act');
-    reg('act', ax, ay, S, S, 'act');
-
-    if (g.combat.active) {
-      ghostButton(ax - S - 4, ay, S, S, 'CST', g.pressed === 'cast');
-      reg('cast', ax - S - 4, ay, S, S, 'cast');
-      ghostButton(ax, ay - S - 4, S, S, 'WAIT', g.pressed === 'wait');
-      reg('wait', ax, ay - S - 4, S, S, 'wait');
-    }
+    // ---- verbs, bottom of the right column
+    const vx = R.x + 4;
+    let vy = R.y + R.h - bh - 8;
+    const verb = (id, label, on) => {
+      Art.button(En, vx, vy, bw, bh, label, g.pressed === id, 2);
+      reg(id, vx, vy, bw, bh, id);
+      vy -= bh + gap;
+    };
+    verb('act', g.combat.active ? 'ATK' : 'USE');
+    if (g.combat.active) { verb('cast', 'CAST'); verb('wait', 'WAIT'); }
+    Art.textCentred(En, R.x + R.w / 2, vy + bh - 6, 'ACT', Core.idx(13, 10), 1);
   }
 
-  // A button that lets the world show through on a checker, which is how a 1998 game faked alpha.
-  // Solid, bevelled, and small. The old version was a 50% checkerboard, which was ALSO doing duty
-  // as windows, portrait backing and distance haze — one pattern doing six jobs is what you reach
-  // for when you have no art.
-  function ghostButton(x, y, w, h, label, down) {
-    const En = E();
-    En.rect(x, y, w, h, Core.idx(4, down ? 3 : 5));
-    En.hline(x, y, w, Core.idx(4, down ? 3 : 9));
-    En.vline(x, y, h, Core.idx(4, down ? 3 : 9));
-    En.hline(x, y + h - 1, w, Core.idx(4, down ? 9 : 2));
-    En.vline(x + w - 1, y, h, Core.idx(4, down ? 9 : 2));
-    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 8));
-    Art.textCentred(En, x + w / 2, y + (h >> 1) - 5, label, Core.idx(13, 14), 1);
-  }
 
   // ---------------------------------------------------------------- screens
   // Panels cover the HUD portraits, and several screens are per-character. Give them their own
@@ -349,15 +368,46 @@ const UI = (() => {
     });
   }
 
+  // Bounding box of everything the party has seen on this map. Sampled on a stride, because the
+  // exact rim of the explored region does not need to be pixel-perfect to frame a map.
+  function seenBounds(g, m) {
+    let x0 = m.w, y0 = m.h, x1 = 0, y1 = 0, any = false;
+    for (let y = 0; y < m.h; y += 2) {
+      for (let x = 0; x < m.w; x += 2) {
+        if (!g.seen(m.id, x, y)) continue;
+        any = true;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    if (!any) return { x0: g.party.x - 8, y0: g.party.y - 8, x1: g.party.x + 8, y1: g.party.y + 8 };
+    return { x0, y0, x1, y1 };
+  }
+
   function automap(g) {
     const En = E();
     const f = screenFrame('MAP — ' + g.map.name.toUpperCase(), 600, 430);
     const m = g.map;
-    const scale = Math.min((f.w - 40) / m.w, (f.h - 96) / m.h);
-    const ox = f.x + ((f.w - m.w * scale) >> 1), oy = f.inner;
+    // SCALE TO WHAT IS EXPLORED, centred on the party — not to the whole 128x128 region. Fitting
+    // the full map put an entire town into a 45-pixel blob: "I had to screenshot it and blow it up
+    // 6x offline before I could see that the yellow dots formed a ring of buildings. Playing on the
+    // phone as handed to me, that map is a brown smudge with a red pixel in it."
+    const bnd = seenBounds(g, m);
+    const MIN_SPAN = 26;                        // never magnify a first step into a wall of pixels
+    const span = Math.max(MIN_SPAN, bnd.x1 - bnd.x0 + 4, bnd.y1 - bnd.y0 + 4);
+    const scale = Math.max(1, Math.min((f.w - 40) / span, (f.h - 96) / span));
+    const viewW = (f.w - 40) / scale, viewH = (f.h - 96) / scale;
+    // Centre on the party, then slide back inside the map so half the panel is never empty.
+    let camX = clamp(g.party.x, viewW / 2, Math.max(viewW / 2, m.w - viewW / 2));
+    let camY = clamp(g.party.y, viewH / 2, Math.max(viewH / 2, m.h - viewH / 2));
+    const ox = f.x + 20 + (f.w - 40) / 2 - camX * scale;
+    const oy = f.inner + (f.h - 96) / 2 - camY * scale;
 
-    for (let y = 0; y < m.h; y++) {
-      for (let x = 0; x < m.w; x++) {
+    En.clip(f.x + 18, f.inner - 2, f.w - 36, f.h - 92);
+    const y0 = Math.max(0, Math.floor(camY - viewH / 2) - 1), y1 = Math.min(m.h, Math.ceil(camY + viewH / 2) + 1);
+    const x0 = Math.max(0, Math.floor(camX - viewW / 2) - 1), x1 = Math.min(m.w, Math.ceil(camX + viewW / 2) + 1);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
         if (!g.seen(m.id, x, y)) continue;
         const c = m.cells[y * m.w + x];
         const mat = World.matOf(c);
@@ -387,14 +437,21 @@ const UI = (() => {
       for (let o = -w; o <= w; o++) En.px(bx + Math.round(-sa * o), by + Math.round(ca * o), Core.idx(11, 14));
     }
     En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 15));
+    En.clipReset();
 
     // Compass rose, so the arrow means something.
-    const cxp = f.x + f.w - 54, cyp = f.inner + 6;
-    En.frameRect(cxp - 18, cyp - 6, 40, 40, Core.idx(13, 9));
-    Art.textCentred(En, cxp + 2, cyp - 4, 'N', Core.idx(13, 14), 2);
-    Art.textCentred(En, cxp + 2, cyp + 20, 'S', Core.idx(13, 10), 2);
-    Art.text(En, cxp - 16, cyp + 8, 'W', Core.idx(13, 10), 2);
-    Art.text(En, cxp + 12, cyp + 8, 'E', Core.idx(13, 10), 2);
+    const cxp = f.x + f.w - 62, cyp = f.inner + 8, CR = 26;
+    Art.panel(En, cxp - CR, cyp - CR, CR * 2, CR * 2, 13, true);
+    En.frameRect(cxp - CR, cyp - CR, CR * 2, CR * 2, Core.idx(13, 11));
+    Art.textCentred(En, cxp, cyp - CR + 2, 'N', Core.idx(13, 15), 2);
+    Art.textCentred(En, cxp, cyp + CR - 20, 'S', Core.idx(13, 10), 2);
+    Art.text(En, cxp - CR + 3, cyp - 9, 'W', Core.idx(13, 10), 2);
+    Art.text(En, cxp + CR - 13, cyp - 9, 'E', Core.idx(13, 10), 2);
+    // A needle, so the rose is a compass and not four letters in a box.
+    for (let t = -8; t <= 8; t++) {
+      En.px(cxp, cyp + t, Core.idx(t < 0 ? 11 : 0, t < 0 ? 14 : 8));
+      if (t > -6 && t < 0) { En.px(cxp - 1, cyp + t, Core.idx(11, 12)); En.px(cxp + 1, cyp + t, Core.idx(11, 12)); }
+    }
 
     // Legend, because eight unexplained yellow dots in empty brown is not a map.
     const ly = f.y + f.h - 30;
@@ -411,7 +468,12 @@ const UI = (() => {
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
 
-    Art.text(En, f.x + 20, f.inner + 42, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
+    // Gold RIGHT-ALIGNED in the header. Printed at x+20 it landed on top of whatever the shop's
+    // own first two lines were: at the guild, the name/level line, the gold line and a red "Not
+    // enough experience yet" were all drawn within four pixels of each other and came out as "an
+    // unreadable smear across the top".
+    Art.text(En, f.x + f.w - 24 - Art.textWidth(g.party.gold + 'g', 2), f.inner + 18,
+      g.party.gold + 'g', Core.idx(13, 14), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -435,18 +497,20 @@ const UI = (() => {
       const pending = Rules.levelForXP(ch.xp) - ch.level;
       const cost = Rules.trainCost(ch.level);
       Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
-      Art.text(En, f.x + 24, f.inner + 46, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      Art.text(En, f.x + 24, f.inner + 48, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      Art.text(En, f.x + 24, f.inner + 70, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
       if (pending > 0) {
-        Art.button(En, f.x + 24, f.inner + 80, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
-        reg('train', f.x + 24, f.inner + 80, 260, 46, cost);
+        Art.button(En, f.x + 24, f.inner + 96, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
+        reg('train', f.x + 24, f.inner + 96, 260, 46, cost);
       }
-      // Skill spending.
-      Art.text(En, f.x + 24, f.inner + 140, 'Skill points: ' + ch.skillPts, Core.idx(13, 13), 2);
+      // Skill spending, at readable size. Twelve buttons of 1x type on a brown plate was "dim brown
+      // on dim brown, and I had to squint to make out Sword 1 / Axe 0 / Spear 0".
+      Art.text(En, f.x + 24, f.inner + 150, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
       const learnable = Object.keys(Rules.SKILLS).filter((k) => Rules.classCap(ch.cls, k) > 0).slice(0, 12);
       learnable.forEach((k, i) => {
-        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 170 + Math.floor(i / 3) * 40;
+        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 176 + Math.floor(i / 3) * 40;
         const cur = ch.skills[k];
-        Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 9) + ' ' + (cur ? cur.lvl : 0), false, 1);
+        Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 7).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
         reg('skillup', x, y, 172, 34, k);
       });
       return;
@@ -590,16 +654,22 @@ const UI = (() => {
     const slot = g.createSlot;
     const spec = g.createSpec[slot];
 
-    // Four member tabs.
+    // Four member tabs, ABOVE the name row rather than through it. They overlapped by 26 pixels,
+    // which printed the arrow, the name and the tab label into each other: a player read the result
+    // as "< Alden PC 1 >" and wrote "I could not tell whether Alden was a name field, a label, or a
+    // portrait caption. I never found out." They also never realised there were four characters to
+    // make, so the tabs now say who they are, not just which number they are.
     for (let i = 0; i < 4; i++) {
-      const x = f.x + 16 + i * 96, y = f.inner - 6;
-      Art.button(En, x, y, 90, 34, 'PC ' + (i + 1), i === slot, 2);
-      reg('cslot', x, y, 90, 34, i);
+      const x = f.x + 16 + i * 100, y = f.inner - 8;
+      Art.button(En, x, y, 94, 28, g.createSpec[i].name.toUpperCase().slice(0, 8), i === slot, 2);
+      reg('cslot', x, y, 94, 28, i);
     }
+    Art.text(En, f.x + 424, f.inner - 2, 'ALL FOUR', Core.idx(13, 12), 1);
+    Art.text(En, f.x + 424, f.inner + 8, 'ARE YOURS', Core.idx(13, 12), 1);
 
     // Name, sex and portrait. Creation that ignores all three and hands you the same four people
     // is not character creation.
-    let ny = f.inner + 2;
+    let ny = f.inner + 26;
     Art.button(En, f.x + 16, ny, 34, 30, '<', false, 2); reg('cname', f.x + 16, ny, 34, 30, -1);
     Art.text(En, f.x + 58, ny + 8, spec.name, Core.idx(13, 14), 2);
     Art.button(En, f.x + 170, ny, 34, 30, '>', false, 2); reg('cname', f.x + 170, ny, 34, 30, 1);
@@ -610,7 +680,7 @@ const UI = (() => {
     En.blitScaled(pv, f.x + 330, ny - 4, 36, 40, 0);
     Art.button(En, f.x + 372, ny, 34, 30, '>', false, 2); reg('cport', f.x + 372, ny, 34, 30, 1);
 
-    let y = f.inner + 40;
+    let y = f.inner + 64;
     Art.text(En, f.x + 16, y, 'CLASS', Core.idx(13, 13), 2);
     Rules.CLASS_IDS.forEach((cid, i) => {
       const x = f.x + 16 + (i % 3) * 130, yy = y + 22 + Math.floor(i / 3) * 40;
@@ -618,17 +688,18 @@ const UI = (() => {
       reg('cclass', x, yy, 124, 34, cid);
     });
 
-    y += 110;
+    y += 106;
     // Word-wrap the blurb. Slicing at a fixed character count broke it mid-word, and it is the
     // first prose a new player reads.
     {
       const words = Rules.CLASSES[spec.cls].blurb.split(' ');
       let line = '', ly = y;
       for (const w of words) {
-        if (line && (line + ' ' + w).length > 74) { Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1); ly += 12; line = w; }
+        if (line && (line + ' ' + w).length > 44) { Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2); ly += 18; line = w; }
         else line = line ? line + ' ' + w : w;
       }
-      if (line) Art.text(En, f.x + 16, ly, line, Core.idx(0, 12), 1);
+      if (line) Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2);
+      y = ly;
     }
 
     // Point buy.
@@ -673,7 +744,7 @@ const UI = (() => {
     else if (SCREENS[g.screen]) SCREENS[g.screen](g);
   }
 
-  return { draw, hit, regions: () => regions, HUD, PORTRAIT, screenFrame, ghostButton };
+  return { draw, hit, regions: () => regions, HUD, PORTRAIT, screenFrame };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = UI;

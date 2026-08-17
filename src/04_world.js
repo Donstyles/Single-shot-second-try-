@@ -407,7 +407,16 @@ const World = (() => {
         x: doorX, y: doorY, to: 'shop:' + kind, kind: 'door',
         tx: doorX + dx, ty: doorY + dy, tang: 0, shop: kind, region: regionId,
       });
-      m.decor.push({ kind: 'sign', x: doorX + 0.5, y: doorY + 0.5, z: b.gh + 2.2, shop: kind });
+      // Sign BESIDE the door, not on top of it: both stand on the ground, and stacked at the same
+      // spot the taller door simply erased the sign that says what the shop sells.
+      m.decor.push({
+        kind: 'sign', shop: kind,
+        x: doorX + 0.5 + (Math.abs(dx) > Math.abs(dy) ? dx * 0.35 : 1.1),
+        y: doorY + 0.5 + (Math.abs(dx) > Math.abs(dy) ? 1.1 : dy * 0.35),
+      });
+      // The door itself, drawn. Leaving the doorway as a bare gap in a wall made every building a
+      // featureless block; a player walked a town twice and found one entrance by accident.
+      m.decor.push({ kind: 'door', x: doorX + 0.5, y: doorY + 0.5, z: b.gh, shop: kind });
       setCell(m, doorX, doorY, MAT.wood);
     }
 
@@ -422,8 +431,18 @@ const World = (() => {
         for (let x = bx - 4; x <= bx + 4; x++) if (isSolid(cellAt(m, x, y))) { clear = false; break; }
       }
       if (!clear) continue;
-      building(m, bx - 2, by - 2, 4 + rng.int(3), 4 + rng.int(2), 1 + rng.int(2),
+      const hw = 4 + rng.int(3), hh = 4 + rng.int(2);
+      const hb = building(m, bx - 2, by - 2, hw, hh, 1 + rng.int(2),
         rng.pick([MAT.timberwall, MAT.plaster]), rng);
+      // Houses get a drawn door too, standing against the plaza-facing wall. They open on nothing —
+      // they are dressing — but a town whose houses have no doors reads as a stack of crates, and
+      // the doors are most of what tells a player which way the town centre is.
+      const hdx = cx - bx, hdy = cy - by;
+      const hx = Math.abs(hdx) > Math.abs(hdy) ? bx - 2 + (hdx > 0 ? hw + 0.05 : -0.05) : bx - 2 + hw / 2;
+      const hy = Math.abs(hdx) > Math.abs(hdy) ? by - 2 + hh / 2 : by - 2 + (hdy > 0 ? hh + 0.05 : -0.05);
+      if (inb(m, Math.floor(hx), Math.floor(hy)) && !isSolid(cellAt(m, Math.floor(hx), Math.floor(hy)))) {
+        m.decor.push({ kind: 'door', x: hx, y: hy, z: hb ? hb.gh : H(m, hx, hy) });
+      }
     }
 
     // City wall with gate arches. The gates are the s03 shot.
@@ -593,17 +612,39 @@ const World = (() => {
     }
 
     // Monster spawn points, kept off roads and away from the settlement.
+    // Monster spawn points, kept off roads and out of the settlement. The safe radius used to be
+    // 34 cells, which on a 128-cell region is most of the walk a new player ever takes: a cold
+    // tester spent fifteen minutes and "never met a single enemy, never fought anything, never saw
+    // a number change except the clock." A town should be safe; the field outside it should not.
+    const SAFE_R = 19;
     const nSpawn = 40 + r.level * 2;
     for (let i = 0; i < nSpawn; i++) {
       const x = rng.float(4, RW - 4), y = rng.float(4, RH - 4);
       const cx = Math.floor(x), cy = Math.floor(y);
       if (isSolid(m.cells[cy * RW + cx])) continue;
       if (matOf(m.cells[cy * RW + cx]) === MAT.water) continue;
-      if (town && Math.hypot(x - town.cx, y - town.cy) < 34) continue;
+      if (town && Math.hypot(x - town.cx, y - town.cy) < SAFE_R) continue;
       m.entities.push({
         eid: 'e' + id + '_' + i, kind: rng.pick(r.spawn), x, y, z: H(m, x, y),
         ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x, y },
       });
+    }
+    // A picket of the weakest thing in the table, in the band just outside the walls, so the first
+    // walk out of the gate meets SOMETHING. The first fight is the moment the game starts existing.
+    if (town) {
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2 + rng.float(-0.2, 0.2);
+        const d = SAFE_R + rng.float(2, 10);
+        const x = town.cx + Math.cos(a) * d, y = town.cy + Math.sin(a) * d;
+        const cx = Math.floor(x), cy = Math.floor(y);
+        if (cx < 2 || cy < 2 || cx >= RW - 2 || cy >= RH - 2) continue;
+        if (isSolid(m.cells[cy * RW + cx])) continue;
+        if (matOf(m.cells[cy * RW + cx]) === MAT.water) continue;
+        m.entities.push({
+          eid: 'p' + id + '_' + i, kind: r.spawn[0], x, y, z: H(m, x, y),
+          ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x, y },
+        });
+      }
     }
 
     m.fogStart = r.biome === 'marsh' ? 8 : 16;
@@ -805,7 +846,32 @@ const World = (() => {
 
   // Can the party stand at (x,y) coming from height z? Blocks solids, deep water, cliffs that are
   // too steep, and anything without headroom under a span.
+  // The party is a BODY, not a point. Testing the centre alone let a player stand at x = 3.999
+  // with a solid cell beginning at x = 4.0: the wall face is a thousandth of a cell from the eye
+  // and fills the entire viewport, which a first-time player reported as "I walked face-first into
+  // a stone wall and the game let me stand inside it... I could not tell if I was stuck, inside a
+  // building, or if the renderer had died." Keep a real body clear of solid cells.
+  // 0.26 leaves 0.48 of clearance in a one-cell doorway, which is enough to walk through.
+  const BODY = 0.26;
+
   function passable(m, x, y, fromZ) {
+    if (!pointOk(m, x, y, fromZ)) return false;
+    // Only the solid test needs the body radius. Height and water are sampled continuously and
+    // already vary smoothly, so probing them at the rim would just make slopes unclimbable.
+    if (blockedSolid(m, x + BODY, y, fromZ) || blockedSolid(m, x - BODY, y, fromZ)
+      || blockedSolid(m, x, y + BODY, fromZ) || blockedSolid(m, x, y - BODY, fromZ)) return false;
+    return true;
+  }
+
+  function blockedSolid(m, x, y, fromZ) {
+    if (x < 0 || y < 0 || x >= m.w || y >= m.h) return true;
+    const cx = Math.floor(x), cy = Math.floor(y);
+    if (!isSolid(cellAt(m, cx, cy))) return false;
+    const s = spanAt(m, cx, cy);
+    return !(s && fromZ !== undefined && fromZ >= s.hi - 0.9);
+  }
+
+  function pointOk(m, x, y, fromZ) {
     if (x < 0.4 || y < 0.4 || x > m.w - 0.4 || y > m.h - 0.4) return false;
     const cx = Math.floor(x), cy = Math.floor(y);
     const c = cellAt(m, cx, cy);

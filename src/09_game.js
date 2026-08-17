@@ -21,6 +21,7 @@ const Game = (() => {
     map: null,
     active: 0,
     keys: Object.create(null),
+    keyLatch: Object.create(null),      // ms of guaranteed hold left, so a tap cannot be dropped
     pressed: null,
     selectedItem: null,
     bookSchool: 'fire',
@@ -227,8 +228,34 @@ const Game = (() => {
     return true;
   }
 
+  // A tap is not a hold, and the movement pad must honour both.
+  //
+  // Movement samples `keys` once per frame while the button is down. A human tap lasts 60-100 ms
+  // and usually scrapes through; a fast one lands entirely between two frames and is dropped, and
+  // then NOTHING happens — no motion, no message, and not even a button highlight, because the
+  // key was never true during a render. A cold player hit that twice in the first ninety seconds
+  // and wrote: "two dead taps in a row on a game's core verb is where I would have put the phone
+  // down." So a press latches the key down for a minimum stroke: one tap always buys one visible
+  // step and one visible button-down frame, and holding still works exactly as before.
+  const TAP_LATCH_MS = 170;
+
+  function keyDown(k) {
+    return !!state.keys[k] || (state.keyLatch[k] || 0) > 0;
+  }
+
+  function decayLatches(dt) {
+    for (const k in state.keyLatch) {
+      if (state.keyLatch[k] > 0) state.keyLatch[k] = Math.max(0, state.keyLatch[k] - dt);
+    }
+  }
+
   function move(dt) {
-    const p = state.party, k = state.keys;
+    const p = state.party, k = {
+      run: state.keys.run,
+      turnL: keyDown('turnL'), turnR: keyDown('turnR'),
+      fwd: keyDown('fwd'), back: keyDown('back'),
+      strafeL: keyDown('strafeL'), strafeR: keyDown('strafeR'),
+    };
     const spd = (k.run ? 5.6 : 3.4) * (dt / 1000);
     const turn = 2.4 * (dt / 1000);
 
@@ -1090,6 +1117,8 @@ const Game = (() => {
   // ---------------------------------------------------------------- input
   function onKey(k, down) {
     state.keys[k] = down;
+    if (down && (k === 'fwd' || k === 'back' || k === 'turnL' || k === 'turnR'
+      || k === 'strafeL' || k === 'strafeR')) state.keyLatch[k] = TAP_LATCH_MS;
     if (!down) return;
     if (k === 'act') interact();
     if (k === 'sheet') openScreen('sheet');
@@ -1121,7 +1150,7 @@ const Game = (() => {
     // first-time player tapped NEW GAME four times and the game never started, because acting on
     // release meant any hiccup in down/up pairing swallowed the input entirely.
     if (r.id === 'move') {
-      if (down) { state.keys[r.data] = true; state.pressed = r.data; }
+      if (down) { state.keys[r.data] = true; state.keyLatch[r.data] = TAP_LATCH_MS; state.pressed = r.data; }
       else { for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false; state.pressed = null; }
       return;
     }
@@ -1423,6 +1452,7 @@ const Game = (() => {
     else return;
 
     if (!state.screen) move(dt);
+    decayLatches(dt);
 
     expireBuffs();
     const regen = buff('regen');

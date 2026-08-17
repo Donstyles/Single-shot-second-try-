@@ -260,6 +260,47 @@ const Sprites = (() => {
       for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
       for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
       put(cx, h - 12, 13, 13);
+    } else if (kind === 'door' || kind.indexOf('door:') === 0) {
+      // A DOOR, standing in the doorway. A cold player spent fifteen minutes in a town and entered
+      // exactly one building, by accident: "every building is a featureless solid block of stone
+      // or wood. There is no door-shaped thing to walk toward." A settlement you cannot navigate
+      // by looking at it is not a settlement, it is a maze with no walls drawn.
+      const DW = 15, DH = 40;                     // half-width, height of the leaf
+      const top = h - DH, arch = 9;
+      const inArch = (x, y) => {
+        if (y >= top + arch) return Math.abs(x) <= DW;
+        const dy = (top + arch) - y;
+        return x * x + dy * dy * (DW / arch) * (DW / arch) <= DW * DW;
+      };
+      // Stone surround, one pixel proud of the leaf on every side.
+      for (let y = top - 3; y < h; y++) {
+        for (let x = -DW - 4; x <= DW + 4; x++) {
+          if (inArch(x, y + 2)) continue;
+          if (!inArch(x, y + 5) && y < top + 2) continue;
+          put(cx + x, y, 13, 7 + ((x + y) & 1));
+        }
+      }
+      // Planks, vertical, with a seam every four pixels and a warm interior light down the join.
+      for (let y = top; y < h; y++) {
+        for (let x = -DW; x <= DW; x++) {
+          if (!inArch(x, y)) continue;
+          const seam = ((x + DW) % 5) === 0;
+          const grain = ((x * 7 + y * 3) & 7) === 0 ? 1 : 0;
+          put(cx + x, y, 4, seam ? 3 : 7 - grain);
+        }
+      }
+      // Two iron bands and a ring handle: the read that says "openable" at forty paces.
+      for (const by of [top + arch + 6, h - 10]) {
+        for (let x = -DW; x <= DW; x++) if (inArch(x, by)) { put(cx + x, by, 13, 3); put(cx + x, by + 1, 13, 5); }
+      }
+      for (let a = 0; a < 16; a++) {
+        const ax = Math.round(Math.cos(a * Math.PI / 8) * 3) + DW - 5;
+        const ay = Math.round(Math.sin(a * Math.PI / 8) * 3) + h - 20;
+        put(cx + ax, ay, 13, 12);
+      }
+      // Threshold shadow, so the door sits IN the wall rather than on it.
+      for (let x = -DW - 4; x <= DW + 4; x++) put(cx + x, h - 1, 0, 2);
+
     } else if (kind === 'sign' || kind.indexOf('sign:') === 0) {
       // Post and board.
       for (let y = h - 26; y < h; y++) for (let dx = -1; dx <= 1; dx++) put(cx + dx, y, 4, 6 - Math.abs(dx));
@@ -317,7 +358,7 @@ const Sprites = (() => {
   const DECOR_HEIGHT = {
     oak: 6.5, pine: 8.0, deadtree: 5.5, ashstump: 2.4, reed: 1.6, bush: 1.2,
     rock: 1.8, standingstone: 4.2, brazier: 2.0, fountain: 2.4, chest: 1.1,
-    sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6,
+    sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6, door: 3.1,
   };
 
   // ---------------------------------------------------------------- portraits
