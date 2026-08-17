@@ -899,12 +899,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = Rules;
 
 
 /* ==================== 02_spells.js ==================== */
-// 02_spells.js — nine schools, thirty-six spells.
+// 02_spells.js — nine schools, eleven spells each, ninety-nine total.
 // Owner: spells. Calls Core and Rules.
 //
 // Pure. `resolve` returns a list of EFFECTS to apply; it never mutates a character. The caller
-// applies them. That split is what lets the systems suite check a fireball's numbers without a
-// world, and what stops combat code from growing its own private damage formula.
+// applies them. That split is what lets the systems suite check a meteor shower's numbers without
+// a world, and what stops combat code from growing its own private damage formula.
+//
+// FULL FUNCTIONALITY IS THE BAR. Every spell below produces a real effect that the game layer acts
+// on — there are no decorative entries. Utility spells (Town Portal, Lloyd's Beacon, Wizard Eye,
+// Enchant Item, Fly, Water Walk) carry a `special` the game implements; if a special has no
+// handler, the systems suite fails.
 
 const Spellcraft = (() => {
   'use strict';
@@ -914,8 +919,8 @@ const Spellcraft = (() => {
 
   const SCHOOLS = {
     fire:   { name: 'Fire',   kind: 'elemental', gem: 15 },
-    water:  { name: 'Water',  kind: 'elemental', gem: 8 },
     air:    { name: 'Air',    kind: 'elemental', gem: 9 },
+    water:  { name: 'Water',  kind: 'elemental', gem: 8 },
     earth:  { name: 'Earth',  kind: 'elemental', gem: 5 },
     spirit: { name: 'Spirit', kind: 'self',      gem: 13 },
     mind:   { name: 'Mind',   kind: 'self',      gem: 12 },
@@ -925,68 +930,150 @@ const Spellcraft = (() => {
   };
   const SCHOOL_IDS = Object.keys(SCHOOLS);
 
-  // Tier gates mastery: 1-2 Novice, 3 Expert, 4 Master. That is the whole progression curve of a
-  // caster, and it is why training matters more than levelling for them.
-  const TIER_MASTERY = [0, MASTERY.NOVICE, MASTERY.NOVICE, MASTERY.EXPERT, MASTERY.MASTER];
+  // Eleven tiers per school. 1-4 Novice, 5-7 Expert, 8-11 Master — the whole progression curve of
+  // a caster, and why training matters more to them than levelling.
+  const TIER_MASTERY = [0,
+    MASTERY.NOVICE, MASTERY.NOVICE, MASTERY.NOVICE, MASTERY.NOVICE,
+    MASTERY.EXPERT, MASTERY.EXPERT, MASTERY.EXPERT,
+    MASTERY.MASTER, MASTERY.MASTER, MASTERY.MASTER, MASTERY.MASTER];
 
-  // target: 'enemy' | 'enemies' | 'ally' | 'party' | 'self' | 'world'
+  // target: 'enemy' | 'enemies' | 'ally' | 'party' | 'self' | 'world' | 'item'
+  // dmg/heal are dice; `scale` multiplies caster power into the result.
+  // buff/amount/dur -> a timed party or single-target modifier the game reads.
+  // status -> a timed condition on an enemy.
+  // special -> a named hook the game layer MUST implement.
+  const S = (school, tier, sp, name, target, extra) =>
+    Object.assign({ school, tier, sp, name, target }, extra || {});
+
   const SPELLS = {
-    // ---- fire
-    flame_arrow:  { school: 'fire', tier: 1, sp: 2, name: 'Flame Arrow', target: 'enemy',   dmg: { n: 1, sides: 6 }, scale: 1.0, elem: 'fire' },
-    fire_bolt:    { school: 'fire', tier: 2, sp: 5, name: 'Fire Bolt',   target: 'enemy',   dmg: { n: 2, sides: 6 }, scale: 1.5, elem: 'fire' },
-    fireball:     { school: 'fire', tier: 3, sp: 10, name: 'Fireball',   target: 'enemies', dmg: { n: 3, sides: 6 }, scale: 2.0, elem: 'fire', radius: 2.5 },
-    immolation:   { school: 'fire', tier: 4, sp: 18, name: 'Immolation', target: 'enemies', dmg: { n: 5, sides: 8 }, scale: 3.0, elem: 'fire', radius: 3.5 },
+    // ============================================================ FIRE
+    torch_light:   S('fire', 1, 1, 'Torch Light', 'party', { buff: 'light', amount: 4, dur: 180 }),
+    fire_bolt:     S('fire', 2, 3, 'Fire Bolt', 'enemy', { dmg: { n: 1, sides: 6 }, scale: 1.0, elem: 'fire' }),
+    prot_fire:     S('fire', 3, 4, 'Protection from Fire', 'party', { buff: 'resist_fire', amount: 20, dur: 240 }),
+    fire_aura:     S('fire', 4, 6, 'Fire Aura', 'item', { special: 'enchant_weapon', elem: 'fire', amount: 4 }),
+    haste:         S('fire', 5, 10, 'Haste', 'party', { buff: 'haste', amount: 30, dur: 120 }),
+    fireball:      S('fire', 6, 12, 'Fireball', 'enemies', { dmg: { n: 3, sides: 6 }, scale: 1.8, elem: 'fire', radius: 3.0 }),
+    fire_spike:    S('fire', 7, 14, 'Fire Spike', 'enemy', { dmg: { n: 4, sides: 8 }, scale: 2.2, elem: 'fire', pierce: true }),
+    immolation:    S('fire', 8, 18, 'Immolation', 'party', { buff: 'immolation', amount: 8, dur: 90 }),
+    meteor_shower: S('fire', 9, 22, 'Meteor Shower', 'enemies', { dmg: { n: 5, sides: 8 }, scale: 2.6, elem: 'fire', radius: 5.0, outdoorOnly: true }),
+    inferno:       S('fire', 10, 26, 'Inferno', 'enemies', { dmg: { n: 6, sides: 8 }, scale: 3.0, elem: 'fire', radius: 4.0, indoorOnly: true }),
+    incinerate:    S('fire', 11, 32, 'Incinerate', 'enemy', { dmg: { n: 12, sides: 8 }, scale: 4.5, elem: 'fire' }),
 
-    // ---- water
-    frostbite:    { school: 'water', tier: 1, sp: 2, name: 'Frostbite',   target: 'enemy',   dmg: { n: 1, sides: 5 }, scale: 1.0, elem: 'cold' },
-    ice_bolt:     { school: 'water', tier: 2, sp: 5, name: 'Ice Bolt',    target: 'enemy',   dmg: { n: 2, sides: 7 }, scale: 1.5, elem: 'cold' },
-    water_walk:   { school: 'water', tier: 3, sp: 8, name: 'Water Walk',  target: 'party',   buff: 'waterwalk', dur: 60 },
-    ice_blast:    { school: 'water', tier: 4, sp: 16, name: 'Ice Blast',  target: 'enemies', dmg: { n: 4, sides: 8 }, scale: 2.6, elem: 'cold', radius: 3.0 },
+    // ============================================================ AIR
+    wizard_eye:    S('air', 1, 1, 'Wizard Eye', 'party', { special: 'wizard_eye', buff: 'wizard_eye', amount: 1, dur: 300 }),
+    feather_fall:  S('air', 2, 3, 'Feather Fall', 'party', { buff: 'featherfall', amount: 1, dur: 180 }),
+    prot_air:      S('air', 3, 4, 'Protection from Air', 'party', { buff: 'resist_elec', amount: 20, dur: 240 }),
+    sparks:        S('air', 4, 6, 'Sparks', 'enemies', { dmg: { n: 2, sides: 4 }, scale: 0.9, elem: 'elec', radius: 2.5 }),
+    jump:          S('air', 5, 6, 'Jump', 'party', { special: 'jump', buff: 'jump', amount: 1, dur: 1 }),
+    shield:        S('air', 6, 10, 'Shield', 'party', { buff: 'shield', amount: 12, dur: 180 }),
+    lightning:     S('air', 7, 14, 'Lightning Bolt', 'enemy', { dmg: { n: 5, sides: 8 }, scale: 2.4, elem: 'elec', pierce: true }),
+    invisibility:  S('air', 8, 18, 'Invisibility', 'party', { buff: 'invisible', amount: 1, dur: 90 }),
+    implosion:     S('air', 9, 24, 'Implosion', 'enemy', { dmg: { n: 8, sides: 8 }, scale: 3.4, elem: 'elec' }),
+    fly:           S('air', 10, 26, 'Fly', 'party', { special: 'fly', buff: 'fly', amount: 1, dur: 300, outdoorOnly: true }),
+    starburst:     S('air', 11, 34, 'Starburst', 'enemies', { dmg: { n: 10, sides: 8 }, scale: 4.0, elem: 'elec', radius: 6.0, outdoorOnly: true }),
 
-    // ---- air
-    spark:        { school: 'air', tier: 1, sp: 2, name: 'Spark',          target: 'enemy',  dmg: { n: 1, sides: 4 }, scale: 1.0, elem: 'elec' },
-    feather_fall: { school: 'air', tier: 2, sp: 4, name: 'Feather Fall',   target: 'party',  buff: 'featherfall', dur: 45 },
-    lightning:    { school: 'air', tier: 3, sp: 11, name: 'Lightning Bolt',target: 'enemies',dmg: { n: 4, sides: 6 }, scale: 2.2, elem: 'elec', radius: 1.5 },
-    invisibility: { school: 'air', tier: 4, sp: 20, name: 'Invisibility',  target: 'party',  buff: 'invisible', dur: 30 },
+    // ============================================================ WATER
+    awaken:        S('water', 1, 1, 'Awaken', 'party', { cure: ['asleep'] }),
+    poison_spray:  S('water', 2, 3, 'Poison Spray', 'enemy', { dmg: { n: 1, sides: 6 }, scale: 0.9, elem: 'poison', status: 'poison', dur: 40 }),
+    prot_water:    S('water', 3, 4, 'Protection from Water', 'party', { buff: 'resist_cold', amount: 20, dur: 240 }),
+    ice_bolt:      S('water', 4, 6, 'Ice Bolt', 'enemy', { dmg: { n: 3, sides: 6 }, scale: 1.4, elem: 'cold' }),
+    water_walk:    S('water', 5, 8, 'Water Walk', 'party', { special: 'water_walk', buff: 'waterwalk', amount: 1, dur: 300 }),
+    recharge:      S('water', 6, 10, 'Recharge Item', 'item', { special: 'recharge' }),
+    acid_burst:    S('water', 7, 13, 'Acid Burst', 'enemy', { dmg: { n: 5, sides: 6 }, scale: 2.2, elem: 'poison' }),
+    enchant_item:  S('water', 8, 20, 'Enchant Item', 'item', { special: 'enchant_item' }),
+    town_portal:   S('water', 9, 24, 'Town Portal', 'world', { special: 'town_portal' }),
+    ice_blast:     S('water', 10, 26, 'Ice Blast', 'enemies', { dmg: { n: 7, sides: 8 }, scale: 3.0, elem: 'cold', radius: 4.0 }),
+    lloyds_beacon: S('water', 11, 30, "Lloyd's Beacon", 'world', { special: 'lloyds_beacon' }),
 
-    // ---- earth
-    stone_skin:   { school: 'earth', tier: 1, sp: 3, name: 'Stone Skin',   target: 'party',  buff: 'ac', dur: 60, amount: 5 },
-    rock_blast:   { school: 'earth', tier: 2, sp: 6, name: 'Rock Blast',   target: 'enemy',  dmg: { n: 2, sides: 8 }, scale: 1.4, elem: 'phys' },
-    deadly_swarm: { school: 'earth', tier: 3, sp: 12, name: 'Deadly Swarm',target: 'enemies',dmg: { n: 3, sides: 8 }, scale: 2.0, elem: 'phys', radius: 2.5 },
-    stone_flesh:  { school: 'earth', tier: 4, sp: 15, name: 'Stone to Flesh', target: 'ally', cure: ['stoned', 'weak'] },
+    // ============================================================ EARTH
+    stun:          S('earth', 1, 2, 'Stun', 'enemy', { status: 'stunned', dur: 20 }),
+    slow:          S('earth', 2, 4, 'Slow', 'enemies', { status: 'slowed', dur: 40, radius: 3.0 }),
+    prot_earth:    S('earth', 3, 4, 'Protection from Earth', 'party', { buff: 'resist_phys', amount: 20, dur: 240 }),
+    deadly_swarm:  S('earth', 4, 6, 'Deadly Swarm', 'enemies', { dmg: { n: 2, sides: 6 }, scale: 1.2, elem: 'phys', radius: 3.0 }),
+    stone_skin:    S('earth', 5, 8, 'Stone Skin', 'party', { buff: 'ac', amount: 14, dur: 240 }),
+    blades:        S('earth', 6, 11, 'Blades', 'enemy', { dmg: { n: 5, sides: 5 }, scale: 2.0, elem: 'phys' }),
+    stone_flesh:   S('earth', 7, 12, 'Stone to Flesh', 'ally', { cure: ['stoned', 'weak'] }),
+    rock_blast:    S('earth', 8, 16, 'Rock Blast', 'enemies', { dmg: { n: 6, sides: 7 }, scale: 2.6, elem: 'phys', radius: 3.5 }),
+    death_blossom: S('earth', 9, 24, 'Death Blossom', 'enemies', { dmg: { n: 8, sides: 8 }, scale: 3.2, elem: 'phys', radius: 5.0, outdoorOnly: true }),
+    mass_distort:  S('earth', 10, 28, 'Mass Distortion', 'enemy', { special: 'mass_distortion', scale: 0.35 }),
+    quake:         S('earth', 11, 34, 'Earthquake', 'enemies', { dmg: { n: 10, sides: 8 }, scale: 3.8, elem: 'phys', radius: 7.0 }),
 
-    // ---- spirit
-    bless:        { school: 'spirit', tier: 1, sp: 3, name: 'Bless',       target: 'party', buff: 'hit', dur: 60, amount: 5 },
-    heroism:      { school: 'spirit', tier: 2, sp: 6, name: 'Heroism',     target: 'party', buff: 'dmg', dur: 60, amount: 4 },
-    remove_curse: { school: 'spirit', tier: 3, sp: 10, name: 'Remove Curse', target: 'ally', cure: ['curse'] },
-    resurrect:    { school: 'spirit', tier: 4, sp: 30, name: 'Resurrection', target: 'ally', cure: ['dead', 'unconscious'], healFrac: 0.25 },
+    // ============================================================ SPIRIT
+    detect_life:   S('spirit', 1, 1, 'Detect Life', 'party', { buff: 'detect_life', amount: 1, dur: 240 }),
+    bless:         S('spirit', 2, 3, 'Bless', 'party', { buff: 'hit', amount: 8, dur: 180 }),
+    fate:          S('spirit', 3, 5, 'Fate', 'ally', { buff: 'fate', amount: 20, dur: 60 }),
+    turn_undead:   S('spirit', 4, 7, 'Turn Undead', 'enemies', { special: 'turn_undead', radius: 5.0, dur: 40 }),
+    remove_curse:  S('spirit', 5, 8, 'Remove Curse', 'ally', { cure: ['curse'] }),
+    preservation:  S('spirit', 6, 10, 'Preservation', 'party', { buff: 'preservation', amount: 1, dur: 240 }),
+    heroism:       S('spirit', 7, 12, 'Heroism', 'party', { buff: 'dmg', amount: 8, dur: 180 }),
+    spirit_lash:   S('spirit', 8, 16, 'Spirit Lash', 'enemy', { dmg: { n: 6, sides: 8 }, scale: 2.8, elem: 'spirit' }),
+    raise_dead:    S('spirit', 9, 22, 'Raise Dead', 'ally', { cure: ['dead', 'unconscious'], healFrac: 0.15, special: 'raise_dead' }),
+    shared_life:   S('spirit', 10, 24, 'Shared Life', 'party', { special: 'shared_life' }),
+    resurrect:     S('spirit', 11, 32, 'Resurrection', 'ally', { cure: ['dead', 'unconscious', 'weak'], healFrac: 0.5 }),
 
-    // ---- mind
-    mind_blast:   { school: 'mind', tier: 1, sp: 3, name: 'Mind Blast',    target: 'enemy', dmg: { n: 1, sides: 8 }, scale: 1.1, elem: 'mind' },
-    remove_fear:  { school: 'mind', tier: 2, sp: 4, name: 'Remove Fear',   target: 'party', cure: ['afraid'] },
-    charm:        { school: 'mind', tier: 3, sp: 9, name: 'Charm',         target: 'enemy', status: 'charmed', dur: 20 },
-    berserk:      { school: 'mind', tier: 4, sp: 14, name: 'Berserk',      target: 'enemy', status: 'berserk', dur: 25 },
+    // ============================================================ MIND
+    remove_fear:   S('mind', 1, 1, 'Remove Fear', 'party', { cure: ['afraid'] }),
+    mind_blast:    S('mind', 2, 3, 'Mind Blast', 'enemy', { dmg: { n: 2, sides: 5 }, scale: 1.1, elem: 'mind' }),
+    prot_mind:     S('mind', 3, 4, 'Protection from Mind', 'party', { buff: 'resist_mind', amount: 20, dur: 240 }),
+    precision:     S('mind', 4, 6, 'Precision', 'party', { buff: 'acc', amount: 12, dur: 180 }),
+    cure_para:     S('mind', 5, 8, 'Cure Paralysis', 'ally', { cure: ['paralysed', 'stoned'] }),
+    charm:         S('mind', 6, 10, 'Charm', 'enemy', { status: 'charmed', dur: 45 }),
+    mass_fear:     S('mind', 7, 13, 'Mass Fear', 'enemies', { status: 'afraid', dur: 40, radius: 5.0 }),
+    feeblemind:    S('mind', 8, 16, 'Feeblemind', 'enemy', { status: 'feebled', dur: 60 }),
+    berserk:       S('mind', 9, 20, 'Berserk', 'enemies', { status: 'berserk', dur: 45, radius: 4.0 }),
+    enslave:       S('mind', 10, 26, 'Enslave', 'enemy', { status: 'enslaved', dur: 120 }),
+    psychic_shock: S('mind', 11, 32, 'Psychic Shock', 'enemy', { dmg: { n: 10, sides: 8 }, scale: 4.0, elem: 'mind' }),
 
-    // ---- body
-    first_aid:    { school: 'body', tier: 1, sp: 2, name: 'First Aid',     target: 'ally',  heal: { n: 1, sides: 8 }, scale: 1.0 },
-    cure_wounds:  { school: 'body', tier: 2, sp: 5, name: 'Cure Wounds',   target: 'ally',  heal: { n: 2, sides: 8 }, scale: 2.0 },
-    cure_poison:  { school: 'body', tier: 3, sp: 8, name: 'Cure Poison',   target: 'ally',  cure: ['poison'] },
-    regeneration: { school: 'body', tier: 4, sp: 16, name: 'Regeneration', target: 'party', buff: 'regen', dur: 90, amount: 2 },
+    // ============================================================ BODY
+    cure_weak:     S('body', 1, 1, 'Cure Weakness', 'ally', { cure: ['weak'] }),
+    first_aid:     S('body', 2, 2, 'First Aid', 'ally', { heal: { n: 1, sides: 8 }, scale: 1.0 }),
+    prot_body:     S('body', 3, 4, 'Protection from Body', 'party', { buff: 'resist_poison', amount: 20, dur: 240 }),
+    harm:          S('body', 4, 6, 'Harm', 'enemy', { dmg: { n: 3, sides: 6 }, scale: 1.5, elem: 'body' }),
+    regeneration:  S('body', 5, 9, 'Regeneration', 'party', { buff: 'regen', amount: 3, dur: 180 }),
+    cure_poison:   S('body', 6, 10, 'Cure Poison', 'ally', { cure: ['poison'] }),
+    hammerhands:   S('body', 7, 13, 'Hammerhands', 'ally', { buff: 'hammerhands', amount: 10, dur: 180 }),
+    cure_disease:  S('body', 8, 16, 'Cure Disease', 'ally', { cure: ['disease'] }),
+    protection:    S('body', 9, 20, 'Protection from Magic', 'party', { buff: 'resist_magic', amount: 40, dur: 240 }),
+    power_cure:    S('body', 10, 24, 'Power Cure', 'party', { heal: { n: 5, sides: 10 }, scale: 3.0 }),
+    flying_fist:   S('body', 11, 30, 'Flying Fist', 'enemy', { dmg: { n: 9, sides: 8 }, scale: 3.6, elem: 'body' }),
 
-    // ---- light
-    torch_light:  { school: 'light', tier: 1, sp: 1, name: 'Torch Light',  target: 'party', buff: 'light', dur: 120, amount: 3 },
-    cure_disease: { school: 'light', tier: 2, sp: 7, name: 'Cure Disease', target: 'ally',  cure: ['disease'] },
-    sunray:       { school: 'light', tier: 3, sp: 13, name: 'Sunray',      target: 'enemy', dmg: { n: 4, sides: 8 }, scale: 2.4, elem: 'light' },
-    divine_heal:  { school: 'light', tier: 4, sp: 22, name: 'Divine Heal', target: 'party', heal: { n: 4, sides: 10 }, scale: 3.0 },
+    // ============================================================ LIGHT
+    light_bolt:    S('light', 1, 2, 'Light Bolt', 'enemy', { dmg: { n: 2, sides: 6 }, scale: 1.2, elem: 'light' }),
+    destroy_undead:S('light', 2, 5, 'Destroy Undead', 'enemy', { special: 'destroy_undead', scale: 3.0, elem: 'light' }),
+    dispel_magic:  S('light', 3, 7, 'Dispel Magic', 'enemies', { special: 'dispel_magic', radius: 5.0 }),
+    paralyze:      S('light', 4, 9, 'Paralyze', 'enemy', { status: 'paralysed', dur: 60 }),
+    summon_elem:   S('light', 5, 12, 'Summon Elemental', 'world', { special: 'summon_elemental', dur: 180 }),
+    day_of_gods:   S('light', 6, 16, 'Day of the Gods', 'party', { buff: 'day_of_gods', amount: 12, dur: 300 }),
+    prismatic:     S('light', 7, 20, 'Prismatic Light', 'enemies', { dmg: { n: 6, sides: 8 }, scale: 2.8, elem: 'light', radius: 6.0, indoorOnly: true }),
+    day_of_prot:   S('light', 8, 24, 'Day of Protection', 'party', { buff: 'day_of_protection', amount: 25, dur: 300 }),
+    hour_of_power: S('light', 9, 28, 'Hour of Power', 'party', { special: 'hour_of_power', dur: 300 }),
+    sunray:        S('light', 10, 30, 'Sunray', 'enemy', { dmg: { n: 11, sides: 8 }, scale: 4.2, elem: 'light', outdoorOnly: true }),
+    divine_int:    S('light', 11, 40, 'Divine Intervention', 'party', { special: 'divine_intervention' }),
 
-    // ---- dark
-    darkness:     { school: 'dark', tier: 1, sp: 3, name: 'Darkness',      target: 'enemies', status: 'blind', dur: 20, radius: 2.5 },
-    drain_life:   { school: 'dark', tier: 2, sp: 7, name: 'Drain Life',    target: 'enemy', dmg: { n: 2, sides: 6 }, scale: 1.4, elem: 'dark', drain: true },
-    toxic_cloud:  { school: 'dark', tier: 3, sp: 12, name: 'Toxic Cloud',  target: 'enemies', dmg: { n: 3, sides: 7 }, scale: 1.9, elem: 'poison', radius: 3.0, status: 'poison' },
-    shrapmetal:   { school: 'dark', tier: 4, sp: 20, name: 'Shrapmetal',   target: 'enemies', dmg: { n: 5, sides: 6 }, scale: 2.8, elem: 'phys', radius: 2.0 },
+    // ============================================================ DARK
+    reanimate:     S('dark', 1, 3, 'Reanimate', 'world', { special: 'reanimate', dur: 180 }),
+    toxic_cloud:   S('dark', 2, 5, 'Toxic Cloud', 'enemies', { dmg: { n: 3, sides: 6 }, scale: 1.5, elem: 'poison', radius: 3.5, status: 'poison', dur: 40 }),
+    vampiric:      S('dark', 3, 8, 'Vampiric Weapon', 'item', { special: 'enchant_weapon', elem: 'drain', amount: 5 }),
+    shrapmetal:    S('dark', 4, 10, 'Shrapmetal', 'enemies', { dmg: { n: 4, sides: 6 }, scale: 1.8, elem: 'phys', radius: 2.5 }),
+    control_undead:S('dark', 5, 13, 'Control Undead', 'enemy', { special: 'control_undead', dur: 90 }),
+    pain_reflect:  S('dark', 6, 16, 'Pain Reflection', 'party', { buff: 'pain_reflection', amount: 40, dur: 180 }),
+    sacrifice:     S('dark', 7, 18, 'Sacrifice', 'ally', { special: 'sacrifice' }),
+    dragon_breath: S('dark', 8, 22, 'Dragon Breath', 'enemies', { dmg: { n: 8, sides: 8 }, scale: 3.2, elem: 'fire', radius: 4.5 }),
+    souldrinker:   S('dark', 9, 26, 'Souldrinker', 'enemies', { dmg: { n: 9, sides: 8 }, scale: 3.6, elem: 'dark', radius: 6.0, drain: true }),
+    armageddon:    S('dark', 10, 30, 'Armageddon', 'enemies', { special: 'armageddon', dmg: { n: 12, sides: 10 }, scale: 4.0, elem: 'phys', radius: 40, outdoorOnly: true }),
+    dark_ritual:   S('dark', 11, 36, 'Dark Ritual', 'party', { special: 'dark_ritual' }),
   };
 
   const SPELL_IDS = Object.keys(SPELLS);
+
+  // Every `special` a spell can carry. The systems suite asserts the game layer implements each
+  // one, so a spell can never be decorative.
+  const SPECIALS = [
+    'enchant_weapon', 'wizard_eye', 'jump', 'fly', 'water_walk', 'recharge', 'enchant_item',
+    'town_portal', 'lloyds_beacon', 'mass_distortion', 'turn_undead', 'raise_dead', 'shared_life',
+    'destroy_undead', 'dispel_magic', 'summon_elemental', 'hour_of_power', 'divine_intervention',
+    'reanimate', 'control_undead', 'sacrifice', 'armageddon', 'dark_ritual',
+  ];
 
   function bySchool(school) {
     return SPELL_IDS.filter((id) => SPELLS[id].school === school)
@@ -1004,8 +1091,6 @@ const Spellcraft = (() => {
   function spCost(ch, id) {
     const sp = SPELLS[id];
     if (!sp) return 0;
-    // Master casters pay less. It is the reason a Master Fire mage out-sustains an Expert one
-    // even at identical skill level.
     const m = Rules.mastery(ch, sp.school);
     const mult = m >= MASTERY.MASTER ? 0.7 : m >= MASTERY.EXPERT ? 0.85 : 1.0;
     return Math.max(1, Math.round(sp.sp * mult));
@@ -1015,6 +1100,7 @@ const Spellcraft = (() => {
   // a bug, and the player will report it as one.
   function canCast(ch, id, ctx) {
     const sp = SPELLS[id];
+    const c = ctx || {};
     if (!sp) return { ok: false, why: 'No such spell.' };
     if (!Rules.canAct(ch)) return { ok: false, why: ch.name + ' cannot act.' };
     if (Rules.classCap(ch.cls, sp.school) === 0) {
@@ -1029,9 +1115,8 @@ const Spellcraft = (() => {
     const cost = spCost(ch, id);
     if (ch.sp < cost) return { ok: false, why: 'Not enough spell points (' + cost + ' needed).' };
     if (ch.recovery > 0) return { ok: false, why: ch.name + ' is still recovering.' };
-    if (sp.school === 'light' && ctx && ctx.underground && sp.tier >= 3) {
-      return { ok: false, why: 'Light magic of this power will not answer underground.' };
-    }
+    if (sp.outdoorOnly && c.underground) return { ok: false, why: sp.name + ' will not work underground.' };
+    if (sp.indoorOnly && !c.underground) return { ok: false, why: sp.name + ' needs an enclosed space.' };
     return { ok: true, cost };
   }
 
@@ -1043,13 +1128,6 @@ const Spellcraft = (() => {
 
   // ---------------------------------------------------------------- resolve
   // PURE. Returns { cost, effects: [...] }. The caller applies every effect.
-  //
-  // Effect shapes:
-  //   { kind:'damage', target, amount, elem }
-  //   { kind:'heal',   target, amount }
-  //   { kind:'cure',   target, conds:[] }
-  //   { kind:'buff',   target, buff, amount, dur }
-  //   { kind:'status', target, status, dur }
   function resolve(ch, id, targets, rng, ctx) {
     const sp = SPELLS[id];
     const out = { spell: id, cost: spCost(ch, id), effects: [] };
@@ -1058,45 +1136,60 @@ const Spellcraft = (() => {
     const pw = power(ch, sp.school);
     const tlist = Array.isArray(targets) ? targets : (targets ? [targets] : []);
 
+    // World-scope specials do not need a target list.
+    if (sp.target === 'world' || sp.target === 'item') {
+      out.effects.push({ kind: 'special', special: sp.special, caster: ch, power: pw,
+        dur: Math.round((sp.dur || 60) * (1 + pw / 40)), amount: sp.amount, elem: sp.elem });
+      return out;
+    }
+
     for (const t of tlist) {
+      if (sp.special) {
+        out.effects.push({ kind: 'special', special: sp.special, target: t, caster: ch,
+          power: pw, dur: Math.round((sp.dur || 60) * (1 + pw / 40)), scale: sp.scale, elem: sp.elem });
+        // Some specials ALSO carry ordinary components (Raise Dead cures and heals).
+        if (!sp.cure && !sp.dmg && !sp.heal) continue;
+      }
       if (sp.dmg) {
-        // Base dice plus power scaling. The scale factor is what separates a tier-1 dart from a
-        // tier-4 nuke far more than the dice do.
         const base = rng.dice(sp.dmg.n, sp.dmg.sides);
         const raw = Math.round(base + pw * sp.scale);
-        const res = (t.resist && t.resist[sp.elem]) || 0;
+        // `pierce` ignores resistance, which is the entire reason to carry a pierce spell.
+        const res = sp.pierce ? 0 : ((t.resist && t.resist[sp.elem]) || 0);
         const amount = Rules.applyResist(raw, res);
         out.effects.push({ kind: 'damage', target: t, amount, elem: sp.elem });
-        if (sp.drain) out.effects.push({ kind: 'heal', target: ch, amount: Math.round(amount * 0.5) });
-        if (sp.status) out.effects.push({ kind: 'status', target: t, status: sp.status, dur: sp.dur || 20 });
+        if (sp.drain) out.effects.push({ kind: 'heal', target: ch, amount: Math.round(amount * 0.4) });
+        if (sp.status) out.effects.push({ kind: 'status', target: t, status: sp.status, dur: sp.dur || 30 });
       } else if (sp.heal) {
         const amount = Math.round(rng.dice(sp.heal.n, sp.heal.sides) + pw * sp.scale);
         out.effects.push({ kind: 'heal', target: t, amount });
       } else if (sp.cure) {
         out.effects.push({ kind: 'cure', target: t, conds: sp.cure.slice() });
-        if (sp.healFrac) {
-          out.effects.push({ kind: 'heal', target: t, amount: Math.round(Rules.maxHP(t) * sp.healFrac) });
-        }
+        if (sp.healFrac) out.effects.push({ kind: 'heal', target: t, amount: Math.round(Rules.maxHP(t) * sp.healFrac) });
       } else if (sp.buff) {
         // Duration scales with power: the same spell lasts a dungeon at Master and a fight at Novice.
         const dur = Math.round(sp.dur * (1 + pw / 30));
-        out.effects.push({ kind: 'buff', target: t, buff: sp.buff, amount: sp.amount || 1, dur });
+        const amount = Math.round((sp.amount || 1) * (1 + pw / 60));
+        out.effects.push({ kind: 'buff', target: t, buff: sp.buff, amount, dur });
       } else if (sp.status) {
-        out.effects.push({ kind: 'status', target: t, status: sp.status, dur: sp.dur || 20 });
+        out.effects.push({ kind: 'status', target: t, status: sp.status, dur: Math.round((sp.dur || 30) * (1 + pw / 50)) });
       }
     }
     return out;
   }
 
-  // What the shop charges to teach it, and what the guild requires.
   function scrollPrice(id) {
     const sp = SPELLS[id];
-    return sp ? sp.tier * sp.tier * 120 + 60 : 0;
+    return sp ? sp.tier * sp.tier * 90 + 80 : 0;
+  }
+
+  // What a guild of this school teaches at a given tier cap.
+  function guildStock(school, maxTier) {
+    return bySchool(school).filter((id) => SPELLS[id].tier <= maxTier);
   }
 
   return {
-    SCHOOLS, SCHOOL_IDS, SPELLS, SPELL_IDS, TIER_MASTERY,
-    bySchool, power, spCost, canCast, learnable, resolve, scrollPrice,
+    SCHOOLS, SCHOOL_IDS, SPELLS, SPELL_IDS, TIER_MASTERY, SPECIALS,
+    bySchool, power, spCost, canCast, learnable, resolve, scrollPrice, guildStock,
   };
 })();
 
@@ -3854,7 +3947,7 @@ const Game = (() => {
       if (it && it.ac) ac += it.ac + (st.bonus || 0);
       if (slot === 'armour' && it && it.skill) wornSkill = it.skill;
     }
-    return Rules.armourClass(ch, wornSkill, ac);
+    return Rules.armourClass(ch, wornSkill, ac) + buff('ac') + Math.round(buff('shield') * 0.5) + buff('day_of_gods');
   }
 
   // Recompute equipment bonuses. Derived, never saved — saving it is how two sources of truth start.
@@ -3946,12 +4039,10 @@ const Game = (() => {
   }
 
   // ---------------------------------------------------------------- maps
-  function enterMap(id) {
-    const m = state.world.maps[id];
-    if (!m) throw new Error('no such map: ' + id);
-    state.map = m;
-    state.party.map = id;
-    // Live entity state lives on the map object, created lazily from the generated template.
+  // Materialise a map's live entities from its generated template. NO side effects on party state:
+  // this is called for every map during load, and if it also moved the party the load would end
+  // with the party standing on whichever map happened to be last.
+  function ensureLive(m) {
     if (!m.live) {
       m.live = m.entities.map((e) => {
         const def = Items.MONSTERS[e.kind];
@@ -3960,6 +4051,15 @@ const Game = (() => {
         });
       });
     }
+    return m;
+  }
+
+  function enterMap(id) {
+    const m = state.world.maps[id];
+    if (!m) throw new Error('no such map: ' + id);
+    ensureLive(m);
+    state.map = m;
+    state.party.map = id;
     return m;
   }
 
@@ -3985,6 +4085,17 @@ const Game = (() => {
   // ---------------------------------------------------------------- movement
   function tryMove(nx, ny) {
     const p = state.party, m = state.map;
+    // Water Walk and Fly genuinely change where the party may go.
+    if (buff('fly') || buff('waterwalk')) {
+      const h = World.H(m, nx, ny);
+      const cx = Math.floor(nx), cy = Math.floor(ny);
+      if (nx > 0.4 && ny > 0.4 && nx < m.w - 0.4 && ny < m.h - 0.4 && !World.isSolid(World.cellAt(m, cx, cy))) {
+        p.x = nx; p.y = ny;
+        p.z = buff('fly') ? Math.max(h, p.z) : Math.max(h, m.sea);
+        markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
+        return true;
+      }
+    }
     // Slide along walls: try the full move, then each axis alone. Without this the party sticks on
     // every corner and the game feels broken long before anything actually is.
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
@@ -4056,28 +4167,40 @@ const Game = (() => {
     return { dmg: it.dmg, skill: it.skill, speed: it.speed, bonus: st.bonus || 0 };
   }
 
+  function reachOf(ch) {
+    return (ch.equip.bow && !ch.equip.weapon) ? 18 : MELEE;
+  }
+
   function partyAttack(idx) {
     const ch = state.party.members[idx === undefined ? state.active : idx];
     if (!Rules.canAct(ch)) return { ok: false, why: ch.name + ' cannot act.' };
     if (ch.recovery > 0) return { ok: false, why: ch.name + ' is recovering.' };
-    const target = nearestEnemy(ch.equip.bow && !ch.equip.weapon ? 18 : MELEE);
+    const target = nearestEnemy(reachOf(ch));
     if (!target) return { ok: false, why: 'Nothing in reach.' };
 
     const w = weaponOf(ch);
     const rng = RNG.live('combat');
-    const atk = Rules.attackBonus(ch, w.skill, w.bonus);
+    const atk = Rules.attackBonus(ch, w.skill, w.bonus) + buff('hit') + Math.round(buff('acc') / 2) + buff('day_of_gods');
     const def = Items.MONSTERS[target.kind];
 
     if (!Rules.rollHit(rng, atk, def.ac)) {
       Log.push(ch.name + ' misses the ' + def.name + '.', 'info');
     } else {
-      const dmg = Rules.rollDamage(rng, w.dmg, Rules.statBonus(Rules.effStat(ch, 'mig')), w.bonus);
-      const dealt = Rules.applyResist(dmg, (def.resist && def.resist.phys) || 0);
+      const bonus = w.bonus + buff('dmg') + buff('hammerhands') + buff('day_of_gods');
+      const dmg = Rules.rollDamage(rng, w.dmg, Rules.statBonus(Rules.effStat(ch, 'mig')), bonus);
+      let dealt = Rules.applyResist(dmg, (def.resist && def.resist.phys) || 0);
+      // A weapon enchanted by Fire Aura / Vampiric Weapon adds its element on top.
+      const wp = ch.equip.weapon || ch.equip.bow;
+      if (wp && wp.elem && wp.elemUntil > Clock.t) {
+        const ex = Rules.applyResist(wp.elemAmount + Math.round(ch.level / 2), (def.resist && def.resist[wp.elem]) || 0);
+        dealt += ex;
+        if (wp.elem === 'drain') Rules.healTo(ch, Math.round(ex * 0.5));
+      }
       target.hp -= dealt;
       Log.push(ch.name + ' hits the ' + def.name + ' for ' + dealt + '.', 'hit');
       if (target.hp <= 0) killEntityObj(target);
     }
-    ch.recovery = Rules.recoveryTime(ch, w.speed, w.skill) * 8;
+    ch.recovery = Math.round(Rules.recoveryTime(ch, w.speed, w.skill) * 8 * (buff('haste') ? 0.6 : 1));
     return { ok: true };
   }
 
@@ -4111,19 +4234,66 @@ const Game = (() => {
     }
   }
 
+  function allyTurn(e, dt) {
+    const def = Items.MONSTERS[e.kind];
+    let foe = null, bd = 14;
+    for (const o of liveEnemies()) {
+      if (o === e || o.ally || o.charmed > Clock.t || o.enslaved > Clock.t) continue;
+      const d = Math.hypot(o.x - e.x, o.y - e.y);
+      if (d < bd) { bd = d; foe = o; }
+    }
+    if (!foe) return;
+    e.recovery = Math.max(0, e.recovery - dt);
+    if (bd > MELEE) {
+      const sp = (dt / 1000) * 2.2;
+      const nx = e.x + ((foe.x - e.x) / bd) * sp, ny = e.y + ((foe.y - e.y) / bd) * sp;
+      if (World.passable(state.map, nx, ny, e.z)) { e.x = nx; e.y = ny; e.z = World.walkHeight(state.map, nx, ny, e.z); }
+      e.ang = Math.atan2(foe.y - e.y, foe.x - e.x);
+      return;
+    }
+    if (e.recovery > 0) return;
+    const rng = RNG.live('combat');
+    const fdef = Items.MONSTERS[foe.kind];
+    if (Rules.rollHit(rng, def.atk, fdef.ac)) {
+      const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
+      foe.hp -= dmg;
+      Log.push('The ' + def.name + ' turns on the ' + fdef.name + '.', 'good');
+      if (foe.hp <= 0) killEntityObj(foe);
+    }
+    e.recovery = def.speed * 8;
+  }
+
   function monsterTurn(e, dt) {
     const p = state.party;
     const def = Items.MONSTERS[e.kind];
     const d = Math.hypot(e.x - p.x, e.y - p.y);
 
-    if (d < AGGRO) e.alerted = true;
+    // Timed statuses genuinely take a monster out of the fight. Without this, Charm and Paralyze
+    // are decorative and the Mind school is a trap.
+    if (e.paralysed > Clock.t || e.stunned > Clock.t) { e.recovery = Math.max(0, e.recovery - dt); return; }
+    if (e.afraid > Clock.t) {
+      const away = Math.atan2(e.y - p.y, e.x - p.x);
+      const sp = (dt / 1000) * 2.2;
+      const nx = e.x + Math.cos(away) * sp, ny = e.y + Math.sin(away) * sp;
+      if (World.passable(state.map, nx, ny, e.z)) { e.x = nx; e.y = ny; e.z = World.walkHeight(state.map, nx, ny, e.z); }
+      return;
+    }
+    if (e.charmed > Clock.t || e.enslaved > Clock.t || (e.ally && e.allyUntil > Clock.t)) {
+      // Charmed and summoned creatures fight the nearest OTHER monster instead of the party.
+      allyTurn(e, dt);
+      return;
+    }
+    if (e.ally && e.allyUntil <= Clock.t) { e.ally = false; }
+
+    if (d < AGGRO && !buff('invisible')) e.alerted = true;
     if (!e.alerted) return;
 
-    e.recovery = Math.max(0, e.recovery - dt);
+    const slowFactor = e.slowed > Clock.t ? 0.45 : 1;
+    e.recovery = Math.max(0, e.recovery - dt * slowFactor);
 
     if (d > MELEE) {
       // Approach. Ground-snapped, and blocked by the same rules the party obeys.
-      const sp = (dt / 1000) * (def.ai === 'brute' ? 1.6 : 2.4);
+      const sp = (dt / 1000) * (def.ai === 'brute' ? 1.6 : 2.4) * slowFactor;
       const nx = e.x + ((p.x - e.x) / d) * sp, ny = e.y + ((p.y - e.y) / d) * sp;
       if (World.passable(state.map, nx, ny, e.z)) {
         e.x = nx; e.y = ny;
@@ -4141,8 +4311,18 @@ const Game = (() => {
     const rng = RNG.live('combat');
     const victim = rng.pick(alive);
     if (Rules.rollHit(rng, def.atk, acOf(victim))) {
-      const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
+      const raw = Rules.rollDamage(rng, def.dmg, 0, 0);
+      const dmg = Rules.applyResist(raw, partyResist('phys'));
       const r = Rules.applyDamage(victim, dmg);
+      // Preservation converts a killing blow into unconsciousness — the reason to carry it.
+      if (r.died && buff('preservation')) { victim.cond.dead = false; victim.cond.unconscious = true; victim.hp = 0; r.died = false; }
+      // Pain Reflection sends a share straight back.
+      const refl = buff('pain_reflection');
+      if (refl) {
+        const back = Math.max(1, Math.round(dmg * refl / 100));
+        e.hp -= back;
+        if (e.hp <= 0) killEntityObj(e);
+      }
       Log.push('The ' + def.name + ' hits ' + victim.name + ' for ' + r.dmg + '.', 'hit');
       if (r.died) Log.push(victim.name + ' has died!', 'hit');
       else if (r.knocked) Log.push(victim.name + ' is knocked out.', 'hit');
@@ -4245,12 +4425,20 @@ const Game = (() => {
     const fx = p.x + Math.cos(p.ang) * 1.4, fy = p.y + Math.sin(p.ang) * 1.4;
 
     for (const n of m.npcs || []) {
-      if (Math.hypot(n.x - p.x, n.y - p.y) < 2.6) return { kind: 'npc', npc: n };
+      if (Math.hypot(n.x - p.x, n.y - p.y) < 3.2) return { kind: 'npc', npc: n };
     }
+    let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
       if (d.kind !== 'chest' && d.kind !== 'questitem') continue;
-      if (Math.hypot(d.x - p.x, d.y - p.y) < 2.0) return { kind: d.kind, decor: d };
+      if (d.opened || d.taken) continue;
+      const dd = Math.hypot(d.x - p.x, d.y - p.y);
+      if (dd >= 3.0) continue;
+      // Quest items outrank chests unconditionally. A chest standing beside the seal must never
+      // consume the interaction the campaign depends on.
+      const rank = d.kind === 'questitem' ? 0 : 1;
+      if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
+    if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
     for (const portal of m.portals) {
       if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 1.6 ||
           Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 1.3) return { kind: 'portal', portal };
@@ -4365,6 +4553,256 @@ const Game = (() => {
     return { __entity: e, name: def.name, hp: e.hp, resist: def.resist || {} };
   }
 
+
+  // ---------------------------------------------------------------- buffs
+  // One place buffs live, one place they are read. `until` is a game-minute stamp so they expire
+  // on the same clock everything else uses.
+  function setBuff(name, amount, durMinutes) {
+    const b = state.party.buffs || (state.party.buffs = Object.create(null));
+    const until = Clock.t + Math.max(1, Math.round(durMinutes));
+    // Re-casting refreshes and takes the stronger amount, never stacks into absurdity.
+    if (!b[name] || b[name].until < until) b[name] = { until, amount: Math.max(amount, (b[name] || {}).amount || 0) };
+    else b[name].amount = Math.max(b[name].amount, amount);
+    return b[name];
+  }
+
+  function buff(name) {
+    const b = state.party.buffs && state.party.buffs[name];
+    if (!b) return 0;
+    if (b.until <= Clock.t) { delete state.party.buffs[name]; return 0; }
+    return b.amount;
+  }
+
+  function expireBuffs() {
+    const b = state.party.buffs;
+    if (!b) return;
+    for (const k of Object.keys(b)) if (b[k].until <= Clock.t) delete b[k];
+  }
+
+  // Party-wide resistance from Protection spells, Day of Protection and Protection from Magic.
+  function partyResist(elem) {
+    return buff('resist_' + elem) + buff('day_of_protection') + buff('resist_magic') * 0.5;
+  }
+
+  const isUndead = (kind) => /skeleton|zombie|ghoul|wraith|lich|knight_ash|ash_crown/.test(kind);
+
+  // ---------------------------------------------------------------- spell specials
+  // EVERY special a spell declares must have a handler here. test/systems.test.js asserts it, so a
+  // spell can never be decorative.
+  const SPECIALS = {
+    enchant_weapon(eff) {
+      const ch = eff.caster;
+      const w = ch.equip.weapon || ch.equip.bow;
+      if (!w) { Log.push('No weapon to enchant.', 'info'); return false; }
+      w.elem = eff.elem; w.elemAmount = eff.amount || 4;
+      w.elemUntil = Clock.t + eff.dur;
+      Log.push(Items.displayName(w) + ' glows.', 'good');
+      return true;
+    },
+    wizard_eye(eff) {
+      // Reveal the map generously around the party — the whole point of the spell.
+      markSeen(state.party.map, state.party.x, state.party.y, 34);
+      setBuff('wizard_eye', 1, eff.dur);
+      Log.push('The world opens to you.', 'good');
+      return true;
+    },
+    jump(eff) {
+      const p = state.party;
+      // Hop forward over whatever is directly ahead, landing on the walk surface.
+      for (let d = 3.5; d >= 1.0; d -= 0.5) {
+        const nx = p.x + Math.cos(p.ang) * d, ny = p.y + Math.sin(p.ang) * d;
+        if (World.passable(state.map, nx, ny, p.z + 3)) {
+          p.x = nx; p.y = ny; p.z = World.walkHeight(state.map, nx, ny);
+          Log.push('You leap forward.', 'good');
+          return true;
+        }
+      }
+      Log.push('No room to jump.', 'info');
+      return false;
+    },
+    fly(eff) { setBuff('fly', 1, eff.dur); Log.push('You rise off the ground.', 'good'); return true; },
+    water_walk(eff) { setBuff('waterwalk', 1, eff.dur); Log.push('The water firms underfoot.', 'good'); return true; },
+    recharge(eff) {
+      const ch = eff.caster;
+      const it = ch.pack.find((st) => st.charges !== undefined && Items.def(st) && Items.def(st).kind === 'wand');
+      if (!it) { Log.push('Nothing to recharge.', 'info'); return false; }
+      it.charges = Math.round(10 + eff.power / 4);
+      Log.push(Items.displayName(it) + ' hums.', 'good');
+      return true;
+    },
+    enchant_item(eff) {
+      const ch = eff.caster;
+      // Enchant the best unenchanted equipped item. Power decides how good the suffix is.
+      const slots = Object.keys(ch.equip).filter((k) => ch.equip[k] && ch.equip[k].ench === undefined);
+      if (!slots.length) { Log.push('Nothing left to enchant.', 'info'); return false; }
+      const st = ch.equip[slots[0]];
+      const tier = clamp(Math.floor(eff.power / 12), 0, Items.ENCHANTS.length - 1);
+      st.ench = tier;
+      st.bonus = (st.bonus || 0) + Items.ENCHANTS[tier].bonus;
+      st.ident = true;
+      recompute(ch);
+      Log.push(Items.displayName(st) + '!', 'good');
+      return true;
+    },
+    town_portal(eff) {
+      if (state.map.kind === 'dungeon') { Log.push('The way will not open underground.', 'info'); return false; }
+      const home = state.world.maps.harrowgate;
+      gotoMap('harrowgate', home.town.x, home.town.y + 3, -Math.PI / 2);
+      Log.push('The world folds and you stand in Harrowgate.', 'good');
+      return true;
+    },
+    lloyds_beacon(eff) {
+      const p = state.party;
+      if (!p.beacon) {
+        p.beacon = { map: p.map, x: p.x, y: p.y, ang: p.ang };
+        Log.push('Beacon set.', 'good');
+        return true;
+      }
+      const b = p.beacon;
+      gotoMap(b.map, b.x - 0.5, b.y - 0.5, b.ang);
+      Log.push('You return to your beacon.', 'good');
+      p.beacon = null;
+      return true;
+    },
+    mass_distortion(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      // A percentage of MAXIMUM hp, which is what makes it the answer to a high-HP boss.
+      const dmg = Math.max(1, Math.round(e.hpMax * (eff.scale || 0.35)));
+      e.hp -= dmg;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' is crushed for ' + dmg + '.', 'hit');
+      if (e.hp <= 0) killEntityObj(e);
+      return true;
+    },
+    turn_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e || !isUndead(e.kind)) return false;
+      e.afraid = Clock.t + eff.dur;
+      e.alerted = false;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' recoils.', 'good');
+      return true;
+    },
+    destroy_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      if (!isUndead(e.kind)) { Log.push('It has no undeath to destroy.', 'info'); return false; }
+      const dmg = Math.round(eff.power * (eff.scale || 3));
+      e.hp -= dmg;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' is unmade for ' + dmg + '.', 'hit');
+      if (e.hp <= 0) killEntityObj(e);
+      return true;
+    },
+    dispel_magic(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      // Strip every timed status the entity carries.
+      for (const k of ['charmed', 'berserk', 'enslaved', 'afraid', 'slowed', 'stunned', 'paralysed', 'feebled']) delete e[k];
+      e.dispelled = true;
+      return true;
+    },
+    summon_elemental(eff) {
+      const p = state.party;
+      const e = spawnEntityRaw('elemental', p.x + Math.cos(p.ang) * 2, p.y + Math.sin(p.ang) * 2);
+      e.ally = true; e.allyUntil = Clock.t + eff.dur; e.alerted = true;
+      Log.push('An elemental answers.', 'good');
+      return true;
+    },
+    hour_of_power(eff) {
+      // Every self-buff at once, which is exactly what the tier-9 Light spell is for.
+      const d = eff.dur;
+      for (const [n, a] of [['ac', 14], ['hit', 8], ['dmg', 8], ['acc', 12], ['haste', 30],
+        ['shield', 12], ['day_of_protection', 25], ['hammerhands', 10]]) setBuff(n, a, d);
+      Log.push('The hour of power is upon you.', 'good');
+      return true;
+    },
+    divine_intervention(eff) {
+      // Full restoration, at a real cost: it ages the party a day. Free omnipotence is not a spell.
+      for (const c of state.party.members) {
+        for (const k of Object.keys(c.cond)) c.cond[k] = false;
+        c.hp = Rules.maxHP(c); c.sp = Rules.maxSP(c);
+      }
+      Clock.skip(1440);
+      Log.push('Divine intervention. A day passes.', 'good');
+      return true;
+    },
+    reanimate(eff) {
+      // Raise the nearest corpse to fight for you until the duration lapses.
+      let best = null, bd = 12;
+      for (const e of (state.map.live || [])) {
+        if (!e.dead) continue;
+        const d = Math.hypot(e.x - state.party.x, e.y - state.party.y);
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) { Log.push('No corpse answers.', 'info'); return false; }
+      best.dead = false; best.hp = Math.round(best.hpMax * 0.5);
+      best.ally = true; best.allyUntil = Clock.t + eff.dur; best.alerted = true;
+      Log.push('The ' + Items.MONSTERS[best.kind].name + ' rises for you.', 'good');
+      return true;
+    },
+    control_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e || !isUndead(e.kind)) { Log.push('Only the undead can be commanded.', 'info'); return false; }
+      e.ally = true; e.allyUntil = Clock.t + eff.dur;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' obeys.', 'good');
+      return true;
+    },
+    sacrifice(eff) {
+      // Spend the caster's life to restore the target's. A real cost, not a free heal.
+      const ch = eff.caster, t = eff.target;
+      if (!t || t === ch) { Log.push('Choose another.', 'info'); return false; }
+      const give = Math.max(1, Math.round(ch.hp * 0.5));
+      Rules.applyDamage(ch, give);
+      Rules.healTo(t, give * 2);
+      Log.push(ch.name + ' gives life to ' + t.name + '.', 'good');
+      return true;
+    },
+    armageddon(eff) {
+      // Hits EVERYTHING on the map, including the party. That is what makes it a last resort.
+      let n = 0;
+      for (const e of liveEnemies()) {
+        const dmg = Math.round(eff.power * 3 + 40);
+        e.hp -= dmg; n++;
+        if (e.hp <= 0) killEntityObj(e);
+      }
+      for (const c of state.party.members) Rules.applyDamage(c, Math.round(10 + eff.power * 0.3));
+      Log.push('The sky falls. ' + n + ' struck, and you among them.', 'hit');
+      return true;
+    },
+    dark_ritual(eff) {
+      // Convert the party's health into the caster's spell points.
+      const ch = eff.caster;
+      let drained = 0;
+      for (const c of state.party.members) {
+        const take = Math.max(0, Math.round(c.hp * 0.35));
+        if (take > 0) { Rules.applyDamage(c, take); drained += take; }
+      }
+      ch.sp = Math.min(Rules.maxSP(ch), ch.sp + drained);
+      Log.push('Blood becomes power. +' + drained + ' spell points.', 'good');
+      return true;
+    },
+    raise_dead(eff) {
+      // The cure/heal components come through as ordinary effects; this adds the lasting cost.
+      const t = eff.target;
+      if (t && t.cond) { t.cond.weak = true; Log.push(t.name + ' returns, weakened.', 'good'); }
+      return true;
+    },
+    shared_life(eff) {
+      // Pool the party's HP and divide it evenly — the classic "everyone survives" button.
+      const alive = state.party.members.filter((c) => !Rules.isDead(c));
+      if (!alive.length) return false;
+      let pool = 0;
+      for (const c of alive) pool += Math.max(0, c.hp);
+      pool += Math.round(eff.power * 2);
+      const each = Math.floor(pool / alive.length);
+      for (const c of alive) {
+        c.hp = Math.min(Rules.maxHP(c), each);
+        if (c.hp > 0) c.cond.unconscious = false;
+      }
+      Log.push('Life is shared between you.', 'good');
+      return true;
+    },
+  };
+
   function applyEffect(eff) {
     const t = eff.target;
     if (eff.kind === 'damage') {
@@ -4380,11 +4818,30 @@ const Game = (() => {
     } else if (eff.kind === 'cure') {
       if (t.cond) for (const c of eff.conds) t.cond[c] = false;
     } else if (eff.kind === 'buff') {
-      // Buffs are stored on the party and read by the systems that care.
-      state.party.flags['buff_' + eff.buff] = Clock.t + eff.dur;
+      setBuff(eff.buff, eff.amount || 1, eff.dur);
     } else if (eff.kind === 'status') {
-      if (t.__entity) t.__entity[eff.status] = Clock.t + eff.dur;
+      if (t && t.__entity) t.__entity[eff.status] = Clock.t + eff.dur;
+      else if (t && t.cond && t.cond[eff.status] !== undefined) t.cond[eff.status] = true;
+    } else if (eff.kind === 'special') {
+      const fn = SPECIALS[eff.special];
+      if (!fn) {
+        // Loud, not silent. A spell whose special has no handler is a decorative spell, and the
+        // systems suite fails on exactly this condition.
+        state.lastError = 'no handler for spell special: ' + eff.special;
+        Log.push('That magic does nothing. (bug: ' + eff.special + ')', 'hit');
+        return;
+      }
+      fn(eff);
     }
+  }
+
+  function spawnEntityRaw(kind, x, y) {
+    const def = Items.MONSTERS[kind];
+    const e = { eid: 'sum' + Math.round(Clock.t) + '_' + (state.map.live || []).length, kind, x, y,
+      z: World.walkHeight(state.map, x, y), ang: 0, hp: def.hp, hpMax: def.hp,
+      recovery: 0, dead: false, alerted: true };
+    (state.map.live || (state.map.live = [])).push(e);
+    return e;
   }
 
   // ---------------------------------------------------------------- save / load
@@ -4438,7 +4895,7 @@ const Game = (() => {
       for (const k of Object.keys(d.seen || {})) state.seenMaps[k] = new Set(d.seen[k]);
       for (const id of Object.keys(state.world.maps)) {
         const m = state.world.maps[id];
-        if (!m.live) enterMap(id);
+        ensureLive(m);
         const delta = (d.maps || {})[id];
         if (m.live) for (const e of m.live) e.dead = !!(delta && delta.dead.indexOf(e.eid) >= 0);
         for (const x of m.decor) {
@@ -4499,7 +4956,14 @@ const Game = (() => {
     switch (r.id) {
       case 'pc': state.active = r.data; break;
       case 'btn': openScreen(r.data); break;
-      case 'act': interact(); break;
+      case 'act': {
+        // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
+        if (state.combat.active && nearestEnemy(reachOf(state.party.members[state.active]))) {
+          const r = partyAttack();
+          if (!r.ok) Log.push(r.why, 'info');
+        } else interact();
+        break;
+      }
       case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
       case 'wait': stepTurn(); break;
       case 'close': closeScreens(); break;
@@ -4678,10 +5142,22 @@ const Game = (() => {
 
     if (!state.screen) move(dt);
 
+    expireBuffs();
+    const regen = buff('regen');
     for (const ch of state.party.members) {
-      ch.recovery = Math.max(0, ch.recovery - dt);
-      // Regeneration buff.
-      if (state.party.flags.buff_regen > Clock.t && (Clock.t & 7) === 0) Rules.healTo(ch, 1);
+      ch.recovery = Math.max(0, ch.recovery - dt * (buff('haste') ? 1.5 : 1));
+      if (regen && Clock.t !== state._lastRegen) Rules.healTo(ch, regen);
+    }
+    if (regen) state._lastRegen = Clock.t;
+    // Immolation burns whatever stands next to the party.
+    const imm = buff('immolation');
+    if (imm && Clock.t !== state._lastImm) {
+      state._lastImm = Clock.t;
+      for (const e of liveEnemies()) {
+        if (Math.hypot(e.x - state.party.x, e.y - state.party.y) > 3.2) continue;
+        e.hp -= imm;
+        if (e.hp <= 0) killEntityObj(e);
+      }
     }
 
     const enemies = liveEnemies();
@@ -4705,7 +5181,7 @@ const Game = (() => {
     const cam = {
       x: p.x, y: p.y, z: p.z, ang: p.ang, map: state.map,
       horizon: Math.round((p.pitch || 0) * 140),
-      torch: state.map.kind === 'dungeon' ? 8.5 : 99,
+      torch: state.map.kind === 'dungeon' ? 8.5 + buff('light') * 1.8 : 99,
     };
     En.clear(Core.idx(0, 1));
     En.render3D(cam, state.world);
@@ -4841,6 +5317,9 @@ const Game = (() => {
       return e;
     },
     acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
+    partyAttack, reachOf, nearestEnemy, liveEnemies,
+    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, usePortal, giveStack,
+    buff, setBuff, SPECIALS, isUndead,
     get party() { return state.party; },
     get map() { return state.map; },
     get screen() { return state.screen; },
@@ -5071,6 +5550,11 @@ const Debug = (() => {
       return steps;
     },
     key(name) { if (!hasGame()) need('key'); Game.onKey(name, true); Game.onKey(name, false); },
+    // Player-legal: the same call the ATK button makes.
+    attack() { if (!hasGame()) need('attack'); return Game.partyAttack(); },
+    attackWith(i) { if (!hasGame()) need('attackWith'); return Game.partyAttack(i); },
+    enemiesNear(d) { if (!hasGame()) need('enemiesNear'); return Game.liveEnemies().filter((e) =>
+      Math.hypot(e.x - Game.party.x, e.y - Game.party.y) < (d === undefined ? 12 : d)).length; },
     tap(x, y) {
       if (!hasGame()) need('tap');
       Game.onTap(x, y, true); Game.onTap(x, y, false);

@@ -411,33 +411,56 @@ T.suite('rules: creation');
 T.suite('spells: table');
 {
   T.eq(Spellcraft.SCHOOL_IDS.length, 9, 'nine schools');
-  T.eq(Spellcraft.SPELL_IDS.length, 36, 'thirty-six spells');
+  T.eq(Spellcraft.SPELL_IDS.length, 99, 'ninety-nine spells — the full MM6 set');
   for (const s of Spellcraft.SCHOOL_IDS) {
-    T.eq(Spellcraft.bySchool(s).length, 4, s + ' has exactly four spells');
+    T.eq(Spellcraft.bySchool(s).length, 11, s + ' has exactly eleven spells');
     const tiers = Spellcraft.bySchool(s).map((id) => Spellcraft.SPELLS[id].tier);
-    T.eq(tiers, [1, 2, 3, 4], s + ' covers tiers 1-4');
+    T.eq(tiers, [1,2,3,4,5,6,7,8,9,10,11], s + ' covers tiers 1-11 with no gaps or duplicates');
   }
-  // Every spell's school must be real and every spell must actually do something.
+
+  // Every spell must DO something. A spell with no effect and no special is decorative, and
+  // "full functionality" is the stated bar.
   const bad = [];
   for (const id of Spellcraft.SPELL_IDS) {
     const sp = Spellcraft.SPELLS[id];
     if (!Spellcraft.SCHOOLS[sp.school]) bad.push(id + ': unknown school');
-    if (!sp.dmg && !sp.heal && !sp.cure && !sp.buff && !sp.status) bad.push(id + ': has no effect');
+    if (!sp.dmg && !sp.heal && !sp.cure && !sp.buff && !sp.status && !sp.special) bad.push(id + ': NO EFFECT');
     if (!sp.name) bad.push(id + ': no name');
     if (!(sp.sp > 0)) bad.push(id + ': non-positive cost');
     if (!Rules.SKILLS[sp.school]) bad.push(id + ': school is not a trainable skill');
+    if (sp.special && Spellcraft.SPECIALS.indexOf(sp.special) < 0) bad.push(id + ': undeclared special ' + sp.special);
+    if (sp.outdoorOnly && sp.indoorOnly) bad.push(id + ': both indoor and outdoor only');
   }
-  T.eq(bad, [], 'every spell is well-formed and its school is a trainable skill');
+  T.eq(bad, [], 'every spell is well-formed and actually does something');
+
+  // Every declared special must be reachable from at least one spell, or the list is stale.
+  const used = new Set(Spellcraft.SPELL_IDS.map((id) => Spellcraft.SPELLS[id].special).filter(Boolean));
+  const orphan = Spellcraft.SPECIALS.filter((sp) => !used.has(sp));
+  T.eq(orphan, [], 'no declared special is orphaned');
 
   // Cost must rise with tier, or there is no reason to cast the cheap one.
   let rising = true;
   for (const s of Spellcraft.SCHOOL_IDS) {
     const ids = Spellcraft.bySchool(s);
     for (let i = 1; i < ids.length; i++) {
-      if (Spellcraft.SPELLS[ids[i]].sp <= Spellcraft.SPELLS[ids[i - 1]].sp) rising = false;
+      if (Spellcraft.SPELLS[ids[i]].sp < Spellcraft.SPELLS[ids[i - 1]].sp) rising = false;
     }
   }
-  T.ok(rising, 'spell point cost rises with tier in every school');
+  T.ok(rising, 'spell point cost never falls as tier rises');
+
+  // Every spell must be castable by SOME class, or it can never be seen.
+  const unreachable = Spellcraft.SPELL_IDS.filter((id) =>
+    !Rules.CLASS_IDS.some((c) => Rules.classCap(c, Spellcraft.SPELLS[id].school) >= Spellcraft.TIER_MASTERY[Spellcraft.SPELLS[id].tier]));
+  T.eq(unreachable, [], 'every spell is reachable by at least one class');
+
+  // Each school's damage should grow with tier — otherwise the top of a school is a downgrade.
+  let dmgRises = true;
+  for (const s of Spellcraft.SCHOOL_IDS) {
+    const dm = Spellcraft.bySchool(s).filter((id) => Spellcraft.SPELLS[id].dmg)
+      .map((id) => { const p = Spellcraft.SPELLS[id]; return p.dmg.n * (p.dmg.sides + 1) / 2 + p.scale * 20; });
+    for (let i = 1; i < dm.length; i++) if (dm[i] < dm[i - 1] * 0.9) dmgRises = false;
+  }
+  T.ok(dmgRises, 'damage grows with tier within every school');
 }
 
 T.suite('spells: gating');
@@ -447,43 +470,47 @@ T.suite('spells: gating');
     ch.skills[school] = { lvl, mastery: m };
     ch.spells = {};
     for (const id of Spellcraft.SPELL_IDS) ch.spells[id] = true;
-    ch.sp = 999; ch.recovery = 0;
+    ch.sp = 9999; ch.recovery = 0;
     return ch;
   };
 
   const novice = mkCaster('fire', 3, Rules.MASTERY.NOVICE);
-  T.eq(Spellcraft.canCast(novice, 'flame_arrow').ok, true, 'a Novice casts tier 1');
   T.eq(Spellcraft.canCast(novice, 'fire_bolt').ok, true, 'a Novice casts tier 2');
-  T.eq(Spellcraft.canCast(novice, 'fireball').ok, false, 'a Novice cannot cast tier 3');
-  T.ok(Spellcraft.canCast(novice, 'fireball').why.indexOf('Expert') >= 0, 'and the refusal names the tier needed');
+  T.eq(Spellcraft.canCast(novice, 'fire_aura').ok, true, 'a Novice casts tier 4');
+  T.eq(Spellcraft.canCast(novice, 'haste').ok, false, 'a Novice cannot cast tier 5');
+  T.ok(Spellcraft.canCast(novice, 'haste').why.indexOf('Expert') >= 0, 'and the refusal names the tier needed');
 
   const expert = mkCaster('fire', 6, Rules.MASTERY.EXPERT);
-  T.eq(Spellcraft.canCast(expert, 'fireball').ok, true, 'an Expert casts tier 3');
-  T.eq(Spellcraft.canCast(expert, 'immolation').ok, false, 'an Expert cannot cast tier 4');
+  T.eq(Spellcraft.canCast(expert, 'fireball').ok, true, 'an Expert casts tier 6');
+  T.eq(Spellcraft.canCast(expert, 'immolation').ok, false, 'an Expert cannot cast tier 8');
 
-  const master = mkCaster('fire', 10, Rules.MASTERY.MASTER);
-  T.eq(Spellcraft.canCast(master, 'immolation').ok, true, 'a Master casts tier 4');
-  T.ok(Spellcraft.spCost(master, 'immolation') < Spellcraft.spCost(novice, 'immolation'), 'Masters pay less');
+  const master = mkCaster('fire', 12, Rules.MASTERY.MASTER);
+  T.eq(Spellcraft.canCast(master, 'incinerate').ok, true, 'a Master casts tier 11');
+  T.ok(Spellcraft.spCost(master, 'incinerate') < Spellcraft.spCost(novice, 'incinerate'), 'Masters pay less');
 
-  // A Knight cannot cast anything, and the refusal must say so in words.
+  // Environment gating is real: Meteor Shower needs sky, Inferno needs a ceiling.
+  T.eq(Spellcraft.canCast(master, 'meteor_shower', { underground: true }).ok, false, 'Meteor Shower refuses underground');
+  T.eq(Spellcraft.canCast(master, 'meteor_shower', { underground: false }).ok, true, 'and works outdoors');
+  T.eq(Spellcraft.canCast(master, 'inferno', { underground: false }).ok, false, 'Inferno refuses open sky');
+  T.eq(Spellcraft.canCast(master, 'inferno', { underground: true }).ok, true, 'and works indoors');
+
   const k = Rules.makeCharacter({ name: 'K', cls: 'knight', base: { mig: 16, int: 8, per: 8, end: 14, acc: 12, spd: 12, lck: 10 } }, 0);
-  k.spells = { flame_arrow: true }; k.sp = 100;
-  const r = Spellcraft.canCast(k, 'flame_arrow');
+  k.spells = { fire_bolt: true }; k.sp = 100;
+  const r = Spellcraft.canCast(k, 'fire_bolt');
   T.eq(r.ok, false, 'a Knight cannot cast');
   T.ok(r.why.indexOf('Knight') >= 0, 'and the message names the class');
 
-  // Every refusal path must produce a non-empty reason. A silent failure is indistinguishable
-  // from a bug and the player will report it as one.
-  const broke = mkCaster('fire', 10, Rules.MASTERY.MASTER);
+  // Every refusal path must produce a non-empty reason.
+  const broke = mkCaster('fire', 12, Rules.MASTERY.MASTER);
   broke.sp = 0;
-  T.ok(Spellcraft.canCast(broke, 'immolation').why.length > 0, 'out of SP gives a reason');
-  broke.sp = 999; broke.recovery = 50;
-  T.ok(Spellcraft.canCast(broke, 'immolation').why.length > 0, 'still recovering gives a reason');
+  T.ok(Spellcraft.canCast(broke, 'incinerate').why.length > 0, 'out of SP gives a reason');
+  broke.sp = 9999; broke.recovery = 50;
+  T.ok(Spellcraft.canCast(broke, 'incinerate').why.length > 0, 'still recovering gives a reason');
   broke.recovery = 0; broke.spells = {};
-  T.ok(Spellcraft.canCast(broke, 'immolation').why.length > 0, 'not learned gives a reason');
-  broke.spells = { immolation: true };
+  T.ok(Spellcraft.canCast(broke, 'incinerate').why.length > 0, 'not learned gives a reason');
+  broke.spells = { incinerate: true };
   broke.cond.asleep = true;
-  T.ok(Spellcraft.canCast(broke, 'immolation').why.length > 0, 'asleep gives a reason');
+  T.ok(Spellcraft.canCast(broke, 'incinerate').why.length > 0, 'asleep gives a reason');
 }
 
 T.suite('spells: resolve');
@@ -492,14 +519,13 @@ T.suite('spells: resolve');
     const ch = Rules.makeCharacter({ name: 'C', cls: 'mage', base: { mig: 8, int: 18, per: 10, end: 10, acc: 10, spd: 12, lck: 10 } }, 0);
     ch.skills[school] = { lvl, mastery: m };
     ch.spells = {}; for (const id of Spellcraft.SPELL_IDS) ch.spells[id] = true;
-    ch.sp = 999;
+    ch.sp = 9999;
     return ch;
   };
   const target = () => ({ name: 'T', hp: 100, resist: {} });
 
-  const c = mk('fire', 8, Rules.MASTERY.MASTER);
-  const r = rng();
-  const out = Spellcraft.resolve(c, 'fireball', [target(), target()], r, {});
+  const c = mk('fire', 10, Rules.MASTERY.MASTER);
+  const out = Spellcraft.resolve(c, 'fireball', [target(), target()], rng(), {});
   T.eq(out.effects.length, 2, 'an area spell produces one effect per target');
   T.eq(out.effects[0].kind, 'damage', 'and they are damage effects');
   T.ok(out.effects[0].amount > 0, 'damage is positive');
@@ -510,33 +536,67 @@ T.suite('spells: resolve');
   Spellcraft.resolve(c, 'fireball', [t], rng(), {});
   T.eq(t.hp, hpBefore, 'resolve never mutates its targets');
 
-  // A stronger caster hits harder with the same spell and the same rolls.
   const weak = mk('fire', 1, Rules.MASTERY.NOVICE);
-  const a = Spellcraft.resolve(weak, 'flame_arrow', [target()], rng(), {}).effects[0].amount;
-  const b = Spellcraft.resolve(c, 'flame_arrow', [target()], rng(), {}).effects[0].amount;
+  const a = Spellcraft.resolve(weak, 'fire_bolt', [target()], rng(), {}).effects[0].amount;
+  const b = Spellcraft.resolve(c, 'fire_bolt', [target()], rng(), {}).effects[0].amount;
   T.ok(b > a, 'a Master out-damages a Novice with the same spell (' + a + ' -> ' + b + ')');
 
-  // Resistance reduces but never eliminates.
   const resistant = { name: 'R', hp: 100, resist: { fire: 250 } };
   const dmg = Spellcraft.resolve(c, 'fireball', [resistant], rng(), {}).effects[0].amount;
   const plain = Spellcraft.resolve(c, 'fireball', [target()], rng(), {}).effects[0].amount;
   T.ok(dmg < plain, 'fire resistance cuts fire damage');
   T.ok(dmg >= 1, 'but never to zero');
 
-  // Drain returns life to the caster.
-  const drain = Spellcraft.resolve(c, 'drain_life', [target()], rng(), {});
-  T.ok(drain.effects.some((e) => e.kind === 'heal' && e.target === c), 'Drain Life heals its caster');
+  // Pierce ignores resistance entirely — the whole reason to carry Lightning Bolt.
+  const air = mk('air', 10, Rules.MASTERY.MASTER);
+  const rr = { name: 'R', hp: 100, resist: { elec: 250 } };
+  const pierced = Spellcraft.resolve(air, 'lightning', [rr], rng(), {}).effects[0].amount;
+  const normal = Spellcraft.resolve(air, 'lightning', [target()], rng(), {}).effects[0].amount;
+  T.eq(pierced, normal, 'a piercing spell ignores resistance completely');
 
-  // Resurrection cures death AND restores some HP, or it is a trap that wastes 30 SP.
-  const res = Spellcraft.resolve(c, 'resurrect', [Rules.makeCharacter({ name: 'D', cls: 'knight', base: { mig: 12, int: 10, per: 10, end: 12, acc: 12, spd: 12, lck: 10 } }, 1)], rng(), {});
+  // Souldrinker drains life back to the caster.
+  const dk = mk('dark', 10, Rules.MASTERY.MASTER);
+  const drain = Spellcraft.resolve(dk, 'souldrinker', [target()], rng(), {});
+  T.ok(drain.effects.some((e) => e.kind === 'heal' && e.target === dk), 'Souldrinker heals its caster');
+
+  // Resurrection cures death AND restores HP, or it is a trap that wastes 32 SP.
+  const sp = mk('spirit', 12, Rules.MASTERY.MASTER);
+  const dead = Rules.makeCharacter({ name: 'D', cls: 'knight', base: { mig: 12, int: 10, per: 10, end: 12, acc: 12, spd: 12, lck: 10 } }, 1);
+  const res = Spellcraft.resolve(sp, 'resurrect', [dead], rng(), {});
   T.ok(res.effects.some((e) => e.kind === 'cure' && e.conds.indexOf('dead') >= 0), 'Resurrection cures death');
   T.ok(res.effects.some((e) => e.kind === 'heal' && e.amount > 0), 'and leaves the target above zero HP');
 
-  // Buff duration scales with caster power.
-  const bw = Spellcraft.resolve(weak, 'stone_skin', [target()], rng(), {}).effects[0].dur;
-  const cm = mk('earth', 10, Rules.MASTERY.MASTER);
-  const bs = Spellcraft.resolve(cm, 'stone_skin', [target()], rng(), {}).effects[0].dur;
-  T.ok(bs > bw, 'a stronger caster gets a longer buff');
+  // Buff duration and amount scale with caster power.
+  const ea = mk('earth', 1, Rules.MASTERY.NOVICE);
+  const em = mk('earth', 12, Rules.MASTERY.MASTER);
+  const bw = Spellcraft.resolve(ea, 'stone_skin', [target()], rng(), {}).effects[0];
+  const bs = Spellcraft.resolve(em, 'stone_skin', [target()], rng(), {}).effects[0];
+  T.ok(bs.dur > bw.dur, 'a stronger caster gets a longer buff');
+  T.ok(bs.amount >= bw.amount, 'and at least as strong');
+
+  // World-scope specials resolve without a target list at all.
+  const wt = mk('water', 12, Rules.MASTERY.MASTER);
+  const tp = Spellcraft.resolve(wt, 'town_portal', [], rng(), {});
+  T.eq(tp.effects.length, 1, 'a world spell resolves with no targets');
+  T.eq(tp.effects[0].kind, 'special', 'and produces a special effect');
+  T.eq(tp.effects[0].special, 'town_portal', 'naming the handler the game must implement');
+
+  // EVERY spell must resolve without throwing, for every target shape it declares.
+  const casters = {};
+  for (const sc of Spellcraft.SCHOOL_IDS) casters[sc] = mk(sc, 12, Rules.MASTERY.MASTER);
+  const broken = [];
+  for (const id of Spellcraft.SPELL_IDS) {
+    const spec = Spellcraft.SPELLS[id];
+    const cc = casters[spec.school];
+    const tg = spec.target === 'ally' || spec.target === 'party' || spec.target === 'self'
+      ? [cc] : spec.target === 'world' || spec.target === 'item' ? [] : [target()];
+    try {
+      const o = Spellcraft.resolve(cc, id, tg, rng(), {});
+      if (!o.effects.length) broken.push(id + ': resolved to nothing');
+      if (!(o.cost > 0)) broken.push(id + ': zero cost');
+    } catch (e) { broken.push(id + ': threw ' + e.message); }
+  }
+  T.eq(broken, [], 'all 99 spells resolve to at least one effect without throwing');
 }
 
 // ---------------------------------------------------------------- items

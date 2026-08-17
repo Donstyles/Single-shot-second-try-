@@ -48,7 +48,7 @@ const Game = (() => {
       if (it && it.ac) ac += it.ac + (st.bonus || 0);
       if (slot === 'armour' && it && it.skill) wornSkill = it.skill;
     }
-    return Rules.armourClass(ch, wornSkill, ac);
+    return Rules.armourClass(ch, wornSkill, ac) + buff('ac') + Math.round(buff('shield') * 0.5) + buff('day_of_gods');
   }
 
   // Recompute equipment bonuses. Derived, never saved — saving it is how two sources of truth start.
@@ -140,12 +140,10 @@ const Game = (() => {
   }
 
   // ---------------------------------------------------------------- maps
-  function enterMap(id) {
-    const m = state.world.maps[id];
-    if (!m) throw new Error('no such map: ' + id);
-    state.map = m;
-    state.party.map = id;
-    // Live entity state lives on the map object, created lazily from the generated template.
+  // Materialise a map's live entities from its generated template. NO side effects on party state:
+  // this is called for every map during load, and if it also moved the party the load would end
+  // with the party standing on whichever map happened to be last.
+  function ensureLive(m) {
     if (!m.live) {
       m.live = m.entities.map((e) => {
         const def = Items.MONSTERS[e.kind];
@@ -154,6 +152,15 @@ const Game = (() => {
         });
       });
     }
+    return m;
+  }
+
+  function enterMap(id) {
+    const m = state.world.maps[id];
+    if (!m) throw new Error('no such map: ' + id);
+    ensureLive(m);
+    state.map = m;
+    state.party.map = id;
     return m;
   }
 
@@ -179,6 +186,17 @@ const Game = (() => {
   // ---------------------------------------------------------------- movement
   function tryMove(nx, ny) {
     const p = state.party, m = state.map;
+    // Water Walk and Fly genuinely change where the party may go.
+    if (buff('fly') || buff('waterwalk')) {
+      const h = World.H(m, nx, ny);
+      const cx = Math.floor(nx), cy = Math.floor(ny);
+      if (nx > 0.4 && ny > 0.4 && nx < m.w - 0.4 && ny < m.h - 0.4 && !World.isSolid(World.cellAt(m, cx, cy))) {
+        p.x = nx; p.y = ny;
+        p.z = buff('fly') ? Math.max(h, p.z) : Math.max(h, m.sea);
+        markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
+        return true;
+      }
+    }
     // Slide along walls: try the full move, then each axis alone. Without this the party sticks on
     // every corner and the game feels broken long before anything actually is.
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
@@ -250,28 +268,40 @@ const Game = (() => {
     return { dmg: it.dmg, skill: it.skill, speed: it.speed, bonus: st.bonus || 0 };
   }
 
+  function reachOf(ch) {
+    return (ch.equip.bow && !ch.equip.weapon) ? 18 : MELEE;
+  }
+
   function partyAttack(idx) {
     const ch = state.party.members[idx === undefined ? state.active : idx];
     if (!Rules.canAct(ch)) return { ok: false, why: ch.name + ' cannot act.' };
     if (ch.recovery > 0) return { ok: false, why: ch.name + ' is recovering.' };
-    const target = nearestEnemy(ch.equip.bow && !ch.equip.weapon ? 18 : MELEE);
+    const target = nearestEnemy(reachOf(ch));
     if (!target) return { ok: false, why: 'Nothing in reach.' };
 
     const w = weaponOf(ch);
     const rng = RNG.live('combat');
-    const atk = Rules.attackBonus(ch, w.skill, w.bonus);
+    const atk = Rules.attackBonus(ch, w.skill, w.bonus) + buff('hit') + Math.round(buff('acc') / 2) + buff('day_of_gods');
     const def = Items.MONSTERS[target.kind];
 
     if (!Rules.rollHit(rng, atk, def.ac)) {
       Log.push(ch.name + ' misses the ' + def.name + '.', 'info');
     } else {
-      const dmg = Rules.rollDamage(rng, w.dmg, Rules.statBonus(Rules.effStat(ch, 'mig')), w.bonus);
-      const dealt = Rules.applyResist(dmg, (def.resist && def.resist.phys) || 0);
+      const bonus = w.bonus + buff('dmg') + buff('hammerhands') + buff('day_of_gods');
+      const dmg = Rules.rollDamage(rng, w.dmg, Rules.statBonus(Rules.effStat(ch, 'mig')), bonus);
+      let dealt = Rules.applyResist(dmg, (def.resist && def.resist.phys) || 0);
+      // A weapon enchanted by Fire Aura / Vampiric Weapon adds its element on top.
+      const wp = ch.equip.weapon || ch.equip.bow;
+      if (wp && wp.elem && wp.elemUntil > Clock.t) {
+        const ex = Rules.applyResist(wp.elemAmount + Math.round(ch.level / 2), (def.resist && def.resist[wp.elem]) || 0);
+        dealt += ex;
+        if (wp.elem === 'drain') Rules.healTo(ch, Math.round(ex * 0.5));
+      }
       target.hp -= dealt;
       Log.push(ch.name + ' hits the ' + def.name + ' for ' + dealt + '.', 'hit');
       if (target.hp <= 0) killEntityObj(target);
     }
-    ch.recovery = Rules.recoveryTime(ch, w.speed, w.skill) * 8;
+    ch.recovery = Math.round(Rules.recoveryTime(ch, w.speed, w.skill) * 8 * (buff('haste') ? 0.6 : 1));
     return { ok: true };
   }
 
@@ -305,19 +335,66 @@ const Game = (() => {
     }
   }
 
+  function allyTurn(e, dt) {
+    const def = Items.MONSTERS[e.kind];
+    let foe = null, bd = 14;
+    for (const o of liveEnemies()) {
+      if (o === e || o.ally || o.charmed > Clock.t || o.enslaved > Clock.t) continue;
+      const d = Math.hypot(o.x - e.x, o.y - e.y);
+      if (d < bd) { bd = d; foe = o; }
+    }
+    if (!foe) return;
+    e.recovery = Math.max(0, e.recovery - dt);
+    if (bd > MELEE) {
+      const sp = (dt / 1000) * 2.2;
+      const nx = e.x + ((foe.x - e.x) / bd) * sp, ny = e.y + ((foe.y - e.y) / bd) * sp;
+      if (World.passable(state.map, nx, ny, e.z)) { e.x = nx; e.y = ny; e.z = World.walkHeight(state.map, nx, ny, e.z); }
+      e.ang = Math.atan2(foe.y - e.y, foe.x - e.x);
+      return;
+    }
+    if (e.recovery > 0) return;
+    const rng = RNG.live('combat');
+    const fdef = Items.MONSTERS[foe.kind];
+    if (Rules.rollHit(rng, def.atk, fdef.ac)) {
+      const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
+      foe.hp -= dmg;
+      Log.push('The ' + def.name + ' turns on the ' + fdef.name + '.', 'good');
+      if (foe.hp <= 0) killEntityObj(foe);
+    }
+    e.recovery = def.speed * 8;
+  }
+
   function monsterTurn(e, dt) {
     const p = state.party;
     const def = Items.MONSTERS[e.kind];
     const d = Math.hypot(e.x - p.x, e.y - p.y);
 
-    if (d < AGGRO) e.alerted = true;
+    // Timed statuses genuinely take a monster out of the fight. Without this, Charm and Paralyze
+    // are decorative and the Mind school is a trap.
+    if (e.paralysed > Clock.t || e.stunned > Clock.t) { e.recovery = Math.max(0, e.recovery - dt); return; }
+    if (e.afraid > Clock.t) {
+      const away = Math.atan2(e.y - p.y, e.x - p.x);
+      const sp = (dt / 1000) * 2.2;
+      const nx = e.x + Math.cos(away) * sp, ny = e.y + Math.sin(away) * sp;
+      if (World.passable(state.map, nx, ny, e.z)) { e.x = nx; e.y = ny; e.z = World.walkHeight(state.map, nx, ny, e.z); }
+      return;
+    }
+    if (e.charmed > Clock.t || e.enslaved > Clock.t || (e.ally && e.allyUntil > Clock.t)) {
+      // Charmed and summoned creatures fight the nearest OTHER monster instead of the party.
+      allyTurn(e, dt);
+      return;
+    }
+    if (e.ally && e.allyUntil <= Clock.t) { e.ally = false; }
+
+    if (d < AGGRO && !buff('invisible')) e.alerted = true;
     if (!e.alerted) return;
 
-    e.recovery = Math.max(0, e.recovery - dt);
+    const slowFactor = e.slowed > Clock.t ? 0.45 : 1;
+    e.recovery = Math.max(0, e.recovery - dt * slowFactor);
 
     if (d > MELEE) {
       // Approach. Ground-snapped, and blocked by the same rules the party obeys.
-      const sp = (dt / 1000) * (def.ai === 'brute' ? 1.6 : 2.4);
+      const sp = (dt / 1000) * (def.ai === 'brute' ? 1.6 : 2.4) * slowFactor;
       const nx = e.x + ((p.x - e.x) / d) * sp, ny = e.y + ((p.y - e.y) / d) * sp;
       if (World.passable(state.map, nx, ny, e.z)) {
         e.x = nx; e.y = ny;
@@ -335,8 +412,18 @@ const Game = (() => {
     const rng = RNG.live('combat');
     const victim = rng.pick(alive);
     if (Rules.rollHit(rng, def.atk, acOf(victim))) {
-      const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
+      const raw = Rules.rollDamage(rng, def.dmg, 0, 0);
+      const dmg = Rules.applyResist(raw, partyResist('phys'));
       const r = Rules.applyDamage(victim, dmg);
+      // Preservation converts a killing blow into unconsciousness — the reason to carry it.
+      if (r.died && buff('preservation')) { victim.cond.dead = false; victim.cond.unconscious = true; victim.hp = 0; r.died = false; }
+      // Pain Reflection sends a share straight back.
+      const refl = buff('pain_reflection');
+      if (refl) {
+        const back = Math.max(1, Math.round(dmg * refl / 100));
+        e.hp -= back;
+        if (e.hp <= 0) killEntityObj(e);
+      }
       Log.push('The ' + def.name + ' hits ' + victim.name + ' for ' + r.dmg + '.', 'hit');
       if (r.died) Log.push(victim.name + ' has died!', 'hit');
       else if (r.knocked) Log.push(victim.name + ' is knocked out.', 'hit');
@@ -439,12 +526,20 @@ const Game = (() => {
     const fx = p.x + Math.cos(p.ang) * 1.4, fy = p.y + Math.sin(p.ang) * 1.4;
 
     for (const n of m.npcs || []) {
-      if (Math.hypot(n.x - p.x, n.y - p.y) < 2.6) return { kind: 'npc', npc: n };
+      if (Math.hypot(n.x - p.x, n.y - p.y) < 3.2) return { kind: 'npc', npc: n };
     }
+    let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
       if (d.kind !== 'chest' && d.kind !== 'questitem') continue;
-      if (Math.hypot(d.x - p.x, d.y - p.y) < 2.0) return { kind: d.kind, decor: d };
+      if (d.opened || d.taken) continue;
+      const dd = Math.hypot(d.x - p.x, d.y - p.y);
+      if (dd >= 3.0) continue;
+      // Quest items outrank chests unconditionally. A chest standing beside the seal must never
+      // consume the interaction the campaign depends on.
+      const rank = d.kind === 'questitem' ? 0 : 1;
+      if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
+    if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
     for (const portal of m.portals) {
       if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 1.6 ||
           Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 1.3) return { kind: 'portal', portal };
@@ -559,6 +654,256 @@ const Game = (() => {
     return { __entity: e, name: def.name, hp: e.hp, resist: def.resist || {} };
   }
 
+
+  // ---------------------------------------------------------------- buffs
+  // One place buffs live, one place they are read. `until` is a game-minute stamp so they expire
+  // on the same clock everything else uses.
+  function setBuff(name, amount, durMinutes) {
+    const b = state.party.buffs || (state.party.buffs = Object.create(null));
+    const until = Clock.t + Math.max(1, Math.round(durMinutes));
+    // Re-casting refreshes and takes the stronger amount, never stacks into absurdity.
+    if (!b[name] || b[name].until < until) b[name] = { until, amount: Math.max(amount, (b[name] || {}).amount || 0) };
+    else b[name].amount = Math.max(b[name].amount, amount);
+    return b[name];
+  }
+
+  function buff(name) {
+    const b = state.party.buffs && state.party.buffs[name];
+    if (!b) return 0;
+    if (b.until <= Clock.t) { delete state.party.buffs[name]; return 0; }
+    return b.amount;
+  }
+
+  function expireBuffs() {
+    const b = state.party.buffs;
+    if (!b) return;
+    for (const k of Object.keys(b)) if (b[k].until <= Clock.t) delete b[k];
+  }
+
+  // Party-wide resistance from Protection spells, Day of Protection and Protection from Magic.
+  function partyResist(elem) {
+    return buff('resist_' + elem) + buff('day_of_protection') + buff('resist_magic') * 0.5;
+  }
+
+  const isUndead = (kind) => /skeleton|zombie|ghoul|wraith|lich|knight_ash|ash_crown/.test(kind);
+
+  // ---------------------------------------------------------------- spell specials
+  // EVERY special a spell declares must have a handler here. test/systems.test.js asserts it, so a
+  // spell can never be decorative.
+  const SPECIALS = {
+    enchant_weapon(eff) {
+      const ch = eff.caster;
+      const w = ch.equip.weapon || ch.equip.bow;
+      if (!w) { Log.push('No weapon to enchant.', 'info'); return false; }
+      w.elem = eff.elem; w.elemAmount = eff.amount || 4;
+      w.elemUntil = Clock.t + eff.dur;
+      Log.push(Items.displayName(w) + ' glows.', 'good');
+      return true;
+    },
+    wizard_eye(eff) {
+      // Reveal the map generously around the party — the whole point of the spell.
+      markSeen(state.party.map, state.party.x, state.party.y, 34);
+      setBuff('wizard_eye', 1, eff.dur);
+      Log.push('The world opens to you.', 'good');
+      return true;
+    },
+    jump(eff) {
+      const p = state.party;
+      // Hop forward over whatever is directly ahead, landing on the walk surface.
+      for (let d = 3.5; d >= 1.0; d -= 0.5) {
+        const nx = p.x + Math.cos(p.ang) * d, ny = p.y + Math.sin(p.ang) * d;
+        if (World.passable(state.map, nx, ny, p.z + 3)) {
+          p.x = nx; p.y = ny; p.z = World.walkHeight(state.map, nx, ny);
+          Log.push('You leap forward.', 'good');
+          return true;
+        }
+      }
+      Log.push('No room to jump.', 'info');
+      return false;
+    },
+    fly(eff) { setBuff('fly', 1, eff.dur); Log.push('You rise off the ground.', 'good'); return true; },
+    water_walk(eff) { setBuff('waterwalk', 1, eff.dur); Log.push('The water firms underfoot.', 'good'); return true; },
+    recharge(eff) {
+      const ch = eff.caster;
+      const it = ch.pack.find((st) => st.charges !== undefined && Items.def(st) && Items.def(st).kind === 'wand');
+      if (!it) { Log.push('Nothing to recharge.', 'info'); return false; }
+      it.charges = Math.round(10 + eff.power / 4);
+      Log.push(Items.displayName(it) + ' hums.', 'good');
+      return true;
+    },
+    enchant_item(eff) {
+      const ch = eff.caster;
+      // Enchant the best unenchanted equipped item. Power decides how good the suffix is.
+      const slots = Object.keys(ch.equip).filter((k) => ch.equip[k] && ch.equip[k].ench === undefined);
+      if (!slots.length) { Log.push('Nothing left to enchant.', 'info'); return false; }
+      const st = ch.equip[slots[0]];
+      const tier = clamp(Math.floor(eff.power / 12), 0, Items.ENCHANTS.length - 1);
+      st.ench = tier;
+      st.bonus = (st.bonus || 0) + Items.ENCHANTS[tier].bonus;
+      st.ident = true;
+      recompute(ch);
+      Log.push(Items.displayName(st) + '!', 'good');
+      return true;
+    },
+    town_portal(eff) {
+      if (state.map.kind === 'dungeon') { Log.push('The way will not open underground.', 'info'); return false; }
+      const home = state.world.maps.harrowgate;
+      gotoMap('harrowgate', home.town.x, home.town.y + 3, -Math.PI / 2);
+      Log.push('The world folds and you stand in Harrowgate.', 'good');
+      return true;
+    },
+    lloyds_beacon(eff) {
+      const p = state.party;
+      if (!p.beacon) {
+        p.beacon = { map: p.map, x: p.x, y: p.y, ang: p.ang };
+        Log.push('Beacon set.', 'good');
+        return true;
+      }
+      const b = p.beacon;
+      gotoMap(b.map, b.x - 0.5, b.y - 0.5, b.ang);
+      Log.push('You return to your beacon.', 'good');
+      p.beacon = null;
+      return true;
+    },
+    mass_distortion(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      // A percentage of MAXIMUM hp, which is what makes it the answer to a high-HP boss.
+      const dmg = Math.max(1, Math.round(e.hpMax * (eff.scale || 0.35)));
+      e.hp -= dmg;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' is crushed for ' + dmg + '.', 'hit');
+      if (e.hp <= 0) killEntityObj(e);
+      return true;
+    },
+    turn_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e || !isUndead(e.kind)) return false;
+      e.afraid = Clock.t + eff.dur;
+      e.alerted = false;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' recoils.', 'good');
+      return true;
+    },
+    destroy_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      if (!isUndead(e.kind)) { Log.push('It has no undeath to destroy.', 'info'); return false; }
+      const dmg = Math.round(eff.power * (eff.scale || 3));
+      e.hp -= dmg;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' is unmade for ' + dmg + '.', 'hit');
+      if (e.hp <= 0) killEntityObj(e);
+      return true;
+    },
+    dispel_magic(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e) return false;
+      // Strip every timed status the entity carries.
+      for (const k of ['charmed', 'berserk', 'enslaved', 'afraid', 'slowed', 'stunned', 'paralysed', 'feebled']) delete e[k];
+      e.dispelled = true;
+      return true;
+    },
+    summon_elemental(eff) {
+      const p = state.party;
+      const e = spawnEntityRaw('elemental', p.x + Math.cos(p.ang) * 2, p.y + Math.sin(p.ang) * 2);
+      e.ally = true; e.allyUntil = Clock.t + eff.dur; e.alerted = true;
+      Log.push('An elemental answers.', 'good');
+      return true;
+    },
+    hour_of_power(eff) {
+      // Every self-buff at once, which is exactly what the tier-9 Light spell is for.
+      const d = eff.dur;
+      for (const [n, a] of [['ac', 14], ['hit', 8], ['dmg', 8], ['acc', 12], ['haste', 30],
+        ['shield', 12], ['day_of_protection', 25], ['hammerhands', 10]]) setBuff(n, a, d);
+      Log.push('The hour of power is upon you.', 'good');
+      return true;
+    },
+    divine_intervention(eff) {
+      // Full restoration, at a real cost: it ages the party a day. Free omnipotence is not a spell.
+      for (const c of state.party.members) {
+        for (const k of Object.keys(c.cond)) c.cond[k] = false;
+        c.hp = Rules.maxHP(c); c.sp = Rules.maxSP(c);
+      }
+      Clock.skip(1440);
+      Log.push('Divine intervention. A day passes.', 'good');
+      return true;
+    },
+    reanimate(eff) {
+      // Raise the nearest corpse to fight for you until the duration lapses.
+      let best = null, bd = 12;
+      for (const e of (state.map.live || [])) {
+        if (!e.dead) continue;
+        const d = Math.hypot(e.x - state.party.x, e.y - state.party.y);
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) { Log.push('No corpse answers.', 'info'); return false; }
+      best.dead = false; best.hp = Math.round(best.hpMax * 0.5);
+      best.ally = true; best.allyUntil = Clock.t + eff.dur; best.alerted = true;
+      Log.push('The ' + Items.MONSTERS[best.kind].name + ' rises for you.', 'good');
+      return true;
+    },
+    control_undead(eff) {
+      const e = eff.target && eff.target.__entity;
+      if (!e || !isUndead(e.kind)) { Log.push('Only the undead can be commanded.', 'info'); return false; }
+      e.ally = true; e.allyUntil = Clock.t + eff.dur;
+      Log.push('The ' + Items.MONSTERS[e.kind].name + ' obeys.', 'good');
+      return true;
+    },
+    sacrifice(eff) {
+      // Spend the caster's life to restore the target's. A real cost, not a free heal.
+      const ch = eff.caster, t = eff.target;
+      if (!t || t === ch) { Log.push('Choose another.', 'info'); return false; }
+      const give = Math.max(1, Math.round(ch.hp * 0.5));
+      Rules.applyDamage(ch, give);
+      Rules.healTo(t, give * 2);
+      Log.push(ch.name + ' gives life to ' + t.name + '.', 'good');
+      return true;
+    },
+    armageddon(eff) {
+      // Hits EVERYTHING on the map, including the party. That is what makes it a last resort.
+      let n = 0;
+      for (const e of liveEnemies()) {
+        const dmg = Math.round(eff.power * 3 + 40);
+        e.hp -= dmg; n++;
+        if (e.hp <= 0) killEntityObj(e);
+      }
+      for (const c of state.party.members) Rules.applyDamage(c, Math.round(10 + eff.power * 0.3));
+      Log.push('The sky falls. ' + n + ' struck, and you among them.', 'hit');
+      return true;
+    },
+    dark_ritual(eff) {
+      // Convert the party's health into the caster's spell points.
+      const ch = eff.caster;
+      let drained = 0;
+      for (const c of state.party.members) {
+        const take = Math.max(0, Math.round(c.hp * 0.35));
+        if (take > 0) { Rules.applyDamage(c, take); drained += take; }
+      }
+      ch.sp = Math.min(Rules.maxSP(ch), ch.sp + drained);
+      Log.push('Blood becomes power. +' + drained + ' spell points.', 'good');
+      return true;
+    },
+    raise_dead(eff) {
+      // The cure/heal components come through as ordinary effects; this adds the lasting cost.
+      const t = eff.target;
+      if (t && t.cond) { t.cond.weak = true; Log.push(t.name + ' returns, weakened.', 'good'); }
+      return true;
+    },
+    shared_life(eff) {
+      // Pool the party's HP and divide it evenly — the classic "everyone survives" button.
+      const alive = state.party.members.filter((c) => !Rules.isDead(c));
+      if (!alive.length) return false;
+      let pool = 0;
+      for (const c of alive) pool += Math.max(0, c.hp);
+      pool += Math.round(eff.power * 2);
+      const each = Math.floor(pool / alive.length);
+      for (const c of alive) {
+        c.hp = Math.min(Rules.maxHP(c), each);
+        if (c.hp > 0) c.cond.unconscious = false;
+      }
+      Log.push('Life is shared between you.', 'good');
+      return true;
+    },
+  };
+
   function applyEffect(eff) {
     const t = eff.target;
     if (eff.kind === 'damage') {
@@ -574,11 +919,30 @@ const Game = (() => {
     } else if (eff.kind === 'cure') {
       if (t.cond) for (const c of eff.conds) t.cond[c] = false;
     } else if (eff.kind === 'buff') {
-      // Buffs are stored on the party and read by the systems that care.
-      state.party.flags['buff_' + eff.buff] = Clock.t + eff.dur;
+      setBuff(eff.buff, eff.amount || 1, eff.dur);
     } else if (eff.kind === 'status') {
-      if (t.__entity) t.__entity[eff.status] = Clock.t + eff.dur;
+      if (t && t.__entity) t.__entity[eff.status] = Clock.t + eff.dur;
+      else if (t && t.cond && t.cond[eff.status] !== undefined) t.cond[eff.status] = true;
+    } else if (eff.kind === 'special') {
+      const fn = SPECIALS[eff.special];
+      if (!fn) {
+        // Loud, not silent. A spell whose special has no handler is a decorative spell, and the
+        // systems suite fails on exactly this condition.
+        state.lastError = 'no handler for spell special: ' + eff.special;
+        Log.push('That magic does nothing. (bug: ' + eff.special + ')', 'hit');
+        return;
+      }
+      fn(eff);
     }
+  }
+
+  function spawnEntityRaw(kind, x, y) {
+    const def = Items.MONSTERS[kind];
+    const e = { eid: 'sum' + Math.round(Clock.t) + '_' + (state.map.live || []).length, kind, x, y,
+      z: World.walkHeight(state.map, x, y), ang: 0, hp: def.hp, hpMax: def.hp,
+      recovery: 0, dead: false, alerted: true };
+    (state.map.live || (state.map.live = [])).push(e);
+    return e;
   }
 
   // ---------------------------------------------------------------- save / load
@@ -632,7 +996,7 @@ const Game = (() => {
       for (const k of Object.keys(d.seen || {})) state.seenMaps[k] = new Set(d.seen[k]);
       for (const id of Object.keys(state.world.maps)) {
         const m = state.world.maps[id];
-        if (!m.live) enterMap(id);
+        ensureLive(m);
         const delta = (d.maps || {})[id];
         if (m.live) for (const e of m.live) e.dead = !!(delta && delta.dead.indexOf(e.eid) >= 0);
         for (const x of m.decor) {
@@ -693,7 +1057,14 @@ const Game = (() => {
     switch (r.id) {
       case 'pc': state.active = r.data; break;
       case 'btn': openScreen(r.data); break;
-      case 'act': interact(); break;
+      case 'act': {
+        // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
+        if (state.combat.active && nearestEnemy(reachOf(state.party.members[state.active]))) {
+          const r = partyAttack();
+          if (!r.ok) Log.push(r.why, 'info');
+        } else interact();
+        break;
+      }
       case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
       case 'wait': stepTurn(); break;
       case 'close': closeScreens(); break;
@@ -872,10 +1243,22 @@ const Game = (() => {
 
     if (!state.screen) move(dt);
 
+    expireBuffs();
+    const regen = buff('regen');
     for (const ch of state.party.members) {
-      ch.recovery = Math.max(0, ch.recovery - dt);
-      // Regeneration buff.
-      if (state.party.flags.buff_regen > Clock.t && (Clock.t & 7) === 0) Rules.healTo(ch, 1);
+      ch.recovery = Math.max(0, ch.recovery - dt * (buff('haste') ? 1.5 : 1));
+      if (regen && Clock.t !== state._lastRegen) Rules.healTo(ch, regen);
+    }
+    if (regen) state._lastRegen = Clock.t;
+    // Immolation burns whatever stands next to the party.
+    const imm = buff('immolation');
+    if (imm && Clock.t !== state._lastImm) {
+      state._lastImm = Clock.t;
+      for (const e of liveEnemies()) {
+        if (Math.hypot(e.x - state.party.x, e.y - state.party.y) > 3.2) continue;
+        e.hp -= imm;
+        if (e.hp <= 0) killEntityObj(e);
+      }
     }
 
     const enemies = liveEnemies();
@@ -899,7 +1282,7 @@ const Game = (() => {
     const cam = {
       x: p.x, y: p.y, z: p.z, ang: p.ang, map: state.map,
       horizon: Math.round((p.pitch || 0) * 140),
-      torch: state.map.kind === 'dungeon' ? 8.5 : 99,
+      torch: state.map.kind === 'dungeon' ? 8.5 + buff('light') * 1.8 : 99,
     };
     En.clear(Core.idx(0, 1));
     En.render3D(cam, state.world);
@@ -1035,6 +1418,9 @@ const Game = (() => {
       return e;
     },
     acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
+    partyAttack, reachOf, nearestEnemy, liveEnemies,
+    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, usePortal, giveStack,
+    buff, setBuff, SPECIALS, isUndead,
     get party() { return state.party; },
     get map() { return state.map; },
     get screen() { return state.screen; },

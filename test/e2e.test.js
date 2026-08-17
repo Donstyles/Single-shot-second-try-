@@ -217,6 +217,78 @@ const T = require('./_harness.js');
   T.ok(integ.portals > 40, 'portals wire the world together (' + integ.portals + ')');
   T.ok(integ.ents > 400, 'the world is populated (' + integ.ents + ' entities)');
 
+  T.suite('spells: every special has a handler');
+  const specials = await page.evaluate(`(() => {
+    const missing = Spellcraft.SPECIALS.filter(sp => typeof Game.SPECIALS[sp] !== 'function');
+    return { missing, declared: Spellcraft.SPECIALS.length, handlers: Object.keys(Game.SPECIALS).length };
+  })()`);
+  T.eq(specials.missing, [], 'every declared spell special has a game handler (no decorative spells)');
+  T.ok(specials.handlers >= specials.declared, specials.handlers + ' handlers for ' + specials.declared + ' declared specials');
+
+  // Cast ALL 99 spells for real, in the live game, and require that none throws and none reports
+  // a missing handler. This is the loop that would otherwise let a spell ship as scenery.
+  T.suite('spells: cast all 99 live');
+  const cast = await page.evaluate(`(() => {
+    Game.state.screen = null;
+    window.__game.gotoMap('harrowgate', 64, 64, 0);
+    const failures = [];
+    let ok = 0;
+    for (const id of Spellcraft.SPELL_IDS) {
+      const sp = Spellcraft.SPELLS[id];
+      const ch = Game.state.party.members[0];
+      // Grant everything needed so the test measures the EFFECT path, not the gating path
+      // (gating is asserted separately in the systems suite).
+      ch.cls = 'mage';
+      ch.skills[sp.school] = { lvl: 14, mastery: 3 };
+      ch.spells = ch.spells || {};
+      ch.spells[id] = true;
+      ch.sp = 9999; ch.recovery = 0; ch.hp = Rules.maxHP(ch);
+      for (const k of Object.keys(ch.cond)) ch.cond[k] = false;
+      Game.state.lastError = null;
+      // Give the spell something to act on.
+      window.__game.spawn('goblin', Game.state.party.x + 2, Game.state.party.y);
+      try {
+        // Clear rather than measure length: Log is a 200-line RING BUFFER, so once it fills,
+        // length stops growing and every later spell would look silent. That is a measurement
+        // artefact, and it would have read as 50 broken spells.
+        Core.Log.clear();
+        Game.castSpell(id);
+        if (Game.state.lastError && /no handler/.test(Game.state.lastError)) {
+          failures.push(id + ': ' + Game.state.lastError);
+        } else if (Core.Log.lines.length === 0) {
+          failures.push(id + ': cast produced no log line at all');
+        } else ok++;
+      } catch (e) {
+        failures.push(id + ': THREW ' + e.message);
+      }
+    }
+    return { failures, ok, total: Spellcraft.SPELL_IDS.length };
+  })()`);
+  T.eq(cast.failures, [], 'all 99 spells cast in the live game without a missing handler or a throw');
+  T.eq(cast.ok, 99, 'ninety-nine spells produced a real effect (' + cast.ok + '/' + cast.total + ')');
+
+  T.suite('buffs are actually read');
+  const buffs = await page.evaluate(`(() => {
+    Game.state.screen = null;
+    window.__game.gotoMap('harrowgate', 64, 64, 0);
+    const ch = Game.state.party.members[0];
+    Game.state.party.buffs = Object.create(null);
+    const acBefore = Game.acOf(ch);
+    Game.setBuff('ac', 14, 600);
+    const acAfter = Game.acOf(ch);
+    Game.state.party.buffs = Object.create(null);
+    // Torch Light must widen the dungeon torch radius, or the Fire school's tier 1 is scenery.
+    window.__game.gotoMap('barrow', 4, 4, 0);
+    const t0 = Game.state.map.kind;
+    Game.setBuff('light', 6, 600);
+    const lit = Game.buff('light');
+    Game.state.party.buffs = Object.create(null);
+    return { acBefore, acAfter, lit, inDungeon: t0 === 'dungeon' };
+  })()`);
+  T.ok(buffs.acAfter > buffs.acBefore, 'Stone Skin raises armour class (' + buffs.acBefore + ' -> ' + buffs.acAfter + ')');
+  T.ok(buffs.inDungeon, 'the barrow is a dungeon');
+  T.eq(buffs.lit, 6, 'Torch Light is readable by the renderer');
+
   T.eq(errors, [], 'still no page errors after exercising the harness');
 
   await browser.close();

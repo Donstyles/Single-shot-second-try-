@@ -218,6 +218,11 @@ const Debug = (() => {
       return steps;
     },
     key(name) { if (!hasGame()) need('key'); Game.onKey(name, true); Game.onKey(name, false); },
+    // Player-legal: the same call the ATK button makes.
+    attack() { if (!hasGame()) need('attack'); return Game.partyAttack(); },
+    attackWith(i) { if (!hasGame()) need('attackWith'); return Game.partyAttack(i); },
+    enemiesNear(d) { if (!hasGame()) need('enemiesNear'); return Game.liveEnemies().filter((e) =>
+      Math.hypot(e.x - Game.party.x, e.y - Game.party.y) < (d === undefined ? 12 : d)).length; },
     tap(x, y) {
       if (!hasGame()) need('tap');
       Game.onTap(x, y, true); Game.onTap(x, y, false);
