@@ -314,7 +314,14 @@ const Engine = (() => {
     // Ramp 0, low. The first "slate" was ramp 1 shade 2 — cold stone — which measures 24%
     // saturated, so blending toward it ADDED chroma and drove the cobble ratio from 1.22 to 1.50.
     // The night target has to be genuinely neutral or it is just another colour cast.
-    const nightLut = nightMix > 0.01 ? fogLut(Core.idx(0, 3)) : null;
+    // NIGHT HAS A HUE. Blending toward a NEUTRAL grey scales all three channels by the same
+    // factor, which is exactly what a critic measured: R, G and B ratios identical to three
+    // decimal places, "night is colour x 0.36-0.45, nothing more. No blue shift, no Purkinje."
+    // On the produce it came out slightly WARMER at night, which is backwards.
+    //
+    // The target is a dark blue-violet at CHROMA 22 — cool enough to rotate the hue, nowhere near
+    // the saturated sky blue that r13 measured making night MORE saturated than day (ratio 1.4).
+    const nightLut = nightMix > 0.01 ? fogLut(Core.idx(9, 2)) : null;
 
     for (let sx = 0; sx < VIEW.w; sx++) {
       const px = VIEW.x + sx;

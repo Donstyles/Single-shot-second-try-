@@ -584,7 +584,11 @@ const Art = (() => {
   let skyCache = null, skyKey = '';
 
   const SKY_KEYS = {
-    night:     { top: [9, 1], hor: [9, 4],  sun: -5 },
+    // The night sky must stay ABOVE the ground in value. At shades 1 and 4 it measured luminance
+    // 27.8 against night cobbles at 46.8, so the lid of the world was the darkest thing in the
+    // frame — a critic said it "inverts the natural value hierarchy and makes the town read as a
+    // cavern". A real night sky is dim, not black, and it is always brighter than unlit stone.
+    night:     { top: [9, 3], hor: [9, 6],  sun: -5 },
     dawn:      { top: [9, 5], hor: [15, 9], sun: -2 },
     morning:   { top: [9, 8], hor: [9, 12], sun: 0 },
     noon:      { top: [9, 10], hor: [9, 14], sun: 1 },

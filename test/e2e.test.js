@@ -1174,6 +1174,44 @@ const T = require('./_harness.js');
     T.ok(doll.kitted.hash !== doll.bare.hash,
       'the figure changes when the character is equipped');
 
+    // ---- NIGHT HAS A HUE, AND THE SKY STAYS ABOVE THE GROUND.
+    //
+    // Night was a blend toward a NEUTRAL grey, which scales all three channels by the same factor:
+    // a critic measured R, G and B ratios identical to three decimal places and called it "colour
+    // x 0.36-0.45, nothing more. No blue shift, no Purkinje." It also measured the night sky at
+    // luminance 27.7 against night cobbles at 49.0 — the lid of the world darker than the floor,
+    // which "makes the town read as a cavern".
+    const night = await page.evaluate(`(() => {
+      const h = window.__game;
+      h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.face(0);
+      const V = Engine.VIEW, buf = Engine.buf, W = Engine.W, C = Core;
+      const mean = (x0, y0, x1, y1) => {
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const pi = buf[(V.y + y) * W + (V.x + x)];
+            r += C.PAL[pi * 3]; g += C.PAL[pi * 3 + 1]; b += C.PAL[pi * 3 + 2]; n++;
+          }
+        }
+        return [r / n, g / n, b / n];
+      };
+      const L = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+      h.setTime(720); h.settle(2); h.redraw();
+      const dayGround = mean(180, 260, 460, 330);
+      h.setTime(1320); h.settle(2); h.redraw();
+      const nightGround = mean(180, 260, 460, 330);
+      const nightSky = mean(150, 10, 440, 50);
+      const ratio = [0, 1, 2].map((i) => (dayGround[i] ? nightGround[i] / dayGround[i] : 0));
+      return { spread: Math.max.apply(null, ratio) - Math.min.apply(null, ratio),
+               blueLeast: ratio[2] > ratio[0],
+               skyL: L(nightSky), groundL: L(nightGround) };
+    })()`);
+    T.ok(night.spread > 0.03,
+      'night shifts hue rather than scaling all channels equally (spread ' + night.spread.toFixed(3) + ')');
+    T.ok(night.blueLeast, 'and blue survives the night better than red');
+    T.ok(night.skyL > night.groundL,
+      'the night sky stays brighter than the ground (' + night.skyL.toFixed(1) + ' vs ' + night.groundL.toFixed(1) + ')');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),
