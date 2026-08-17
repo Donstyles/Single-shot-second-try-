@@ -1,0 +1,84 @@
+=== batch textures — cap 1000, spent 24 ===
+-- textures (22) --
+  image stonewall  2823 KB  9cr
+  image brickwall  2514 KB  9cr
+  image timberwall  2068 KB  9cr
+  image plaster  2592 KB  9cr
+  image cliff  2855 KB  9cr
+  image marble  1681 KB  9cr
+  image obsidian  2530 KB  9cr
+  image ice  2339 KB  9cr
+  image grass  2882 KB  9cr
+  image moss  2749 KB  9cr
+  image dirt  2624 KB  9cr
+  image road  2767 KB  9cr
+=== batch creatures — cap 1000, spent 141 ===
+-- creatures (27) --
+  image gravel  2926 KB  9cr
+  image sand  3102 KB  9cr
+  mesh rat  3294 KB
+  image snow  1969 KB  9cr
+  image marsh  2615 KB  9cr
+  mesh goblin  3214 KB
+  image ash  2861 KB  9cr
+  image water  1570 KB  9cr
+  image plaza  2384 KB  9cr
+  mesh goblin_arch  3287 KB
+  image tile  2464 KB  9cr
+  image wood  2180 KB  9cr
+  mesh wolf  2782 KB
+  image rock  2131 KB  9cr
+=== batch done — spent 297 of 1000 ===
+  mesh bandit  2917 KB
+  mesh bandit_capt  3125 KB
+  mesh skeleton  3602 KB
+  mesh zombie  2914 KB
+  mesh ghoul  2940 KB
+  FAIL mesh wraith: read ECONNRESET
+  mesh spider  2770 KB
+  mesh kobold  3235 KB
+  mesh kobold_sham  2988 KB
+  mesh ogre  3205 KB
+  mesh troll  3223 KB
+  mesh harpy  3331 KB
+  mesh elemental  3094 KB
+  mesh knight_ash  2712 KB
+  mesh lich  2821 KB
+  mesh ash_crown  2675 KB
+  mesh npc_captain  3305 KB
+  mesh npc_foreman  2905 KB
+  mesh npc_smith  2804 KB
+  mesh npc_priest  2647 KB
+=== batch one — cap 1000, spent 632 ===
+-- creatures (goblin) --
+  skip mesh (exists) goblin
+=== batch done — spent 632 of 1000 ===
+=== batch one — cap 1000, spent 632 ===
+-- creatures (goblin) --
+  mesh goblin  3074 KB
+=== batch done — spent 647 of 1000 ===
+=== batch one — cap 1000, spent 647 ===
+-- creatures (skeleton, zombie, bandit, kobold, ghoul, ogre, troll, harpy, goblin_arch, npc_captain, npc_smith, npc_priest, npc_foreman) --
+  mesh skeleton  3687 KB
+  mesh zombie  3167 KB
+  mesh bandit  3126 KB
+  mesh kobold  3285 KB
+  mesh ghoul  3278 KB
+  mesh ogre  2939 KB
+  mesh troll  3250 KB
+  mesh harpy  3185 KB
+  mesh goblin_arch  3289 KB
+  mesh npc_captain  3156 KB
+  mesh npc_smith  3036 KB
+  mesh npc_priest  2992 KB
+  mesh npc_foreman  2639 KB
+=== batch done — spent 842 of 1000 ===
+=== batch one — cap 1000, spent 842 ===
+-- creatures (ash_crown, elemental, knight_ash, kobold_sham, lich, bandit_capt) --
+  mesh ash_crown  3096 KB
+  mesh elemental  2911 KB
+  mesh knight_ash  3110 KB
+  mesh kobold_sham  3437 KB
+  mesh lich  2771 KB
+  mesh bandit_capt  3312 KB
+=== batch done — spent 932 of 1000 ===

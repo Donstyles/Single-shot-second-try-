@@ -1,0 +1,1036 @@
+{
+ "ash_crown": {
+  "aspect": 0.506,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "ash_crown_f0_0deg.png",
+    "angle": 0,
+    "w": 40,
+    "h": 78,
+    "ox": 28,
+    "oy": 11
+   },
+   {
+    "file": "ash_crown_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 35,
+    "h": 75,
+    "ox": 28,
+    "oy": 13
+   },
+   {
+    "file": "ash_crown_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 27,
+    "h": 77,
+    "ox": 34,
+    "oy": 12
+   },
+   {
+    "file": "ash_crown_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 43,
+    "h": 77,
+    "ox": 28,
+    "oy": 12
+   },
+   {
+    "file": "ash_crown_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 40,
+    "h": 78,
+    "ox": 28,
+    "oy": 10
+   }
+  ]
+ },
+ "bandit": {
+  "aspect": 0.524,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "bandit_f0_0deg.png",
+    "angle": 0,
+    "w": 42,
+    "h": 77,
+    "ox": 27,
+    "oy": 10
+   },
+   {
+    "file": "bandit_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 41,
+    "h": 78,
+    "ox": 27,
+    "oy": 10
+   },
+   {
+    "file": "bandit_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 40,
+    "h": 81,
+    "ox": 28,
+    "oy": 9
+   },
+   {
+    "file": "bandit_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 47,
+    "h": 81,
+    "ox": 25,
+    "oy": 9
+   },
+   {
+    "file": "bandit_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 42,
+    "h": 80,
+    "ox": 27,
+    "oy": 9
+   }
+  ]
+ },
+ "bandit_capt": {
+  "aspect": 0.567,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "bandit_capt_f0_0deg.png",
+    "angle": 0,
+    "w": 33,
+    "h": 79,
+    "ox": 31,
+    "oy": 7
+   },
+   {
+    "file": "bandit_capt_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 47,
+    "h": 81,
+    "ox": 29,
+    "oy": 7
+   },
+   {
+    "file": "bandit_capt_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 44,
+    "h": 81,
+    "ox": 26,
+    "oy": 9
+   },
+   {
+    "file": "bandit_capt_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 28,
+    "h": 79,
+    "ox": 30,
+    "oy": 11
+   },
+   {
+    "file": "bandit_capt_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 32,
+    "h": 77,
+    "ox": 33,
+    "oy": 12
+   }
+  ]
+ },
+ "elemental": {
+  "aspect": 0.723,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "elemental_f0_0deg.png",
+    "angle": 0,
+    "w": 56,
+    "h": 83,
+    "ox": 20,
+    "oy": 9
+   },
+   {
+    "file": "elemental_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 58,
+    "h": 81,
+    "ox": 19,
+    "oy": 12
+   },
+   {
+    "file": "elemental_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 57,
+    "h": 79,
+    "ox": 19,
+    "oy": 13
+   },
+   {
+    "file": "elemental_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 58,
+    "h": 80,
+    "ox": 22,
+    "oy": 12
+   },
+   {
+    "file": "elemental_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 56,
+    "h": 83,
+    "ox": 20,
+    "oy": 9
+   }
+  ]
+ },
+ "ghoul": {
+  "aspect": 0.612,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "ghoul_f0_0deg.png",
+    "angle": 0,
+    "w": 44,
+    "h": 74,
+    "ox": 26,
+    "oy": 13
+   },
+   {
+    "file": "ghoul_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 47,
+    "h": 76,
+    "ox": 25,
+    "oy": 11
+   },
+   {
+    "file": "ghoul_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 48,
+    "h": 82,
+    "ox": 24,
+    "oy": 9
+   },
+   {
+    "file": "ghoul_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 41,
+    "h": 84,
+    "ox": 29,
+    "oy": 7
+   },
+   {
+    "file": "ghoul_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 44,
+    "h": 83,
+    "ox": 26,
+    "oy": 6
+   }
+  ]
+ },
+ "goblin": {
+  "aspect": 0.618,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "goblin_f0_0deg.png",
+    "angle": 0,
+    "w": 44,
+    "h": 78,
+    "ox": 26,
+    "oy": 9
+   },
+   {
+    "file": "goblin_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 53,
+    "h": 83,
+    "ox": 26,
+    "oy": 6
+   },
+   {
+    "file": "goblin_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 50,
+    "h": 85,
+    "ox": 23,
+    "oy": 6
+   },
+   {
+    "file": "goblin_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 41,
+    "h": 82,
+    "ox": 26,
+    "oy": 8
+   },
+   {
+    "file": "goblin_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 44,
+    "h": 80,
+    "ox": 26,
+    "oy": 9
+   }
+  ]
+ },
+ "goblin_arch": {
+  "aspect": 0.576,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "goblin_arch_f0_0deg.png",
+    "angle": 0,
+    "w": 36,
+    "h": 81,
+    "ox": 30,
+    "oy": 6
+   },
+   {
+    "file": "goblin_arch_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 55,
+    "h": 80,
+    "ox": 20,
+    "oy": 7
+   },
+   {
+    "file": "goblin_arch_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 46,
+    "h": 81,
+    "ox": 25,
+    "oy": 9
+   },
+   {
+    "file": "goblin_arch_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 37,
+    "h": 83,
+    "ox": 25,
+    "oy": 9
+   },
+   {
+    "file": "goblin_arch_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 36,
+    "h": 81,
+    "ox": 30,
+    "oy": 10
+   }
+  ]
+ },
+ "harpy": {
+  "aspect": 0.659,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "harpy_f0_0deg.png",
+    "angle": 0,
+    "w": 52,
+    "h": 80,
+    "ox": 22,
+    "oy": 8
+   },
+   {
+    "file": "harpy_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 48,
+    "h": 82,
+    "ox": 21,
+    "oy": 8
+   },
+   {
+    "file": "harpy_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 43,
+    "h": 82,
+    "ox": 27,
+    "oy": 8
+   },
+   {
+    "file": "harpy_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 51,
+    "h": 79,
+    "ox": 22,
+    "oy": 9
+   },
+   {
+    "file": "harpy_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 52,
+    "h": 78,
+    "ox": 22,
+    "oy": 9
+   }
+  ]
+ },
+ "knight_ash": {
+  "aspect": 0.575,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "knight_ash_f0_0deg.png",
+    "angle": 0,
+    "w": 46,
+    "h": 79,
+    "ox": 25,
+    "oy": 9
+   },
+   {
+    "file": "knight_ash_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 44,
+    "h": 80,
+    "ox": 29,
+    "oy": 9
+   },
+   {
+    "file": "knight_ash_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 36,
+    "h": 80,
+    "ox": 30,
+    "oy": 9
+   },
+   {
+    "file": "knight_ash_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 42,
+    "h": 80,
+    "ox": 24,
+    "oy": 9
+   },
+   {
+    "file": "knight_ash_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 46,
+    "h": 79,
+    "ox": 25,
+    "oy": 10
+   }
+  ]
+ },
+ "kobold": {
+  "aspect": 0.59,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "kobold_f0_0deg.png",
+    "angle": 0,
+    "w": 48,
+    "h": 84,
+    "ox": 24,
+    "oy": 6
+   },
+   {
+    "file": "kobold_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 57,
+    "h": 86,
+    "ox": 18,
+    "oy": 5
+   },
+   {
+    "file": "kobold_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 38,
+    "h": 84,
+    "ox": 28,
+    "oy": 6
+   },
+   {
+    "file": "kobold_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 44,
+    "h": 80,
+    "ox": 28,
+    "oy": 9
+   },
+   {
+    "file": "kobold_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 47,
+    "h": 76,
+    "ox": 25,
+    "oy": 11
+   }
+  ]
+ },
+ "kobold_sham": {
+  "aspect": 0.507,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "kobold_sham_f0_0deg.png",
+    "angle": 0,
+    "w": 39,
+    "h": 81,
+    "ox": 28,
+    "oy": 7
+   },
+   {
+    "file": "kobold_sham_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 35,
+    "h": 80,
+    "ox": 30,
+    "oy": 9
+   },
+   {
+    "file": "kobold_sham_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 40,
+    "h": 81,
+    "ox": 28,
+    "oy": 10
+   },
+   {
+    "file": "kobold_sham_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 42,
+    "h": 78,
+    "ox": 26,
+    "oy": 11
+   },
+   {
+    "file": "kobold_sham_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 38,
+    "h": 76,
+    "ox": 29,
+    "oy": 11
+   }
+  ]
+ },
+ "lich": {
+  "aspect": 0.491,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "lich_f0_0deg.png",
+    "angle": 0,
+    "w": 38,
+    "h": 79,
+    "ox": 30,
+    "oy": 9
+   },
+   {
+    "file": "lich_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 35,
+    "h": 78,
+    "ox": 31,
+    "oy": 10
+   },
+   {
+    "file": "lich_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 38,
+    "h": 80,
+    "ox": 29,
+    "oy": 10
+   },
+   {
+    "file": "lich_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 44,
+    "h": 80,
+    "ox": 26,
+    "oy": 10
+   },
+   {
+    "file": "lich_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 39,
+    "h": 80,
+    "ox": 28,
+    "oy": 9
+   }
+  ]
+ },
+ "npc_captain": {
+  "aspect": 0.465,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "npc_captain_f0_0deg.png",
+    "angle": 0,
+    "w": 38,
+    "h": 79,
+    "ox": 29,
+    "oy": 8
+   },
+   {
+    "file": "npc_captain_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 37,
+    "h": 79,
+    "ox": 28,
+    "oy": 9
+   },
+   {
+    "file": "npc_captain_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 28,
+    "h": 81,
+    "ox": 34,
+    "oy": 9
+   },
+   {
+    "file": "npc_captain_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 33,
+    "h": 80,
+    "ox": 30,
+    "oy": 10
+   },
+   {
+    "file": "npc_captain_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 38,
+    "h": 77,
+    "ox": 29,
+    "oy": 11
+   }
+  ]
+ },
+ "npc_foreman": {
+  "aspect": 0.412,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "npc_foreman_f0_0deg.png",
+    "angle": 0,
+    "w": 34,
+    "h": 78,
+    "ox": 31,
+    "oy": 9
+   },
+   {
+    "file": "npc_foreman_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 33,
+    "h": 79,
+    "ox": 32,
+    "oy": 9
+   },
+   {
+    "file": "npc_foreman_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 28,
+    "h": 79,
+    "ox": 34,
+    "oy": 9
+   },
+   {
+    "file": "npc_foreman_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 30,
+    "h": 79,
+    "ox": 32,
+    "oy": 9
+   },
+   {
+    "file": "npc_foreman_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 34,
+    "h": 79,
+    "ox": 31,
+    "oy": 9
+   }
+  ]
+ },
+ "npc_priest": {
+  "aspect": 0.638,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "npc_priest_f0_0deg.png",
+    "angle": 0,
+    "w": 32,
+    "h": 80,
+    "ox": 32,
+    "oy": 5
+   },
+   {
+    "file": "npc_priest_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 35,
+    "h": 80,
+    "ox": 22,
+    "oy": 7
+   },
+   {
+    "file": "npc_priest_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 50,
+    "h": 81,
+    "ox": 23,
+    "oy": 9
+   },
+   {
+    "file": "npc_priest_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 51,
+    "h": 79,
+    "ox": 24,
+    "oy": 12
+   },
+   {
+    "file": "npc_priest_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 32,
+    "h": 78,
+    "ox": 32,
+    "oy": 13
+   }
+  ]
+ },
+ "npc_smith": {
+  "aspect": 0.557,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "npc_smith_f0_0deg.png",
+    "angle": 0,
+    "w": 44,
+    "h": 79,
+    "ox": 26,
+    "oy": 9
+   },
+   {
+    "file": "npc_smith_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 43,
+    "h": 79,
+    "ox": 26,
+    "oy": 9
+   },
+   {
+    "file": "npc_smith_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 26,
+    "h": 81,
+    "ox": 35,
+    "oy": 9
+   },
+   {
+    "file": "npc_smith_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 30,
+    "h": 81,
+    "ox": 30,
+    "oy": 9
+   },
+   {
+    "file": "npc_smith_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 44,
+    "h": 80,
+    "ox": 26,
+    "oy": 9
+   }
+  ]
+ },
+ "ogre": {
+  "aspect": 0.715,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "ogre_f0_0deg.png",
+    "angle": 0,
+    "w": 56,
+    "h": 79,
+    "ox": 20,
+    "oy": 9
+   },
+   {
+    "file": "ogre_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 54,
+    "h": 80,
+    "ox": 22,
+    "oy": 9
+   },
+   {
+    "file": "ogre_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 46,
+    "h": 82,
+    "ox": 25,
+    "oy": 9
+   },
+   {
+    "file": "ogre_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 54,
+    "h": 82,
+    "ox": 22,
+    "oy": 9
+   },
+   {
+    "file": "ogre_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 56,
+    "h": 81,
+    "ox": 20,
+    "oy": 9
+   }
+  ]
+ },
+ "rat": {
+  "aspect": 1.722,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "rat_f0_0deg.png",
+    "angle": 0,
+    "w": 46,
+    "h": 73,
+    "ox": 25,
+    "oy": 7
+   },
+   {
+    "file": "rat_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 96,
+    "h": 75,
+    "ox": 0,
+    "oy": 8
+   },
+   {
+    "file": "rat_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 96,
+    "h": 80,
+    "ox": 0,
+    "oy": 9
+   },
+   {
+    "file": "rat_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 96,
+    "h": 90,
+    "ox": 0,
+    "oy": 5
+   },
+   {
+    "file": "rat_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 46,
+    "h": 92,
+    "ox": 25,
+    "oy": 4
+   }
+  ]
+ },
+ "skeleton": {
+  "aspect": 0.507,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "skeleton_f0_0deg.png",
+    "angle": 0,
+    "w": 40,
+    "h": 79,
+    "ox": 28,
+    "oy": 8
+   },
+   {
+    "file": "skeleton_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 42,
+    "h": 79,
+    "ox": 28,
+    "oy": 9
+   },
+   {
+    "file": "skeleton_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 34,
+    "h": 80,
+    "ox": 31,
+    "oy": 10
+   },
+   {
+    "file": "skeleton_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 43,
+    "h": 78,
+    "ox": 28,
+    "oy": 11
+   },
+   {
+    "file": "skeleton_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 40,
+    "h": 79,
+    "ox": 28,
+    "oy": 10
+   }
+  ]
+ },
+ "troll": {
+  "aspect": 0.704,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "troll_f0_0deg.png",
+    "angle": 0,
+    "w": 56,
+    "h": 77,
+    "ox": 20,
+    "oy": 11
+   },
+   {
+    "file": "troll_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 52,
+    "h": 80,
+    "ox": 27,
+    "oy": 11
+   },
+   {
+    "file": "troll_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 42,
+    "h": 81,
+    "ox": 27,
+    "oy": 11
+   },
+   {
+    "file": "troll_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 46,
+    "h": 81,
+    "ox": 24,
+    "oy": 9
+   },
+   {
+    "file": "troll_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 56,
+    "h": 78,
+    "ox": 20,
+    "oy": 10
+   }
+  ]
+ },
+ "wolf": {
+  "aspect": 1.685,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "wolf_f0_0deg.png",
+    "angle": 0,
+    "w": 34,
+    "h": 87,
+    "ox": 31,
+    "oy": 7
+   },
+   {
+    "file": "wolf_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 96,
+    "h": 84,
+    "ox": 0,
+    "oy": 9
+   },
+   {
+    "file": "wolf_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 96,
+    "h": 79,
+    "ox": 0,
+    "oy": 10
+   },
+   {
+    "file": "wolf_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 96,
+    "h": 88,
+    "ox": 0,
+    "oy": 7
+   },
+   {
+    "file": "wolf_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 34,
+    "h": 91,
+    "ox": 31,
+    "oy": 5
+   }
+  ]
+ },
+ "zombie": {
+  "aspect": 0.547,
+  "h": 96,
+  "pxPerUnit": 77.419,
+  "facings": [
+   {
+    "file": "zombie_f0_0deg.png",
+    "angle": 0,
+    "w": 44,
+    "h": 76,
+    "ox": 26,
+    "oy": 12
+   },
+   {
+    "file": "zombie_f1_1deg.png",
+    "angle": 0.7854,
+    "w": 47,
+    "h": 78,
+    "ox": 28,
+    "oy": 11
+   },
+   {
+    "file": "zombie_f2_2deg.png",
+    "angle": 1.5708,
+    "w": 40,
+    "h": 81,
+    "ox": 28,
+    "oy": 9
+   },
+   {
+    "file": "zombie_f3_2deg.png",
+    "angle": 2.3562,
+    "w": 34,
+    "h": 81,
+    "ox": 30,
+    "oy": 8
+   },
+   {
+    "file": "zombie_f4_3deg.png",
+    "angle": 3.1416,
+    "w": 44,
+    "h": 81,
+    "ox": 26,
+    "oy": 7
+   }
+  ]
+ }
+}

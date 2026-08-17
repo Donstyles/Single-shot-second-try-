@@ -11,9 +11,14 @@ secrets/
 **/*apikey*
 **/*api_key*
 
-# Image-generation raw output is a BUILD INPUT, not an asset.
-# Only palette-quantised, reviewed, committed data enters the build.
-assets/raw/
+# assets/raw/ USED TO BE IGNORED HERE, on the reasoning that generated output is a build input and
+# only reviewed, quantised data belongs in the tree. That reasoning is wrong when the build input
+# COST MONEY. Seven hundred and twenty-five of the project's nine hundred and thirty-two credits
+# bought the meshes and the full-resolution textures under assets/raw, and because of this rule they
+# existed on exactly one ephemeral container and nowhere else -- one reclaim from being gone, with
+# no way to regenerate them without paying again.
+#
+# 187 MB is a large tree. It is much cheaper than the alternative.
 
 # Claude Code local permission cache — can capture command strings verbatim.
 .claude/settings.local.json
