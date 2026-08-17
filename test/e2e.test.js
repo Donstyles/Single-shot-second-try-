@@ -1035,6 +1035,30 @@ const T = require('./_harness.js');
     T.ok(facades.dayGlass > 0, 'buildings show glazing in daylight (' + facades.dayGlass + 'px)');
     T.ok(facades.nightLit > 0, 'and windows are lit from within after dark (' + facades.nightLit + 'px)');
 
+    // ---- A LOAD THAT SUCCEEDS MUST LEAVE THE GAME INTROSPECTABLE. A save with a member missing
+    // `cond` returned true from load(), and then invariants() and brief() both threw on
+    // ch.cond.dead — the game kept running while its own introspection was dead, which is the
+    // worst of both outcomes. Every per-member object a caller dereferences is rebuilt now.
+    const hostile = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1); h.save(0);
+      const key = Object.keys(localStorage).find((k) => /save/i.test(k));
+      const d = JSON.parse(localStorage.getItem(key));
+      for (const c of d.party.members) delete c.cond;
+      delete d.party.members[0].equip;
+      delete d.party.members[1].skills;
+      d.party.members[2].pack = 'not an array';
+      localStorage.setItem(key, JSON.stringify(d));
+      const loaded = h.load(0);
+      let inv = null, brief = false, threw = null;
+      try { inv = Game.invariants(); } catch (e) { threw = 'invariants: ' + e.message; }
+      try { brief = !!Game.brief(); } catch (e) { threw = (threw || '') + ' brief: ' + e.message; }
+      return { loaded, inv, brief, threw };
+    })()`);
+    T.ok(hostile.loaded, 'a save with missing per-member objects still loads');
+    T.eq(hostile.threw, null, 'and introspection does not throw afterwards');
+    T.eq(hostile.inv, [], 'and the game reports no invariant violations');
+    T.ok(hostile.brief, 'and brief() still describes the state');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

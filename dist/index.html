@@ -8501,6 +8501,20 @@ const Game = (() => {
         c.xp = clampNum(c.xp, 0, 1e12, 0);
         c.skillPts = clampNum(c.skillPts, 0, 9999, 0);
         if (Array.isArray(c.pack) && c.pack.length > 30) c.pack.length = 30;
+        // EVERY per-member object a caller dereferences without checking must exist. `cond` is the
+        // one the validator missed: a save with a member missing it LOADED SUCCESSFULLY and then
+        // invariants() and brief() both threw on `ch.cond.dead` — the game kept running while its
+        // own introspection was dead, which is the worst of both outcomes. Rebuild rather than
+        // reject: the rest of the character is fine and a missing status block means "healthy".
+        // Rules.CONDITIONS is an ARRAY of names. Iterating its keys wrote cond[0..7] onto every
+        // character and broke save/load byte-identity, which the campaign suite caught immediately.
+        // Only fill in a condition that is genuinely absent, so a healthy save round-trips unchanged.
+        if (!c.cond || typeof c.cond !== 'object') c.cond = {};
+        for (const k of Rules.CONDITIONS) if (c.cond[k] === undefined) c.cond[k] = false;
+        if (!c.equip || typeof c.equip !== 'object') c.equip = {};
+        if (!c.skills || typeof c.skills !== 'object') c.skills = {};
+        if (!c.spells || typeof c.spells !== 'object') c.spells = {};
+        if (!Array.isArray(c.pack)) c.pack = [];
         // Stack QUANTITY was unclamped even though pack LENGTH was: one entry with qty 1e9 loaded
         // and the census reported a billion items.
         for (const st of (c.pack || [])) {
