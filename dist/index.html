@@ -4409,17 +4409,54 @@ const Sprites = (() => {
         for (let x = 12; x <= 20; x++) put(x, 21, 13, 10);
         for (let y = 22; y < 27; y++) put(16, y, 4, 7);
       } else {                                                                // sword
+        // Blade mass, a fuller, a shaped point and a real hilt. At 32px a two-pixel line is a
+        // stick: an art critic could not tell a staff, a mace, a broadsword, a long sword, a club
+        // and an axe apart in the shop list, and a veteran read the icons as "6x14 vertical sticks".
         const long = (it.dmg && (it.dmg.n * it.dmg.sides) >= 12);
-        for (let y = long ? 2 : 6; y < 21; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
-        for (let x = 9; x <= 23; x++) put(x, 21, 13, 10);                      // crossguard
-        for (let y = 22; y < 28; y++) put(16, y, 4, 7);                        // grip
-        put(16, 28, 13, 12);                                                   // pommel
+        const half = long ? 4 : 3;
+        const tip = long ? 2 : 5;
+        for (let y = tip; y < 21; y++) {
+          const ww = Math.min(half, y - tip);
+          for (let x = -ww; x <= ww; x++) {
+            // Lit left bevel, dark right bevel, bright fuller down the spine.
+            const sh = x === 0 ? 14 : x < 0 ? 12 - Math.abs(x) : 7 - Math.abs(x);
+            put(16 + x, y, 14, sh);
+          }
+        }
+        for (let x = 8; x <= 24; x++) { put(x, 21, 13, 11); put(x, 22, 13, 7); }   // quilloned guard
+        put(8, 20, 13, 12); put(24, 20, 13, 12);
+        for (let y = 23; y < 28; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 4, 8 - Math.abs(x));
+        for (let x = -2; x <= 2; x++) for (let y = 28; y <= 30; y++) {
+          if (x * x + (y - 29) * (y - 29) > 5) continue;
+          put(16 + x, y, 13, 12 - Math.abs(x));                                    // pommel
+        }
       }
     } else if (kind === 'armour') {
-      for (let y = 5; y < 27; y++) {
-        const ww = 10 - Math.abs(y - 14) / 3;
-        for (let x = -ww; x <= ww; x++) put(16 + x, y, it.skill === 'plate' ? 14 : it.skill === 'chain' ? 1 : 4,
-          clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+      // Three genuinely different silhouettes, because plate, chain and leather priced 165g apart
+      // must not be the same grey lozenge at three brightnesses.
+      const ramp = it.skill === 'plate' ? 14 : it.skill === 'chain' ? 1 : 4;
+      const plate = it.skill === 'plate';
+      for (let y = 6; y < 27; y++) {
+        const waist = plate ? 1 - Math.abs(y - 14) / 26 : 1;
+        const ww = Math.max(1, Math.round((plate ? 11 : 9) * waist - (y > 22 ? (y - 22) : 0)));
+        for (let x = -ww; x <= ww; x++) {
+          let sh = clamp(11 - Math.round((x + ww) / (ww * 2 + 1) * 6), 3, 14);
+          if (it.skill === 'chain' && ((x + y) & 1)) sh = clamp(sh - 3, 2, 14);   // mail texture
+          if (plate && Math.abs(x) < 2 && y > 9) sh = clamp(sh + 2, 3, 15);       // centre ridge
+          put(16 + x, y, ramp, sh);
+        }
+      }
+      if (plate) {                                                    // pauldrons and a gorget
+        for (const sgn of [-1, 1]) {
+          for (let y = 5; y < 12; y++) for (let x = 0; x < 5; x++) {
+            if ((x - 2) * (x - 2) + (y - 8) * (y - 8) > 12) continue;
+            put(16 + sgn * (10 + x), y, 14, 13 - x);
+          }
+        }
+        for (let x = -4; x <= 4; x++) put(16 + x, 5, 13, 12);
+      } else if (it.skill === 'leather') {                            // straps and a buckle
+        for (let y = 9; y < 24; y += 6) for (let x = -9; x <= 9; x++) put(16 + x, y, 13, 8);
+        put(16, 15, 13, 14); put(15, 15, 13, 12); put(17, 15, 13, 12);
       }
     } else if (kind === 'potion') {
       for (let y = 10; y < 27; y++) {
@@ -4444,6 +4481,10 @@ const Sprites = (() => {
       if (d[y * w + x]) continue;
       if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
           (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+      // A soft drop shadow down-right of the silhouette. Steel on a brown shop plate has almost no
+      // edge contrast on its own, and a shop list of near-identical grey shapes is what made six
+      // weapons read as one icon.
+      else if (x > 1 && y > 1 && d[(y - 2) * w + x - 2]) out[y * w + x] = Core.idx(0, 4);
     }
     return { w, h, data: out };
   }
@@ -5067,16 +5108,21 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 66 + Math.floor(i / 2) * 54;
-      if (y > f.y + f.h - 80) return;
+      // Bigger rows and a bigger icon on its own recessed plate. At 32px on a dark panel the
+      // silhouettes had almost no contrast and the whole list read as one repeated shape: "six of
+      // seven items share one icon", then "6x14 vertical sticks" a round later.
+      const x = f.x + 18 + (i % 2) * 288, y = f.inner + 62 + Math.floor(i / 2) * 66;
+      if (y > f.y + f.h - 84) return;
       const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
-      Art.panel(En, x, y, 272, 48, afford ? 4 : 4, true);
-      En.blitScaled(Sprites.icon(st.id), x + 6, y + 8, 32, 32, 0);
-      Art.text(En, x + 46, y + 8, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 13 : 7), 2);
-      Art.text(En, x + 46, y + 28, price + 'g', Core.idx(13, afford ? 13 : 7), 2);
-      if (!afford) Art.text(En, x + 150, y + 28, 'too dear', Core.idx(11, 9), 1);
-      if (afford) reg('buy', x, y, 272, 48, i);
+      Art.panel(En, x, y, 282, 60, 4, true);
+      Art.panel(En, x + 5, y + 5, 50, 50, 13, true);
+      En.frameRect(x + 5, y + 5, 50, 50, Core.idx(13, 9));
+      En.blitScaled(Sprites.icon(st.id), x + 6, y + 6, 48, 48, 0);
+      Art.text(En, x + 62, y + 10, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 14 : 7), 2);
+      Art.text(En, x + 62, y + 32, price + 'g', Core.idx(13, afford ? 14 : 7), 2);
+      if (!afford) Art.text(En, x + 180, y + 34, 'TOO DEAR', Core.idx(11, 11), 1);
+      if (afford) reg('buy', x, y, 282, 60, i);
     });
   }
 

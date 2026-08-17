@@ -575,7 +575,79 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00f6f-498b-7be2-8a76-221b0f6113b8"
+    },
+    {
+      "n": 97,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A harpy, woman-headed bird creature, rag"
+    },
+    {
+      "n": 98,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f71-5a53-7f46-970e-7194cb2b786d"
+    },
+    {
+      "n": 99,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A wiry goblin archer, green skin, short "
+    },
+    {
+      "n": 100,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f73-6637-7d11-99b0-79af0fe6263d"
+    },
+    {
+      "n": 101,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A town guard captain in chainmail and a "
+    },
+    {
+      "n": 102,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f75-a158-703d-ba81-139342a81ae1"
+    },
+    {
+      "n": 103,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A blacksmith in a heavy leather apron, b"
+    },
+    {
+      "n": 104,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f77-f13b-7552-a245-12568e9cd9e0"
+    },
+    {
+      "n": 105,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A priest in pale robes with a hood and a"
+    },
+    {
+      "n": 106,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f7a-2573-7e64-8420-80fd788f89b9"
+    },
+    {
+      "n": 107,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A mine foreman in a leather coat and fla"
+    },
+    {
+      "n": 108,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f7c-e47f-76b3-9e92-cf63f45d3c47"
     }
   ],
-  "spent": 752
+  "spent": 842
 }

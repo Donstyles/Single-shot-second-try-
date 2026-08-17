@@ -600,16 +600,21 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 66 + Math.floor(i / 2) * 54;
-      if (y > f.y + f.h - 80) return;
+      // Bigger rows and a bigger icon on its own recessed plate. At 32px on a dark panel the
+      // silhouettes had almost no contrast and the whole list read as one repeated shape: "six of
+      // seven items share one icon", then "6x14 vertical sticks" a round later.
+      const x = f.x + 18 + (i % 2) * 288, y = f.inner + 62 + Math.floor(i / 2) * 66;
+      if (y > f.y + f.h - 84) return;
       const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
-      Art.panel(En, x, y, 272, 48, afford ? 4 : 4, true);
-      En.blitScaled(Sprites.icon(st.id), x + 6, y + 8, 32, 32, 0);
-      Art.text(En, x + 46, y + 8, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 13 : 7), 2);
-      Art.text(En, x + 46, y + 28, price + 'g', Core.idx(13, afford ? 13 : 7), 2);
-      if (!afford) Art.text(En, x + 150, y + 28, 'too dear', Core.idx(11, 9), 1);
-      if (afford) reg('buy', x, y, 272, 48, i);
+      Art.panel(En, x, y, 282, 60, 4, true);
+      Art.panel(En, x + 5, y + 5, 50, 50, 13, true);
+      En.frameRect(x + 5, y + 5, 50, 50, Core.idx(13, 9));
+      En.blitScaled(Sprites.icon(st.id), x + 6, y + 6, 48, 48, 0);
+      Art.text(En, x + 62, y + 10, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 14 : 7), 2);
+      Art.text(En, x + 62, y + 32, price + 'g', Core.idx(13, afford ? 14 : 7), 2);
+      if (!afford) Art.text(En, x + 180, y + 34, 'TOO DEAR', Core.idx(11, 11), 1);
+      if (afford) reg('buy', x, y, 282, 60, i);
     });
   }
 
