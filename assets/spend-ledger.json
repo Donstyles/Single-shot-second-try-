@@ -137,7 +137,13 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00ec7-6709-7d04-af23-27fbdf53c65c"
+    },
+    {
+      "n": 24,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling volcanic ash texture fro"
     }
   ],
-  "spent": 198
+  "spent": 207
 }
