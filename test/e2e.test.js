@@ -919,6 +919,74 @@ const T = require('./_harness.js');
     })()`);
     if (!npc.skip) T.ok(npc.gotNearest, 'USE opens the NPC you are standing in front of');
 
+    // ---- A decor entry with collision, a name and an EMPTY BITMAP is invisible furniture.
+    // 'tent' had no painter at all, so every bandit camp and wilderness encampment drew nothing
+    // where a tent stood, and a veteran touring the world reported "grey cones for tents" — the
+    // cones were whatever else happened to be standing there.
+    const decor = await page.evaluate(`(() => {
+      const kinds = Object.keys(Sprites.DECOR_HEIGHT);
+      const blank = [];
+      for (const k of kinds) {
+        const spr = Sprites.decor(k);
+        let inked = 0;
+        for (let i = 0; i < spr.data.length; i++) if (spr.data[i]) inked++;
+        if (inked === 0) blank.push(k);
+      }
+      return { count: kinds.length, blank };
+    })()`);
+    T.ok(decor.count > 15, 'the world declares a real set of decor kinds (' + decor.count + ')');
+    T.eq(decor.blank, [], 'every decor kind paints something');
+
+    // ---- The display face may not paint outside its own advance box, at any optical size, and
+    // every character the UI writes must exist in it.
+    const font = await page.evaluate(`(() => {
+      const out = { over: {}, missing: [] };
+      for (const cap of [7, 12, 18]) {
+        const f = Font.face(cap);
+        const bad = [];
+        for (const ch of Object.keys(f.glyphs)) {
+          const g = f.glyphs[ch];
+          let left = 1e9, right = -1;
+          for (let y = 0; y < g.h; y++) {
+            for (let x = 0; x < g.cw; x++) {
+              if (g.cov[y * g.cw + x] > 0) { if (x < left) left = x; if (x > right) right = x; }
+            }
+          }
+          if (right < 0) continue;
+          if (right + g.lsb + 1 > g.adv || left + g.lsb < 0) bad.push(ch);
+        }
+        out.over[cap] = bad;
+      }
+      const face = Font.face(12);
+      const need = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?' +
+        String.fromCharCode(39) + String.fromCharCode(34) + '-/()+=%&' + String.fromCharCode(0x2014);
+      for (const ch of need) if (!face.glyphs[ch]) out.missing.push(ch);
+      return out;
+    })()`);
+    T.eq(font.over[7], [], 'cap 7: no glyph paints outside its advance');
+    T.eq(font.over[12], [], 'cap 12: no glyph paints outside its advance');
+    T.eq(font.over[18], [], 'cap 18: no glyph paints outside its advance');
+    T.eq(font.missing, [], 'no character the UI writes is missing from the face');
+
+    // ---- Clouds are sampled by WORLD azimuth, not screen x. A screen-space cloud swims across
+    // the sky as the party turns, which looks worse than an empty gradient.
+    const sky = await page.evaluate(`(() => {
+      const h = window.__game;
+      h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      const V = Engine.VIEW, buf = Engine.buf, W = Engine.W;
+      const row = () => { const o = []; const y = V.y + 20;
+        for (let x = 0; x < V.w; x++) o.push(buf[y * W + (V.x + x)]); return o; };
+      h.face(0); h.settle(1); h.redraw(); const a = row();
+      h.face(Math.PI / 2); h.settle(1); h.redraw(); const b = row();
+      h.face(0); h.settle(1); h.redraw(); const c = row();
+      return { width: a.length,
+               turned: a.filter((v, i) => v !== b[i]).length,
+               back: a.filter((v, i) => v !== c[i]).length };
+    })()`);
+    T.ok(sky.turned > sky.width * 0.15,
+      'the sky changes when the party turns — clouds are world-locked (' + sky.turned + '/' + sky.width + ')');
+    T.eq(sky.back, 0, 'and returning to the same heading gives the identical sky');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

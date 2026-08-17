@@ -543,6 +543,53 @@ const Art = (() => {
     dusk:      { top: [9, 4], hor: [15, 8], sun: -2 },
   };
 
+  // ---------------------------------------------------------------- clouds
+  // A direct A/B against the real game put its town beside ours, and the loudest difference in the
+  // upper half of the frame was that MM6's sky has PAINTED CLOUDS and ours is a clean gradient. A
+  // flawless gradient is a tell in itself: no 1998 outdoor scene had an empty sky.
+  //
+  // The gradient band is 8 pixels wide and tiled, so clouds cannot live in it. They live here, in a
+  // texture sampled by the ray's WORLD AZIMUTH — which is what stops them swimming when the camera
+  // turns, the way a screen-space cloud would. 256 columns wrap exactly once around the compass.
+  const CLOUD_W = 256, CLOUD_H = 48;
+  let cloudTex = null;
+
+  function clouds() {
+    if (cloudTex) return cloudTex;
+    const t = new Uint8Array(CLOUD_W * CLOUD_H);
+    // Three octaves of value noise, wrapping in x so the compass closes. Banked toward the
+    // horizon: cloud decks thin out overhead and pile up in the distance.
+    for (let y = 0; y < CLOUD_H; y++) {
+      const v = y / CLOUD_H;
+      for (let x = 0; x < CLOUD_W; x++) {
+        let a = 0, amp = 1, f = 4, norm = 0;
+        for (let o = 0; o < 3; o++) {
+          // wrapping value noise: sample on a circle so x = 0 and x = CLOUD_W agree
+          const ang = (x / CLOUD_W) * Math.PI * 2;
+          a += amp * noise2(Math.cos(ang) * f + 8, Math.sin(ang) * f + v * f * 1.7 + 3, 1717 + o * 37);
+          norm += amp; amp *= 0.5; f *= 2.1;
+        }
+        a /= norm;
+        // Coverage: banded so clouds have edges rather than being a smear, thinning at the top.
+        const bias = 0.52 + (1 - v) * 0.16;
+        const d = a - bias;
+        t[y * CLOUD_W + x] = d <= 0 ? 0 : Math.min(15, Math.round(d * 46));
+      }
+    }
+    cloudTex = t;
+    return t;
+  }
+
+  // Cloud density for a world azimuth (radians) and a fraction down the sky (0 top, 1 horizon).
+  function cloudAt(az, v) {
+    const t = clouds();
+    let u = az / (Math.PI * 2);
+    u -= Math.floor(u);
+    const x = (u * CLOUD_W) | 0;
+    const y = v <= 0 ? 0 : v >= 1 ? CLOUD_H - 1 : (v * CLOUD_H) | 0;
+    return t[y * CLOUD_W + x];
+  }
+
   function skyBand(horizonOverride) {
     const E = Engine;
     const phase = Clock.phase();
@@ -914,6 +961,7 @@ const Art = (() => {
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
     panel, button, gameFrame, stonework, arrowGlyph, bar, step, hudIcon, shopSign, shopInterior,
+    cloudAt,
     get tick() { return tick; },
   };
 })();

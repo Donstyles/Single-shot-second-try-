@@ -318,20 +318,34 @@ const Engine = (() => {
     for (let sx = 0; sx < VIEW.w; sx++) {
       const px = VIEW.x + sx;
 
-      // Sky first: everything the march does not cover stays sky, so a column that reaches the
-      // horizon needs no separate pass.
-      if (skyBand) {
-        const phase = sx & 7;
-        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y * 8 + phase];
-      } else {
-        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
-      }
-
       const camX = ((sx + 0.5) / VIEW.w) * 2 - 1;
       const rdx = cosA - sinA * camX * halfFov;
       const rdy = sinA + cosA * camX * halfFov;
       const rl = Math.hypot(rdx, rdy);
       const dx = rdx / rl, dy = rdy / rl;
+
+      // Sky first: everything the march does not cover stays sky, so a column that reaches the
+      // horizon needs no separate pass.
+      //
+      // Clouds are sampled by this column's WORLD AZIMUTH, not by its screen x. Screen-space cloud
+      // would swim across the sky as the party turned, which is the one thing that would make it
+      // look worse than an empty gradient. Drawn only above the horizon, and only outdoors.
+      if (skyBand) {
+        const phase = sx & 7;
+        const az = Math.atan2(dy, dx);
+        const skyRows = horizon - VIEW.y;
+        for (let y = 0; y < VIEW.h; y++) {
+          let pi = skyBand[y * 8 + phase];
+          if (y < skyRows && skyRows > 0) {
+            // v runs 0 overhead to 1 at the horizon; clouds pile up toward the horizon.
+            const d = Art.cloudAt(az, y / skyRows);
+            if (d) pi = Core.shade(pi & 0xf0, (pi & 0x0f) + ((d * 5) >> 4) + 1);
+          }
+          buf[(VIEW.y + y) * W + px] = pi;
+        }
+      } else {
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
+      }
 
       let ybuf = VIEW.y + VIEW.h;       // filled upward from the bottom of the viewport
       let ytop = VIEW.y;                // and DOWNWARD from the top, for dungeon ceilings
