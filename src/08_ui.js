@@ -65,11 +65,21 @@ const UI = (() => {
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
     const lw = 636 - lx - 118;
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
-    const lines = Core.Log.tail(4);
-    lines.forEach((l, i) => {
+    // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
+    const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
+    const wrapped = [];
+    for (const l of Core.Log.tail(6)) {
       const c = l.kind === 'hit' ? Core.idx(11, 12) : l.kind === 'good' ? Core.idx(6, 12)
         : l.kind === 'sys' ? Core.idx(9, 11) : Core.idx(0, 13);
-      Art.text(En, lx + 5, HUD.y + 11 + i * 17, l.text.slice(0, Math.floor((lw - 10) / (Art.CH_W * 2))), c, 2);
+      let line = '';
+      for (const w of String(l.text).split(' ')) {
+        if (line && (line + ' ' + w).length > perLine) { wrapped.push([line, c]); line = w; }
+        else line = line ? line + ' ' + w : w;
+      }
+      if (line) wrapped.push([line, c]);
+    }
+    wrapped.slice(-4).forEach((row, i) => {
+      Art.text(En, lx + 5, HUD.y + 11 + i * 17, row[0], row[1], 2);
     });
 
     // ---- gold, time, place
@@ -182,9 +192,9 @@ const UI = (() => {
     const trained = Object.keys(ch.skills).filter((k) => ch.skills[k].mastery > 0);
     trained.slice(0, 12).forEach((k, i) => {
       const cx = f.x + 24 + (i % 3) * 190;
-      const cy = y + Math.floor(i / 3) * 18;
-      Art.text(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl +
-        ' ' + Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 12), 1);
+      const cy = y + Math.floor(i / 3) * 22;
+      Art.text(En, cx, cy, Rules.SKILLS[k].name.slice(0, 9) + ' ' + ch.skills[k].lvl +
+        Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2);
     });
   }
 
@@ -206,7 +216,13 @@ const UI = (() => {
       Art.panel(En, x, y, 42, 42, 4, true);
       const it = ch.equip[slot];
       if (it) En.blitScaled(Sprites.icon(it.id), x + 5, y + 5, 32, 32, 0);
-      else Art.text(En, x + 3, y + 17, slot.slice(0, 5), Core.idx(0, 6), 1);
+      else {
+        // Three letters at scale 2 fits a 42px well; five at scale 1 did not and rendered as
+        // garbage like "c nat" and "ufft a".
+        const SHORT = { helm: 'HLM', amulet: 'AMU', armour: 'ARM', cloak: 'CLK', gaunt: 'GNT',
+          weapon: 'WPN', offhand: 'OFF', belt: 'BLT', bow: 'BOW', boots: 'BTS', ring1: 'RNG' };
+        Art.textCentred(En, x + 21, y + 15, SHORT[slot] || slot.slice(0, 3).toUpperCase(), Core.idx(0, 7), 2);
+      }
       reg('equip', x, y, 42, 42, slot);
     }
 
@@ -252,8 +268,14 @@ const UI = (() => {
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
       Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
+      if (!on) {
+        // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
+        // were invisible on a phone.
+        En.frameRect(x, y, 96, 34, Core.idx(13, 10));
+      }
       if (cap === 0) {
-        for (let yy = y; yy < y + 34; yy += 2) En.hline(x, yy, 96, Core.idx(0, 2));
+        // Unavailable schools are HATCHED, not dimmed — dim is indistinguishable from unselected.
+        for (let yy = y + 1; yy < y + 33; yy += 3) En.hline(x + 1, yy, 94, Core.idx(0, 3));
       }
       reg('school', x, y, 96, 34, s);
     });
@@ -278,7 +300,7 @@ const UI = (() => {
     const En = E();
     const f = screenFrame('MAP — ' + g.map.name.toUpperCase(), 600, 430);
     const m = g.map;
-    const scale = Math.min((f.w - 40) / m.w, (f.h - 70) / m.h);
+    const scale = Math.min((f.w - 40) / m.w, (f.h - 96) / m.h);
     const ox = f.x + ((f.w - m.w * scale) >> 1), oy = f.inner;
 
     for (let y = 0; y < m.h; y++) {
@@ -303,7 +325,11 @@ const UI = (() => {
     En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 14));
     En.px(pxp + Math.round(Math.cos(g.party.ang) * 5), pyp + Math.round(Math.sin(g.party.ang) * 5), Core.idx(0, 15));
 
-    Art.text(En, f.x + 20, f.y + f.h - 26, 'Region ' + (World.REGIONS[m.region] ? World.REGIONS[m.region].name : m.name), Core.idx(0, 12), 2);
+    // Legend, because eight unexplained yellow dots in empty brown is not a map.
+    const ly = f.y + f.h - 30;
+    Art.text(En, f.x + 20, ly, (World.REGIONS[m.region] ? World.REGIONS[m.region].name : m.name), Core.idx(2, 13), 2);
+    En.rect(f.x + 300, ly + 2, 10, 10, Core.idx(11, 14)); Art.text(En, f.x + 316, ly, 'YOU', Core.idx(0, 12), 2);
+    En.rect(f.x + 380, ly + 2, 10, 10, Core.idx(13, 14)); Art.text(En, f.x + 396, ly, 'DOOR', Core.idx(0, 12), 2);
   }
 
   function shop(g) {
@@ -313,7 +339,7 @@ const UI = (() => {
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
 
-    Art.text(En, f.x + 20, f.inner - 14, 'Your gold: ' + g.party.gold, Core.idx(13, 13), 2);
+    Art.text(En, f.x + 20, f.inner + 2, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -356,7 +382,7 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + Math.floor(i / 2) * 54;
+      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 24 + Math.floor(i / 2) * 54;
       if (y > f.y + f.h - 80) return;
       const price = Rules.buyPrice(Items.value(st), ch);
       const afford = g.party.gold >= price;
@@ -443,7 +469,7 @@ const UI = (() => {
     reg('newgame', 200, 250, 240, 56, 1);
     Art.button(En, 200, 316, 240, 56, 'CONTINUE', false, 3);
     reg('continue', 200, 316, 240, 56, 1);
-    Art.textCentred(En, 320, 452, 'nine regions  ·  thirteen dungeons', Core.idx(0, 11), 1);
+    Art.textCentred(En, 320, 444, 'THE ROAD ENDS AT THE KEEP', Core.idx(13, 10), 2);
   }
 
   function creation(g) {

@@ -164,6 +164,7 @@ const Engine = (() => {
   // that. Everything below exists to make the ground itself have shape.
 
   const STOREY = 3.20;
+  const CEIL = 3.20;          // dungeon ceiling height
   const EYE = 1.30;
   const MAX_STEPS = 150;
 
@@ -222,12 +223,13 @@ const Engine = (() => {
       const dx = rdx / rl, dy = rdy / rl;
 
       let ybuf = VIEW.y + VIEW.h;       // filled upward from the bottom of the viewport
+      let ytop = VIEW.y;                // and DOWNWARD from the top, for dungeon ceilings
       let nBands = 0;
       let dist = 0.30;
       let step = dungeon ? 0.035 : 0.055;
       zb[px] = 1e9;
 
-      for (let s = 0; s < MAX_STEPS && ybuf > VIEW.y; s++) {
+      for (let s = 0; s < MAX_STEPS && ybuf > ytop; s++) {
         // Step size grows with distance: ~150 steps then reach ~200 cells, and far detail collapses
         // into haze exactly where we want it anyway.
         dist += step;
@@ -251,7 +253,7 @@ const Engine = (() => {
         const fogRow = (sx & 7) * 8;
         // Break the Bayer lattice: without this the threshold is periodic in screen space and a
         // large evenly-fogged face reads as a visible grid rather than as haze.
-        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512 - 0.03;
+        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512;
 
         // ---- ground / water surface
         const yG = (horizon + (eyeZ - gh) * invD) | 0;
@@ -261,17 +263,34 @@ const Engine = (() => {
           const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
           const top = yS < VIEW.y ? VIEW.y : yS;
           if (top < ybuf) {
-            const texel = Art.groundTexel(mat, wx, wy, map);
+            // Distance LOD. Without it the far ground point-samples a high-frequency texture and
+            // aliases into noise of the SAME apparent scale as the foreground, which reads as a
+            // vertical curtain rather than a receding plane.
+            const lod = Art.lodFor(dist);
+            const texel = Art.groundTexel(mat, wx, wy, map, lod);
             // Slope shading: the dot of the surface normal with the key direction. This is what
             // makes hills read as hills rather than as a painted gradient.
             const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
-            const base = (texel & 0x0f) + sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
-            const ramp = texel & 0xf0;
+            const light = sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
             for (let y = top; y < ybuf; y++) {
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+              buf[y * W + px] = (fog > t && skyBand)
+                ? skyBand[y - VIEW.y]
+                : Core.shade(texel & 0xf0, (texel & 0x0f) + light);
             }
             ybuf = top;
+          }
+
+          // Dungeon ceiling, filled DOWNWARD from the top of the column.
+          if (dungeon) {
+            const yC = (horizon + (eyeZ - CEIL) * invD) | 0;
+            const bot = yC > ybuf ? ybuf : yC;
+            if (bot > ytop) {
+              const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
+              const light = dungeonLight(cam, wx, wy, map) - 4;
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = Core.shade(ct & 0xf0, (ct & 0x0f) + light);
+              ytop = bot;
+            }
           }
         }
 
@@ -284,21 +303,23 @@ const Engine = (() => {
           const top = yT < VIEW.y ? VIEW.y : yT;
           if (top < ybuf) {
             // Wall u from whichever axis this face is more aligned to.
-            const u = Math.abs(dx) > Math.abs(dy) ? (wy - cy) : (wx - cx);
+            // u must run the same way on both faces of an axis, or adjacent walls mirror into a
+            // chevron. Flip on the far side so the texture reads continuously around a corner.
             const face = Math.abs(dx) > Math.abs(dy) ? 1 : 0;
-            const texel = Art.wallTexel(mat, u, 0, face);
-            const ramp = texel & 0xf0;
-            const baseShade = (texel & 0x0f) + sun - (face ? 1 : 0) +
-              (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
-            const span = topH - gh;
+            let u = face ? (wy - cy) : (wx - cx);
+            if (face ? dx > 0 : dy < 0) u = 1 - u;
+            const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const lod = Art.lodFor(dist);
             for (let y = top; y < ybuf; y++) {
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
               if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
-              const tx = Art.wallTexel(mat, u, v, face);
-              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + baseShade - (texel & 0x0f));
+              const tx = Art.wallTexel(mat, u, v, face, lod);
+              // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
+              // cancelled the global sun term, which is why night came out brighter than noon.
+              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + lightDelta);
             }
             ybuf = top;
           }
@@ -313,18 +334,23 @@ const Engine = (() => {
           const yHi = (horizon + (eyeZ - sp.hi) * invD) | 0;
           const yLo = (horizon + (eyeZ - sp.lo) * invD) | 0;
           let a = yHi < VIEW.y ? VIEW.y : yHi;
-          let b = yLo > ybuf ? ybuf : yLo;
+          let b = yLo > VIEW.y + VIEW.h ? VIEW.y + VIEW.h : yLo;
+          // NOT clipped to ybuf. A bridge deck or a gate arch sits in rows the ground pass has
+          // already filled, and clipping to the ground marker erases exactly the thing overhead
+          // spans exist to draw. ARCHITECTURE.md §6.2 predicted this in writing.
           if (b > a) {
-            const texel = Art.wallTexel(sp.tex, (wx - cx), 0, 0);
-            const ramp = texel & 0xf0;
-            const base = (texel & 0x0f) + sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const spanLight = sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const spanLod = Art.lodFor(dist);
             for (let y = a; y < b; y++) {
               // Skip rows an earlier, nearer band already claimed.
               let taken = false;
               for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
               if (taken) continue;
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
+              const wh = eyeZ - (y - horizon) / invD;
+              const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
+              buf[y * W + px] = Core.shade(stx & 0xf0, (stx & 0x0f) + spanLight);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -341,7 +367,10 @@ const Engine = (() => {
   function dungeonLight(cam, wx, wy, map) {
     const d = Math.hypot(wx - cam.x, wy - cam.y);
     const radius = cam.torch || 7.5;
-    return Math.round(clamp(1 - d / radius, 0, 1) * 9) - 2;
+    // A torch POOL: bright at the party's feet, near black at the edge of the radius. The previous
+    // curve floored at -2, which left a whole dungeon evenly lit and blew s15 to 218/255 mean.
+    const t = clamp(1 - d / radius, 0, 1);
+    return Math.round(t * t * 14) - 14;
   }
 
   // ---------------------------------------------------------------- sprites

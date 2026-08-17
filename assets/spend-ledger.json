@@ -143,7 +143,91 @@
       "op": "image:gpt-image-2",
       "credits": 9,
       "note": "Seamless tiling volcanic ash texture fro"
+    },
+    {
+      "n": 25,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A wiry goblin archer, green skin, short "
+    },
+    {
+      "n": 26,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling shallow water texture fr"
+    },
+    {
+      "n": 27,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ec9-ee08-717b-b339-26e42abf2fae"
+    },
+    {
+      "n": 28,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling town square paving textu"
+    },
+    {
+      "n": 29,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling crypt floor texture from"
+    },
+    {
+      "n": 30,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A lean grey wolf, thick shoulder ruff, h"
+    },
+    {
+      "n": 31,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ecc-3de9-7ac0-88e3-b63c911f4153"
+    },
+    {
+      "n": 32,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling wooden floorboard textur"
+    },
+    {
+      "n": 33,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling bare rock ground texture"
+    },
+    {
+      "n": 34,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A human bandit in a hooded leather jerki"
+    },
+    {
+      "n": 35,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ecd-f7e7-722c-a051-f5285ebaecf4"
+    },
+    {
+      "n": 36,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A bandit captain in studded leather and "
+    },
+    {
+      "n": 37,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ecf-e0e6-72a3-bd0f-facc4f4f39c9"
+    },
+    {
+      "n": 38,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An animated skeleton warrior, bare yello"
     }
   ],
-  "spent": 207
+  "spent": 317
 }

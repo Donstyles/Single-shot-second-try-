@@ -165,12 +165,62 @@ const Art = (() => {
     return t;
   }
 
+  // ---------------------------------------------------------------- mips
+  // Box-filtered pyramid, built lazily per texture. Averaging PALETTE INDICES is meaningless, so
+  // each level averages the RGB the indices stand for and re-quantises through the same palette.
+  const MIPS = new Map();
+
+  function mipsFor(mat) {
+    let m = MIPS.get(mat);
+    if (m) return m;
+    const base = texFor(mat);
+    const S = base.size || TS;
+    m = [base];
+    let cur = base, size = S;
+    while (size > 8) {
+      const half = size >> 1;
+      const next = new Uint8Array(half * half);
+      for (let y = 0; y < half; y++) {
+        for (let x = 0; x < half; x++) {
+          let r = 0, g = 0, b = 0;
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const pi = cur[(y * 2 + dy) * size + (x * 2 + dx)];
+              r += Core.PAL[pi * 3]; g += Core.PAL[pi * 3 + 1]; b += Core.PAL[pi * 3 + 2];
+            }
+          }
+          next[y * half + x] = Core.palIdx(r >> 2, g >> 2, b >> 2);
+        }
+      }
+      next.size = half;
+      m.push(next);
+      cur = next; size = half;
+    }
+    MIPS.set(mat, m);
+    return m;
+  }
+
+  // Which mip level a sample at this distance should use. Roughly one level per doubling.
+  function lodFor(dist) {
+    if (dist < 6) return 0;
+    if (dist < 12) return 1;
+    if (dist < 24) return 2;
+    if (dist < 48) return 3;
+    return 4;
+  }
+
+  function levelOf(mat, lod) {
+    const m = mipsFor(mat);
+    return m[lod < m.length ? lod : m.length - 1];
+  }
+
   // Baked textures are indexed PNGs decoded at boot. They REPLACE the procedural version for that
   // material and nothing else in the engine changes — which is the whole point of routing every
   // texel through texFor().
   function installBaked(mat, indices, size) {
     BAKED[mat] = indices;
     BAKED[mat].size = size;
+    MIPS.delete(mat);   // a stale pyramid would keep showing the procedural texture at distance
   }
 
   // Decode every embedded texture. Index recovery works because the build writes the game palette
@@ -201,23 +251,23 @@ const Art = (() => {
   const texSize = (t) => t.size || TS;
 
   // ---- the two functions the march calls in its innermost loop
-  function groundTexel(mat, wx, wy, map) {
-    const t = texFor(mat);
-    const S = texSize(t), Mk = S - 1;
-    // One tile per world cell. Two cells per tile made a single blade of grass a metre across;
-    // texture scale is a WORLD measurement, not a convenience.
-    const u = ((wx * 2 * S) | 0) & Mk;
-    const v = ((wy * 2 * S) | 0) & Mk;
+  // Texture scale is a WORLD measurement: two tiles per cell on the ground, one per storey on a
+  // wall. `lod` picks the mip so distant samples do not alias into same-scale noise.
+  function groundTexel(mat, wx, wy, map, lod) {
+    const t = levelOf(mat, lod || 0);
+    const S = t.size || TS, Mk = S - 1;
+    const u = (((wx * 2 * S) | 0) + (S << 6)) & Mk;
+    const v = (((wy * 2 * S) | 0) + (S << 6)) & Mk;
     return t[v * S + u];
   }
 
-  function wallTexel(mat, u, v, face) {
-    const t = texFor(mat);
-    const S = texSize(t), Mk = S - 1;
+  function wallTexel(mat, u, v, face, lod) {
+    const t = levelOf(mat, lod || 0);
+    const S = t.size || TS, Mk = S - 1;
     // `& Mk` on a negative value does not wrap the way a modulo would, and v goes negative above
     // the party's eye line. Bias into positive space first.
-    const ui = (((u * S) | 0) + (S << 4)) & Mk;
-    const vi = (((v * S) | 0) + (S << 4)) & Mk;
+    const ui = (((u * S) | 0) + (S << 6)) & Mk;
+    const vi = (((v * S) | 0) + (S << 6)) & Mk;
     return t[vi * S + ui];
   }
 
@@ -334,6 +384,7 @@ const Art = (() => {
     TS, FONT, CH_W, CH_H,
     text, textShadow, textCentred, textWidth,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
+    mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
     panel, button, gameFrame, bar, step,
     get tick() { return tick; },

@@ -2060,6 +2060,10 @@ const World = (() => {
       forge: MAT.obsidian, ice: MAT.ice, keep: MAT.marble }[d.theme] || MAT.stonewall;
     const floorMat = { crypt: MAT.tile, cave: MAT.gravel, mine: MAT.dirt,
       forge: MAT.ash, ice: MAT.snow, keep: MAT.marble }[d.theme] || MAT.tile;
+    // A ceiling distinct from BOTH floor and wall. Without three separable values a corridor is a
+    // grey rectangle with no silhouette at all.
+    m.ceilMat = { crypt: MAT.obsidian, cave: MAT.obsidian, mine: MAT.timberwall,
+      forge: MAT.obsidian, ice: MAT.ice, keep: MAT.obsidian }[d.theme] || MAT.obsidian;
 
     m.cells.fill(wallMat | SOLID);
     m.storeys.fill(1);
@@ -2091,6 +2095,17 @@ const World = (() => {
       while (y !== y1) { m.cells[y * d.w + x] = floorMat; y += Math.sign(y1 - y); }
       m.cells[y * d.w + x] = floorMat;
     };
+    // A SPINE corridor along y=9, entrance to far wall. Two reasons: a dungeon of rooms joined by
+    // dogleg corridors has no long sightline anywhere, which is why s13 framed a wall two cells
+    // from the camera; and a spine is simply better dungeon design than a shapeless mesh.
+    const SPINE_Y = 9;
+    for (let x = 2; x < d.w - 2; x++) m.cells[SPINE_Y * d.w + x] = floorMat;
+    for (const r of rooms) {
+      // Every room hangs off the spine, so nothing is reachable only through a chain of others.
+      let y = r.cy;
+      const step = Math.sign(SPINE_Y - r.cy);
+      while (y !== SPINE_Y) { m.cells[y * d.w + r.cx] = floorMat; y += step; }
+    }
     for (let i = 1; i < rooms.length; i++) carve(rooms[i - 1].cx, rooms[i - 1].cy, rooms[i].cx, rooms[i].cy);
     for (let i = 0; i < 3 && rooms.length > 3; i++) {
       const a = rng.pick(rooms), b = rng.pick(rooms);
@@ -2415,6 +2430,7 @@ const Engine = (() => {
   // that. Everything below exists to make the ground itself have shape.
 
   const STOREY = 3.20;
+  const CEIL = 3.20;          // dungeon ceiling height
   const EYE = 1.30;
   const MAX_STEPS = 150;
 
@@ -2473,12 +2489,13 @@ const Engine = (() => {
       const dx = rdx / rl, dy = rdy / rl;
 
       let ybuf = VIEW.y + VIEW.h;       // filled upward from the bottom of the viewport
+      let ytop = VIEW.y;                // and DOWNWARD from the top, for dungeon ceilings
       let nBands = 0;
       let dist = 0.30;
       let step = dungeon ? 0.035 : 0.055;
       zb[px] = 1e9;
 
-      for (let s = 0; s < MAX_STEPS && ybuf > VIEW.y; s++) {
+      for (let s = 0; s < MAX_STEPS && ybuf > ytop; s++) {
         // Step size grows with distance: ~150 steps then reach ~200 cells, and far detail collapses
         // into haze exactly where we want it anyway.
         dist += step;
@@ -2502,7 +2519,7 @@ const Engine = (() => {
         const fogRow = (sx & 7) * 8;
         // Break the Bayer lattice: without this the threshold is periodic in screen space and a
         // large evenly-fogged face reads as a visible grid rather than as haze.
-        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512 - 0.03;
+        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512;
 
         // ---- ground / water surface
         const yG = (horizon + (eyeZ - gh) * invD) | 0;
@@ -2512,17 +2529,34 @@ const Engine = (() => {
           const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
           const top = yS < VIEW.y ? VIEW.y : yS;
           if (top < ybuf) {
-            const texel = Art.groundTexel(mat, wx, wy, map);
+            // Distance LOD. Without it the far ground point-samples a high-frequency texture and
+            // aliases into noise of the SAME apparent scale as the foreground, which reads as a
+            // vertical curtain rather than a receding plane.
+            const lod = Art.lodFor(dist);
+            const texel = Art.groundTexel(mat, wx, wy, map, lod);
             // Slope shading: the dot of the surface normal with the key direction. This is what
             // makes hills read as hills rather than as a painted gradient.
             const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
-            const base = (texel & 0x0f) + sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
-            const ramp = texel & 0xf0;
+            const light = sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
             for (let y = top; y < ybuf; y++) {
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+              buf[y * W + px] = (fog > t && skyBand)
+                ? skyBand[y - VIEW.y]
+                : Core.shade(texel & 0xf0, (texel & 0x0f) + light);
             }
             ybuf = top;
+          }
+
+          // Dungeon ceiling, filled DOWNWARD from the top of the column.
+          if (dungeon) {
+            const yC = (horizon + (eyeZ - CEIL) * invD) | 0;
+            const bot = yC > ybuf ? ybuf : yC;
+            if (bot > ytop) {
+              const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
+              const light = dungeonLight(cam, wx, wy, map) - 4;
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = Core.shade(ct & 0xf0, (ct & 0x0f) + light);
+              ytop = bot;
+            }
           }
         }
 
@@ -2535,21 +2569,23 @@ const Engine = (() => {
           const top = yT < VIEW.y ? VIEW.y : yT;
           if (top < ybuf) {
             // Wall u from whichever axis this face is more aligned to.
-            const u = Math.abs(dx) > Math.abs(dy) ? (wy - cy) : (wx - cx);
+            // u must run the same way on both faces of an axis, or adjacent walls mirror into a
+            // chevron. Flip on the far side so the texture reads continuously around a corner.
             const face = Math.abs(dx) > Math.abs(dy) ? 1 : 0;
-            const texel = Art.wallTexel(mat, u, 0, face);
-            const ramp = texel & 0xf0;
-            const baseShade = (texel & 0x0f) + sun - (face ? 1 : 0) +
-              (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
-            const span = topH - gh;
+            let u = face ? (wy - cy) : (wx - cx);
+            if (face ? dx > 0 : dy < 0) u = 1 - u;
+            const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const lod = Art.lodFor(dist);
             for (let y = top; y < ybuf; y++) {
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
               if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
-              const tx = Art.wallTexel(mat, u, v, face);
-              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + baseShade - (texel & 0x0f));
+              const tx = Art.wallTexel(mat, u, v, face, lod);
+              // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
+              // cancelled the global sun term, which is why night came out brighter than noon.
+              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + lightDelta);
             }
             ybuf = top;
           }
@@ -2564,18 +2600,23 @@ const Engine = (() => {
           const yHi = (horizon + (eyeZ - sp.hi) * invD) | 0;
           const yLo = (horizon + (eyeZ - sp.lo) * invD) | 0;
           let a = yHi < VIEW.y ? VIEW.y : yHi;
-          let b = yLo > ybuf ? ybuf : yLo;
+          let b = yLo > VIEW.y + VIEW.h ? VIEW.y + VIEW.h : yLo;
+          // NOT clipped to ybuf. A bridge deck or a gate arch sits in rows the ground pass has
+          // already filled, and clipping to the ground marker erases exactly the thing overhead
+          // spans exist to draw. ARCHITECTURE.md §6.2 predicted this in writing.
           if (b > a) {
-            const texel = Art.wallTexel(sp.tex, (wx - cx), 0, 0);
-            const ramp = texel & 0xf0;
-            const base = (texel & 0x0f) + sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const spanLight = sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const spanLod = Art.lodFor(dist);
             for (let y = a; y < b; y++) {
               // Skip rows an earlier, nearer band already claimed.
               let taken = false;
               for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
               if (taken) continue;
               const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
+              const wh = eyeZ - (y - horizon) / invD;
+              const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
+              buf[y * W + px] = Core.shade(stx & 0xf0, (stx & 0x0f) + spanLight);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -2592,7 +2633,10 @@ const Engine = (() => {
   function dungeonLight(cam, wx, wy, map) {
     const d = Math.hypot(wx - cam.x, wy - cam.y);
     const radius = cam.torch || 7.5;
-    return Math.round(clamp(1 - d / radius, 0, 1) * 9) - 2;
+    // A torch POOL: bright at the party's feet, near black at the edge of the radius. The previous
+    // curve floored at -2, which left a whole dungeon evenly lit and blew s15 to 218/255 mean.
+    const t = clamp(1 - d / radius, 0, 1);
+    return Math.round(t * t * 14) - 14;
   }
 
   // ---------------------------------------------------------------- sprites
@@ -2834,12 +2878,62 @@ const Art = (() => {
     return t;
   }
 
+  // ---------------------------------------------------------------- mips
+  // Box-filtered pyramid, built lazily per texture. Averaging PALETTE INDICES is meaningless, so
+  // each level averages the RGB the indices stand for and re-quantises through the same palette.
+  const MIPS = new Map();
+
+  function mipsFor(mat) {
+    let m = MIPS.get(mat);
+    if (m) return m;
+    const base = texFor(mat);
+    const S = base.size || TS;
+    m = [base];
+    let cur = base, size = S;
+    while (size > 8) {
+      const half = size >> 1;
+      const next = new Uint8Array(half * half);
+      for (let y = 0; y < half; y++) {
+        for (let x = 0; x < half; x++) {
+          let r = 0, g = 0, b = 0;
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const pi = cur[(y * 2 + dy) * size + (x * 2 + dx)];
+              r += Core.PAL[pi * 3]; g += Core.PAL[pi * 3 + 1]; b += Core.PAL[pi * 3 + 2];
+            }
+          }
+          next[y * half + x] = Core.palIdx(r >> 2, g >> 2, b >> 2);
+        }
+      }
+      next.size = half;
+      m.push(next);
+      cur = next; size = half;
+    }
+    MIPS.set(mat, m);
+    return m;
+  }
+
+  // Which mip level a sample at this distance should use. Roughly one level per doubling.
+  function lodFor(dist) {
+    if (dist < 6) return 0;
+    if (dist < 12) return 1;
+    if (dist < 24) return 2;
+    if (dist < 48) return 3;
+    return 4;
+  }
+
+  function levelOf(mat, lod) {
+    const m = mipsFor(mat);
+    return m[lod < m.length ? lod : m.length - 1];
+  }
+
   // Baked textures are indexed PNGs decoded at boot. They REPLACE the procedural version for that
   // material and nothing else in the engine changes — which is the whole point of routing every
   // texel through texFor().
   function installBaked(mat, indices, size) {
     BAKED[mat] = indices;
     BAKED[mat].size = size;
+    MIPS.delete(mat);   // a stale pyramid would keep showing the procedural texture at distance
   }
 
   // Decode every embedded texture. Index recovery works because the build writes the game palette
@@ -2870,23 +2964,23 @@ const Art = (() => {
   const texSize = (t) => t.size || TS;
 
   // ---- the two functions the march calls in its innermost loop
-  function groundTexel(mat, wx, wy, map) {
-    const t = texFor(mat);
-    const S = texSize(t), Mk = S - 1;
-    // One tile per world cell. Two cells per tile made a single blade of grass a metre across;
-    // texture scale is a WORLD measurement, not a convenience.
-    const u = ((wx * 2 * S) | 0) & Mk;
-    const v = ((wy * 2 * S) | 0) & Mk;
+  // Texture scale is a WORLD measurement: two tiles per cell on the ground, one per storey on a
+  // wall. `lod` picks the mip so distant samples do not alias into same-scale noise.
+  function groundTexel(mat, wx, wy, map, lod) {
+    const t = levelOf(mat, lod || 0);
+    const S = t.size || TS, Mk = S - 1;
+    const u = (((wx * 2 * S) | 0) + (S << 6)) & Mk;
+    const v = (((wy * 2 * S) | 0) + (S << 6)) & Mk;
     return t[v * S + u];
   }
 
-  function wallTexel(mat, u, v, face) {
-    const t = texFor(mat);
-    const S = texSize(t), Mk = S - 1;
+  function wallTexel(mat, u, v, face, lod) {
+    const t = levelOf(mat, lod || 0);
+    const S = t.size || TS, Mk = S - 1;
     // `& Mk` on a negative value does not wrap the way a modulo would, and v goes negative above
     // the party's eye line. Bias into positive space first.
-    const ui = (((u * S) | 0) + (S << 4)) & Mk;
-    const vi = (((v * S) | 0) + (S << 4)) & Mk;
+    const ui = (((u * S) | 0) + (S << 6)) & Mk;
+    const vi = (((v * S) | 0) + (S << 6)) & Mk;
     return t[vi * S + ui];
   }
 
@@ -3003,6 +3097,7 @@ const Art = (() => {
     TS, FONT, CH_W, CH_H,
     text, textShadow, textCentred, textWidth,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
+    mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
     panel, button, gameFrame, bar, step,
     get tick() { return tick; },
@@ -3473,11 +3568,21 @@ const UI = (() => {
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
     const lw = 636 - lx - 118;
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
-    const lines = Core.Log.tail(4);
-    lines.forEach((l, i) => {
+    // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
+    const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
+    const wrapped = [];
+    for (const l of Core.Log.tail(6)) {
       const c = l.kind === 'hit' ? Core.idx(11, 12) : l.kind === 'good' ? Core.idx(6, 12)
         : l.kind === 'sys' ? Core.idx(9, 11) : Core.idx(0, 13);
-      Art.text(En, lx + 5, HUD.y + 11 + i * 17, l.text.slice(0, Math.floor((lw - 10) / (Art.CH_W * 2))), c, 2);
+      let line = '';
+      for (const w of String(l.text).split(' ')) {
+        if (line && (line + ' ' + w).length > perLine) { wrapped.push([line, c]); line = w; }
+        else line = line ? line + ' ' + w : w;
+      }
+      if (line) wrapped.push([line, c]);
+    }
+    wrapped.slice(-4).forEach((row, i) => {
+      Art.text(En, lx + 5, HUD.y + 11 + i * 17, row[0], row[1], 2);
     });
 
     // ---- gold, time, place
@@ -3590,9 +3695,9 @@ const UI = (() => {
     const trained = Object.keys(ch.skills).filter((k) => ch.skills[k].mastery > 0);
     trained.slice(0, 12).forEach((k, i) => {
       const cx = f.x + 24 + (i % 3) * 190;
-      const cy = y + Math.floor(i / 3) * 18;
-      Art.text(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl +
-        ' ' + Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 12), 1);
+      const cy = y + Math.floor(i / 3) * 22;
+      Art.text(En, cx, cy, Rules.SKILLS[k].name.slice(0, 9) + ' ' + ch.skills[k].lvl +
+        Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2);
     });
   }
 
@@ -3614,7 +3719,13 @@ const UI = (() => {
       Art.panel(En, x, y, 42, 42, 4, true);
       const it = ch.equip[slot];
       if (it) En.blitScaled(Sprites.icon(it.id), x + 5, y + 5, 32, 32, 0);
-      else Art.text(En, x + 3, y + 17, slot.slice(0, 5), Core.idx(0, 6), 1);
+      else {
+        // Three letters at scale 2 fits a 42px well; five at scale 1 did not and rendered as
+        // garbage like "c nat" and "ufft a".
+        const SHORT = { helm: 'HLM', amulet: 'AMU', armour: 'ARM', cloak: 'CLK', gaunt: 'GNT',
+          weapon: 'WPN', offhand: 'OFF', belt: 'BLT', bow: 'BOW', boots: 'BTS', ring1: 'RNG' };
+        Art.textCentred(En, x + 21, y + 15, SHORT[slot] || slot.slice(0, 3).toUpperCase(), Core.idx(0, 7), 2);
+      }
       reg('equip', x, y, 42, 42, slot);
     }
 
@@ -3660,8 +3771,14 @@ const UI = (() => {
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
       Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
+      if (!on) {
+        // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
+        // were invisible on a phone.
+        En.frameRect(x, y, 96, 34, Core.idx(13, 10));
+      }
       if (cap === 0) {
-        for (let yy = y; yy < y + 34; yy += 2) En.hline(x, yy, 96, Core.idx(0, 2));
+        // Unavailable schools are HATCHED, not dimmed — dim is indistinguishable from unselected.
+        for (let yy = y + 1; yy < y + 33; yy += 3) En.hline(x + 1, yy, 94, Core.idx(0, 3));
       }
       reg('school', x, y, 96, 34, s);
     });
@@ -3686,7 +3803,7 @@ const UI = (() => {
     const En = E();
     const f = screenFrame('MAP — ' + g.map.name.toUpperCase(), 600, 430);
     const m = g.map;
-    const scale = Math.min((f.w - 40) / m.w, (f.h - 70) / m.h);
+    const scale = Math.min((f.w - 40) / m.w, (f.h - 96) / m.h);
     const ox = f.x + ((f.w - m.w * scale) >> 1), oy = f.inner;
 
     for (let y = 0; y < m.h; y++) {
@@ -3711,7 +3828,11 @@ const UI = (() => {
     En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 14));
     En.px(pxp + Math.round(Math.cos(g.party.ang) * 5), pyp + Math.round(Math.sin(g.party.ang) * 5), Core.idx(0, 15));
 
-    Art.text(En, f.x + 20, f.y + f.h - 26, 'Region ' + (World.REGIONS[m.region] ? World.REGIONS[m.region].name : m.name), Core.idx(0, 12), 2);
+    // Legend, because eight unexplained yellow dots in empty brown is not a map.
+    const ly = f.y + f.h - 30;
+    Art.text(En, f.x + 20, ly, (World.REGIONS[m.region] ? World.REGIONS[m.region].name : m.name), Core.idx(2, 13), 2);
+    En.rect(f.x + 300, ly + 2, 10, 10, Core.idx(11, 14)); Art.text(En, f.x + 316, ly, 'YOU', Core.idx(0, 12), 2);
+    En.rect(f.x + 380, ly + 2, 10, 10, Core.idx(13, 14)); Art.text(En, f.x + 396, ly, 'DOOR', Core.idx(0, 12), 2);
   }
 
   function shop(g) {
@@ -3721,7 +3842,7 @@ const UI = (() => {
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
 
-    Art.text(En, f.x + 20, f.inner - 14, 'Your gold: ' + g.party.gold, Core.idx(13, 13), 2);
+    Art.text(En, f.x + 20, f.inner + 2, 'Your gold: ' + g.party.gold, Core.idx(13, 14), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -3764,7 +3885,7 @@ const UI = (() => {
 
     // Goods shops.
     stock.forEach((st, i) => {
-      const x = f.x + 20 + (i % 2) * 280, y = f.inner + Math.floor(i / 2) * 54;
+      const x = f.x + 20 + (i % 2) * 280, y = f.inner + 24 + Math.floor(i / 2) * 54;
       if (y > f.y + f.h - 80) return;
       const price = Rules.buyPrice(Items.value(st), ch);
       const afford = g.party.gold >= price;
@@ -3851,7 +3972,7 @@ const UI = (() => {
     reg('newgame', 200, 250, 240, 56, 1);
     Art.button(En, 200, 316, 240, 56, 'CONTINUE', false, 3);
     reg('continue', 200, 316, 240, 56, 1);
-    Art.textCentred(En, 320, 452, 'nine regions  ·  thirteen dungeons', Core.idx(0, 11), 1);
+    Art.textCentred(En, 320, 444, 'THE ROAD ENDS AT THE KEEP', Core.idx(13, 10), 2);
   }
 
   function creation(g) {

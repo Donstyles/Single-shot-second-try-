@@ -630,6 +630,10 @@ const World = (() => {
       forge: MAT.obsidian, ice: MAT.ice, keep: MAT.marble }[d.theme] || MAT.stonewall;
     const floorMat = { crypt: MAT.tile, cave: MAT.gravel, mine: MAT.dirt,
       forge: MAT.ash, ice: MAT.snow, keep: MAT.marble }[d.theme] || MAT.tile;
+    // A ceiling distinct from BOTH floor and wall. Without three separable values a corridor is a
+    // grey rectangle with no silhouette at all.
+    m.ceilMat = { crypt: MAT.obsidian, cave: MAT.obsidian, mine: MAT.timberwall,
+      forge: MAT.obsidian, ice: MAT.ice, keep: MAT.obsidian }[d.theme] || MAT.obsidian;
 
     m.cells.fill(wallMat | SOLID);
     m.storeys.fill(1);
@@ -661,6 +665,17 @@ const World = (() => {
       while (y !== y1) { m.cells[y * d.w + x] = floorMat; y += Math.sign(y1 - y); }
       m.cells[y * d.w + x] = floorMat;
     };
+    // A SPINE corridor along y=9, entrance to far wall. Two reasons: a dungeon of rooms joined by
+    // dogleg corridors has no long sightline anywhere, which is why s13 framed a wall two cells
+    // from the camera; and a spine is simply better dungeon design than a shapeless mesh.
+    const SPINE_Y = 9;
+    for (let x = 2; x < d.w - 2; x++) m.cells[SPINE_Y * d.w + x] = floorMat;
+    for (const r of rooms) {
+      // Every room hangs off the spine, so nothing is reachable only through a chain of others.
+      let y = r.cy;
+      const step = Math.sign(SPINE_Y - r.cy);
+      while (y !== SPINE_Y) { m.cells[y * d.w + r.cx] = floorMat; y += step; }
+    }
     for (let i = 1; i < rooms.length; i++) carve(rooms[i - 1].cx, rooms[i - 1].cy, rooms[i].cx, rooms[i].cy);
     for (let i = 0; i < 3 && rooms.length > 3; i++) {
       const a = rng.pick(rooms), b = rng.pick(rooms);
