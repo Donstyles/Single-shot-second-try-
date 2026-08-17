@@ -130,6 +130,22 @@ const Core = (() => {
   ];
 
   const PAL = new Uint8Array(256 * 3);
+  // ONE SHADOW TERMINUS for the whole palette.
+  //
+  // Every ramp used to end at its own saturated near-black: sixteen of them, luminance 11 to 29,
+  // saturation 0.08 to 0.95. An art critic measured the consequence twice over. First, "five
+  // mutually incompatible families of near-black in circulation across the set, fifteen distinct
+  // values below L=32 — a 256-colour art department in 1998 shared one shadow terminus so that
+  // shadows in the mine and shadows in the barrow sat on the same floor." Second, and worse: night
+  // came out MORE saturated than day (viewport saturation ratio 1.399, sky +64%), because shading
+  // a colour DOWN its ramp drove it toward a highly saturated dark point. A night pass that raises
+  // chroma as it lowers luminance is backwards, and no amount of tinting on top repairs it.
+  //
+  // Blending each ramp's dark end most of the way to a shared cool near-black fixes both at the
+  // source, and gives dungeons somewhere to recede INTO rather than a flat hole.
+  const TERMINUS = [13, 13, 14];
+  const TERMINUS_PULL = 0.72;
+
   (function buildPalette() {
     for (let r = 0; r < 16; r++) {
       const spec = RAMPS[r];
@@ -147,6 +163,16 @@ const Core = (() => {
         } else {
           c = [lerp(dark[0], light[0], t), lerp(dark[1], light[1], t), lerp(dark[2], light[2], t)];
         }
+        // Pull the WHOLE dark half toward the shared terminus, strongest at the bottom and gone by
+        // the midpoint. Doing it only at shade 0 left the saturation inversion intact, because
+        // night lands in the lower MIDDLE of a ramp, which is exactly where chroma peaks.
+        // Across the WHOLE ramp, strongest at the bottom. Confining it to the dark half left the
+        // inversion intact: relative saturation is (max-min)/max, so as luminance falls the same
+        // absolute chroma reads as MORE saturated. Only pulling actual chroma out of the lower two
+        // thirds of every ramp turns that around, and the highlights keep their colour because the
+        // curve has fallen to almost nothing by the time it reaches them.
+        const k = TERMINUS_PULL * Math.pow(1 - t, 2.0);
+        c = [lerp(c[0], TERMINUS[0], k), lerp(c[1], TERMINUS[1], k), lerp(c[2], TERMINUS[2], k)];
         const i = ((r << 4) | s) * 3;
         PAL[i] = c[0] | 0; PAL[i + 1] = c[1] | 0; PAL[i + 2] = c[2] | 0;
       }

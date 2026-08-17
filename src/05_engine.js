@@ -239,8 +239,9 @@ const Engine = (() => {
   // The one legitimate use of the Bayer matrix that survives: dithering the fog PARAMETER between
   // two adjacent LUT steps, so a slow gradient does not band. This dithers the blend; it does not
   // punch holes in the image.
-  function fogShade(texel, light, fog, band, y, fogRow, fogJit, phase) {
-    const pi = Core.shade(texel & 0xf0, (texel & 0x0f) + light);
+  function fogShade(texel, light, fog, band, y, fogRow, fogJit, phase, nightLut, nightQ) {
+    let pi = Core.shade(texel & 0xf0, (texel & 0x0f) + light);
+    if (nightLut) pi = nightLut[pi * FOG_STEPS + nightQ];
     if (!band || fog <= 0.01) return pi;
     // The band is 8 wide, dithered; a fogged surface must sample the SAME column phase as the sky
     // it is fading into, or a far object straddling a former band seam fogs to two colours.
@@ -294,6 +295,22 @@ const Engine = (() => {
     // what makes inside feel like inside." Indoors the torch pool is the only light there is.
     const sun = dungeon ? 0 : (Art.sunShade ? Art.sunShade(light) : 0);
     const fogStart = map.fogStart, fogEnd = map.fogEnd;
+    // A NIGHT MIX, not just a night multiply. Shading down a ramp lowers luminance but keeps chroma
+    // in proportion, and relative saturation is (max-min)/max — so darkening alone makes a scene
+    // read as MORE saturated, which is what a critic measured twice (viewport ratio 1.399, sky
+    // +64%). Real night is low-chroma and cool. Blending every surface a little way toward the sky
+    // does that, and it costs nothing: it reuses the fog LUT, which is already a true colour blend
+    // toward exactly this target and already cached.
+    // Toward a NEUTRAL SLATE, never toward the sky. The first attempt reused the sky band as the
+    // night target and made the measurement worse (1.212 -> 1.302), because a night sky is itself a
+    // saturated blue — blending into it ADDS chroma. Night is the absence of colour, so the target
+    // is a low-chroma cool grey and nothing else.
+    const nightMix = dungeon ? 0 : Math.max(0, Math.min(0.55, (-sun) * 0.19));
+    const nightQ = Math.round(nightMix * (FOG_STEPS - 1));
+    // Ramp 0, low. The first "slate" was ramp 1 shade 2 — cold stone — which measures 24%
+    // saturated, so blending toward it ADDED chroma and drove the cobble ratio from 1.22 to 1.50.
+    // The night target has to be genuinely neutral or it is just another colour cast.
+    const nightLut = nightMix > 0.01 ? fogLut(Core.idx(0, 3)) : null;
 
     for (let sx = 0; sx < VIEW.w; sx++) {
       const px = VIEW.x + sx;
@@ -383,7 +400,7 @@ const Engine = (() => {
               // foreground, which is the other half of why it read as a vertical curtain.
               const texel = Art.groundTexel(mat, rx, ry, map, Art.lodFor(rd));
               const rfog = clamp((rd - fogStart) / fogSpan, 0, 1);
-              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit, sx & 7);
+              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             ybuf = top;
           }
@@ -395,7 +412,7 @@ const Engine = (() => {
             if (bot > ytop) {
               const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
               const light = dungeonLight(cam, wx, wy, map) - 4;
-              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit, sx & 7);
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
               ytop = bot;
             }
           }
@@ -435,7 +452,7 @@ const Engine = (() => {
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7);
+              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             ybuf = top;
           }
@@ -464,7 +481,7 @@ const Engine = (() => {
               if (taken) continue;
               const wh = eyeZ - (y - horizon) / invD;
               const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
-              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit, sx & 7);
+              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -486,8 +503,13 @@ const Engine = (() => {
     // Floor at -11, not -14. A first quest into a barrow the party could not see AT ALL — black
     // at midnight and black at noon — is a dead end, not atmosphere. Dark enough that a torch is
     // worth carrying; light enough that the walls exist without one.
+    // Floor at -8, not -11. Everything past the torch clamped to shade 0 and became one flat value:
+    // 43.6% of a barrow shot measured as the EXACT colour (24,24,26), with the largest connected
+    // blob at 43,907 pixels. A wall you cannot see is fine; a wall that is a hole punched in the
+    // frame is not. Landing far texels across shades 0-3 instead of all on 0 lets the corridor
+    // recede, and the palette's shared shadow terminus gives it somewhere to recede to.
     const t = clamp(1 - d / radius, 0, 1);
-    return Math.round(t * t * 13) - 11;
+    return Math.round(t * t * 11) - 8;
   }
 
   // ---------------------------------------------------------------- sprites
