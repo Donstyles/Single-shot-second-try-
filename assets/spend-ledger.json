@@ -419,7 +419,19 @@
       "op": "mesh:preview",
       "credits": 5,
       "note": "A giant sewer rat the size of a dog, mat"
+    },
+    {
+      "n": 71,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A blacksmith in a heavy leather apron, b"
+    },
+    {
+      "n": 72,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef5-4c93-7613-b845-5feb33e12e15"
     }
   ],
-  "spent": 557
+  "spent": 572
 }
