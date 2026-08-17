@@ -648,12 +648,15 @@ const World = (() => {
       if (isSolid(c)) continue;
       const mt = matOf(c);
       if (mt === MAT.water || mt === MAT.road || mt === MAT.plaza || mt === MAT.wood) continue;
+      // Nothing scatters INSIDE a settlement. Testing the cell material alone let a full-grown oak
+      // land on the one dirt tile between two market stalls, where it filled the middle of the
+      // town's flagship shot with a trunk. A town is built ground; whatever grows there was planted.
+      if (town && Math.hypot(x - town.cx, y - town.cy) < (r.townSize === 'city' ? 16 : 12)) continue;
       const h = H(m, x, y);
       if (h < r.sea + 0.3) continue;
       m.decor.push({ kind: rng.chance(0.82) ? treeKind : rng.pick(['rock', 'bush', 'stump']), x, y, z: h });
     }
 
-    // Monster spawn points, kept off roads and away from the settlement.
     // Monster spawn points, kept off roads and out of the settlement. The safe radius used to be
     // 34 cells, which on a 128-cell region is most of the walk a new player ever takes: a cold
     // tester spent fifteen minutes and "never met a single enemy, never fought anything, never saw
@@ -814,6 +817,20 @@ const World = (() => {
         if (!dirX && !dirY) continue;
         landmark(m, 'road', x - dirX * 5, y - dirY * 5, Math.atan2(dirY, dirX));
         break;
+      }
+    }
+
+    // AUTHORED OVERRIDE, APPLIED LAST — ARCHITECTURE.md's rule, and this is exactly what it is for.
+    // Every road out of town and every dirt track to a dungeon is drawn FROM the fountain, so three
+    // or four of them crossed the plaza and repainted it as bare earth: the town's flagship shot
+    // showed a market row standing on a mud crossroads. Roads still grade the terrain through the
+    // square (removing that stranded the party behind an unclimbable lip and the campaign test
+    // caught it within a minute) — they just do not get to keep the surface.
+    if (town) {
+      for (let y = town.cy - town.plazaR; y <= town.cy + town.plazaR; y++) {
+        for (let x = town.cx - town.plazaR; x <= town.cx + town.plazaR; x++) {
+          if (inb(m, x, y) && !isSolid(m.cells[y * RW + x])) m.cells[y * RW + x] = MAT.plaza;
+        }
       }
     }
 

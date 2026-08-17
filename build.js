@@ -75,7 +75,7 @@ function build() {
     -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
     -webkit-tap-highlight-color:transparent;touch-action:none;overscroll-behavior:none}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
-  /* The framebuffer is 640x480. Scale to fit, nearest-neighbour, never smoothed:
+  /* The framebuffer is 800x480 (5:3, chosen to fill a landscape phone). Scale to fit, nearest-neighbour, never smoothed:
      a bilinear upscale destroys the palettised look more thoroughly than any art mistake. */
   canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block;
     -ms-interpolation-mode:nearest-neighbor}
@@ -85,7 +85,7 @@ function build() {
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="fb" width="640" height="480"></canvas></div>
+<div id="wrap"><canvas id="fb" width="800" height="480"></canvas></div>
 <div id="rot">Rotate your device to landscape.</div>
 <script>
 "use strict";

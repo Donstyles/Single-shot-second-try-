@@ -4,7 +4,7 @@
 // GLUE CALLS RULES. Nothing here computes a price, a hit chance or a max HP; it asks Rules. If a
 // formula appears in this file it is a bug by definition.
 //
-// Sized for touch. The framebuffer is 640x480 letterboxed to 520x390 on an iPhone 14 Pro Max in
+// Sized for touch. The framebuffer is 800x480 letterboxed to 650x390 on an iPhone 14 Pro Max in
 // landscape, so a 44pt finger target is roughly 54 framebuffer pixels. Every tappable thing below
 // is at least that, and text is drawn at scale 2 by default because scale 1 is unreadable on glass.
 
@@ -26,14 +26,14 @@ const UI = (() => {
     return null;
   }
 
-  const HUD = { x: 0, y: 352, w: 640, h: 128 };
+  const HUD = { x: 0, y: 352, w: 800, h: 128 };
   const PORTRAIT = { w: 72, h: 88, y: 358, pitch: 78, x0: 6 };
 
   // ---------------------------------------------------------------- hud
   function drawHUD(g, interactive) {
     const En = E();
     Art.panel(En, HUD.x, HUD.y, HUD.w, HUD.h, 13, true);
-    En.hline(0, HUD.y, 640, Core.idx(13, 11));
+    En.hline(0, HUD.y, En.W, Core.idx(13, 11));
 
     // ---- party portraits
     g.party.members.forEach((ch, i) => {
@@ -115,7 +115,7 @@ const UI = (() => {
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
     // possible way to read as placeholder tooling, and "MNU" is a debug string.
-    const BX = 640 - 114, BW = 54, BH = 36;
+    const BX = En.W - 118, BW = 54, BH = 36;
     const btns = ['sheet', 'inv', 'book', 'map', 'rest', 'menu'];
     btns.forEach((id, i) => {
       const bx = BX + (i % 2) * (BW + 4);
@@ -215,7 +215,7 @@ const UI = (() => {
 
   function screenFrame(title, w, h) {
     const En = E();
-    const x = (640 - w) >> 1, y = (480 - h) >> 1;
+    const x = (E().W - w) >> 1, y = (E().H - h) >> 1;
     Art.panel(En, x, y, w, h, 13, false);
     Art.panel(En, x + 6, y + 6, w - 12, h - 12, 4, true);
     Art.textCentred(En, 320, y + 14, title, Core.idx(13, 14), 2);
@@ -664,8 +664,8 @@ const UI = (() => {
 
   function defeat(g) {
     const En = E();
-    En.rect(0, 0, 640, 480, Core.idx(0, 1));
-    for (let y = 0; y < 480; y += 2) En.hline(0, y, 640, Core.idx(11, 2));
+    En.rect(0, 0, En.W, En.H, Core.idx(0, 1));
+    for (let y = 0; y < En.H; y += 2) En.hline(0, y, En.W, Core.idx(11, 2));
     Art.panel(En, 90, 130, 460, 220, 13, false);
     Art.textCentred(En, 320, 158, 'YOUR PARTY HAS FALLEN', Core.idx(11, 13), 3);
     Art.textCentred(En, 320, 210, 'The priests of Harrowgate will take you in,', Core.idx(0, 12), 2);
@@ -699,15 +699,15 @@ const UI = (() => {
     const En = E();
     // Vista: sky gradient, a ridge line and the logotype. First impression is a real shot (s22).
     for (let y = 0; y < 480; y++) {
-      En.hline(0, y, 640, Core.shade(9 << 4, clamp(Math.round(3 + y / 480 * 9), 0, 15)));
+      En.hline(0, y, En.W, Core.shade(9 << 4, clamp(Math.round(3 + y / En.H * 9), 0, 15)));
     }
-    for (let x = 0; x < 640; x++) {
+    for (let x = 0; x < En.W; x++) {
       const h = 300 + Math.round(Math.sin(x / 61) * 26 + Math.sin(x / 23) * 12 + World.vnoise(x / 40, 0, 99) * 40);
       for (let y = h; y < 480; y++) {
         En.px(x, y, Core.shade(1 << 4, clamp(6 - Math.round((y - h) / 26), 1, 12)));
       }
     }
-    for (let x = 0; x < 640; x++) {
+    for (let x = 0; x < En.W; x++) {
       const h = 372 + Math.round(Math.sin(x / 37 + 2) * 14 + World.vnoise(x / 26, 7, 31) * 22);
       for (let y = h; y < 480; y++) En.px(x, y, Core.shade(7 << 4, clamp(8 - Math.round((y - h) / 30), 1, 12)));
     }

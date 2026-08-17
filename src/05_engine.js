@@ -11,7 +11,12 @@ const Engine = (() => {
   const { PAL32, shade, clamp } = Core;
 
   // ---------------------------------------------------------------- framebuffer
-  const W = 640, H = 480;
+  // 800x480 (5:3), not 640x480 (4:3). On an iPhone 14 Pro Max in landscape the canvas gets an
+  // 844x390 viewport; a 4:3 framebuffer letterboxes to 520x390 and throws away 324 pixels — 38%
+  // of the screen — as black bar, which a reviewer measured and reported. 5:3 fills 650 of the 844
+  // instead of 520, and the extra width goes to the 3D view, which lands the viewport aspect close
+  // to MM6's own. The cost is 25% more pixels per frame; the march is per-column, so it scales.
+  const W = 800, H = 480;
 
   // One byte per pixel: a PALETTE INDEX, not a colour. Nothing in this engine ever holds RGB.
   const buf = new Uint8Array(W * H);
@@ -143,7 +148,7 @@ const Engine = (() => {
   }
 
   // ---------------------------------------------------------------- layout
-  // Design decisions calibrated to the 640x480 frame. NOT measurements of MM6 — real measured
+  // Design decisions calibrated to the 800x480 frame. NOT measurements of MM6 — real measured
   // numbers belong in critique/MM6_REFERENCE.md, which needs reference material this build does
   // not have. See ARCHITECTURE.md §11.
   // The 3D view is INSET, with carved chrome to its left and right that holds the touch controls.
@@ -152,18 +157,18 @@ const Engine = (() => {
   // buttons floating inside the world is mobile-game grammar that did not exist in 1998, and it is
   // why nine of these shots have nowhere for the eye to go: the near ground plane is covered by
   // UI." It also costs nothing in art. The world gets narrower; it stops being a phone game.
-  const CHROME_W = 88;
-  const VIEW = { x: CHROME_W + 8, y: 8, w: 640 - 2 * (CHROME_W + 8), h: 344 };
+  const CHROME_W = 92;
+  const VIEW = { x: CHROME_W + 8, y: 8, w: W - 2 * (CHROME_W + 8), h: 344 };
   const CHROME_L = { x: 0, y: 0, w: CHROME_W, h: 352 };
-  const CHROME_R = { x: 640 - CHROME_W, y: 0, w: CHROME_W, h: 352 };
-  const HUD = { x: 0, y: 352, w: 640, h: 128 };
+  const CHROME_R = { x: W - CHROME_W, y: 0, w: CHROME_W, h: 352 };
+  const HUD = { x: 0, y: 352, w: W, h: 128 };
 
   // Projection scale, from the vertical FOV implied by a 70 degree horizontal FOV at VIEW's
   // aspect. Computed once; the march and the sprite pass both read it.
-  // 57 degrees horizontal on the new 448x344 viewport gives ~46 degrees VERTICAL, which is what
-  // MM6 framed with. Vertical FOV is the one that decides how much ground and sky a screenshot
-  // holds; keeping 70 on a squarer view would have widened it to 56 and fish-eyed every frame.
-  const FOV_H = 57 * Math.PI / 180;
+  // Vertical FOV is the one that decides how much ground and sky a frame holds, and MM6 framed
+  // with about 46 degrees of it. On the 616x344 viewport that means ~73 degrees horizontal — which
+  // is also, not coincidentally, roughly what MM6 used on its own wide viewport.
+  const FOV_H = 73 * Math.PI / 180;
   const FOV_V = 2 * Math.atan(Math.tan(FOV_H / 2) * (VIEW.h / VIEW.w));
   const PROJ = VIEW.h / (2 * Math.tan(FOV_V / 2));
 

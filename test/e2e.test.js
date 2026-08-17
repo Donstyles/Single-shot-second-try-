@@ -26,12 +26,16 @@ const T = require('./_harness.js');
     const c = document.getElementById('fb');
     return { w: c.width, h: c.height, cssW: c.style.width, cssH: c.style.height };
   })()`);
-  T.eq(canvas.w, 640, 'framebuffer width is 640');
+  T.eq(canvas.w, 800, 'framebuffer width is 800');
   T.eq(canvas.h, 480, 'framebuffer height is 480');
   T.ok(canvas.cssW && canvas.cssH, 'canvas is letterboxed to a CSS size');
-  // 844x390 landscape: height-bound, so 480 -> 390 gives 520 wide.
-  T.eq(canvas.cssW, '520px', 'aspect-correct fit in iPhone 14 Pro Max landscape');
+  // 844x390 landscape: still height-bound, so 480 -> 390, and 5:3 gives 650 wide rather than the
+  // 520 a 4:3 frame managed. A reviewer measured the old waste: "324 pixels, 38% of the screen, is
+  // black bar." This asserts the improvement rather than the old number.
+  T.eq(canvas.cssW, '650px', 'aspect-correct fit in iPhone 14 Pro Max landscape');
   T.eq(canvas.cssH, '390px', 'fills the available height');
+  T.ok(844 - parseInt(canvas.cssW, 10) < 200,
+    'and less than 200px of the 844 is wasted as bar (' + (844 - parseInt(canvas.cssW, 10)) + 'px)');
 
   T.suite('palette');
   const pal = await page.evaluate(`(() => {

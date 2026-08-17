@@ -515,7 +515,67 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00f60-efc3-7f93-a8f7-790968bb7e48"
+    },
+    {
+      "n": 87,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A human bandit in a hooded leather jerki"
+    },
+    {
+      "n": 88,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f64-f501-70d6-923d-c7b14282777b"
+    },
+    {
+      "n": 89,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A small kobold miner, reddish scaled ski"
+    },
+    {
+      "n": 90,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f68-15a3-7daa-a890-5325a74ba3da"
+    },
+    {
+      "n": 91,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A crouching ghoul, grey hairless skin dr"
+    },
+    {
+      "n": 92,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f6a-9b57-7291-81b6-1b56ed08eb77"
+    },
+    {
+      "n": 93,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A hulking ogre, thick grey-brown hide, e"
+    },
+    {
+      "n": 94,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f6c-a271-72b9-b3af-b5df8c5542ac"
+    },
+    {
+      "n": 95,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A gaunt marsh troll, mottled green rubbe"
+    },
+    {
+      "n": 96,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f6f-498b-7be2-8a76-221b0f6113b8"
     }
   ],
-  "spent": 677
+  "spent": 752
 }

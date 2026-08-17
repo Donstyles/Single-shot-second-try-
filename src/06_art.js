@@ -15,7 +15,7 @@ const Art = (() => {
   const TMASK = TS - 1;
 
   // ---------------------------------------------------------------- font
-  // 5x7, column-major, bit 0 = top row. Drawn at integer scale so it stays crisp when the 640x480
+  // 5x7, column-major, bit 0 = top row. Drawn at integer scale so it stays crisp when the 800x480
   // framebuffer is letterboxed onto a phone.
   const FONT_HEX =
     '0000000000|00005F0000|0007000700|147F147F14|242A7F2A12|2313086462|3649552250|0005030000|' +
