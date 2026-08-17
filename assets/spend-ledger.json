@@ -659,7 +659,67 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00f83-60aa-709d-8c2a-3ecd049555f6"
+    },
+    {
+      "n": 111,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An elemental of burning ash and cinders,"
+    },
+    {
+      "n": 112,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f85-87d5-73fa-9713-56980361dbb0"
+    },
+    {
+      "n": 113,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An armoured undead knight in blackened d"
+    },
+    {
+      "n": 114,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f87-8481-7901-979d-22b4cf978dbc"
+    },
+    {
+      "n": 115,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A kobold shaman, scaled skin, bone headd"
+    },
+    {
+      "n": 116,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f89-8e04-71ec-9e44-7fa60aff0356"
+    },
+    {
+      "n": 117,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A lich in decayed archmage robes, skull "
+    },
+    {
+      "n": 118,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f8b-e32f-7596-9211-ba6d9bb2f463"
+    },
+    {
+      "n": 119,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A bandit captain in studded leather and "
+    },
+    {
+      "n": 120,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f8e-1e55-72bc-b029-f8e73ed6f7a3"
     }
   ],
-  "spent": 857
+  "spent": 932
 }

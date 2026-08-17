@@ -268,54 +268,74 @@ const UI = (() => {
 
   function inventory(g) {
     const En = E();
-    const f = screenFrame('INVENTORY', 600, 430);
+    const f = screenFrame('INVENTORY', 740, 440);
     pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
     // Paperdoll on the left: slots as boxes, equipped items as icons.
+    // Each well is NAMED, in words, under the well. Three-letter codes were reported twice: "the
+    // equipment slots are labelled HLM, AMU, CLK, GNT, BLT, OFF, BOW, BTS, RNG — I can guess helm
+    // and gauntlets, I have no idea what OFF or BTS are." The 800px frame has the room now.
+    // TWO FLANKING COLUMNS with the figure between them. A three-column grid puts wells straight
+    // over the body, and a paperdoll whose figure is hidden behind its own slots is just a grid
+    // again — which is what an art critic said the first version was: "there is no body, no figure,
+    // no armour silhouette, just twelve labelled boxes. The entire point of the paperdoll is the
+    // figure; it is missing."
+    const CW = 170;                                  // gap between the two columns
     const SLOTS = [
-      ['helm', 60, 0], ['amulet', 120, 0],
-      ['armour', 60, 46], ['cloak', 0, 46], ['gaunt', 120, 46],
-      ['weapon', 0, 92], ['offhand', 120, 92], ['belt', 60, 92],
-      ['bow', 0, 138], ['boots', 60, 138], ['ring1', 120, 138],
+      ['helm', 0, 0, 'HELM'], ['amulet', CW, 0, 'AMULET'],
+      ['cloak', 0, 56, 'CLOAK'], ['gaunt', CW, 56, 'GLOVES'],
+      ['armour', 0, 112, 'ARMOUR'], ['offhand', CW, 112, 'SHIELD'],
+      ['weapon', 0, 168, 'WEAPON'], ['bow', CW, 168, 'BOW'],
+      ['belt', 0, 224, 'BELT'], ['ring1', CW, 224, 'RING'],
+      ['boots', 0, 280, 'BOOTS'],
     ];
-    const px0 = f.x + 24, py0 = f.inner + 40;
+    const px0 = f.x + 22, py0 = f.inner + 34;
 
     // A BODY behind the slots. The entire point of a paperdoll is the figure, and twelve labelled
     // boxes in a loose cross is not one.
+    // The figure sits BEHIND and DARKER than the wells, a silhouette rather than a diagram. Drawn
+    // at full value it covered the slot names it is meant to sit behind.
     {
-      const bx = px0 + 84, by = py0 + 8;
-      const lim = (x, y, w2, h2, ramp, sh) => En.rect(x, y, w2, h2, Core.idx(ramp, sh));
-      lim(bx - 9, by - 4, 18, 18, 10, 10);          // head
-      lim(bx - 6, by + 13, 12, 5, 10, 8);           // neck
-      lim(bx - 17, by + 17, 34, 40, 4, 7);          // torso
-      lim(bx - 27, by + 20, 10, 34, 4, 6);          // arms
-      lim(bx + 17, by + 20, 10, 34, 4, 6);
-      lim(bx - 15, by + 56, 12, 40, 4, 6);          // legs
-      lim(bx + 3, by + 56, 12, 40, 4, 6);
-      lim(bx - 17, by + 95, 14, 8, 4, 5);           // feet
-      lim(bx + 3, by + 95, 14, 8, 4, 5);
-      En.frameRect(bx - 28, by - 5, 56, 110, Core.idx(0, 4));
+      const bx = px0 + 23 + CW / 2, by = py0 + 12;
+      const S = 2.2;                                 // the figure fills the gap between the columns
+      const lim = (x, y, w2, h2, sh) => En.rect(Math.round(bx + x * S), Math.round(by + y * S),
+        Math.round(w2 * S), Math.round(h2 * S), Core.idx(4, sh));
+      // A recessed alcove for the figure to stand in.
+      En.rect(bx - 52, by - 6, 104, 296, Core.idx(0, 2));
+      En.frameRect(bx - 52, by - 6, 104, 296, Core.idx(13, 7));
+      lim(-8, 0, 16, 17, 9);                        // head
+      lim(-5, 16, 10, 5, 7);                        // neck
+      lim(-15, 20, 30, 38, 8);                      // torso
+      lim(-24, 23, 9, 32, 5);                       // arms, set back from the torso
+      lim(15, 23, 9, 32, 4);
+      lim(-13, 57, 11, 38, 6);                      // legs
+      lim(2, 57, 11, 38, 5);
+      lim(-15, 94, 13, 7, 3);                       // feet
+      lim(2, 94, 13, 7, 3);
+      lim(-7, 2, 14, 6, 6);                         // hair line, so the head has a top
+      // A light from the upper left, so the figure has a form rather than being a flat cutout.
+      En.rect(Math.round(bx - 15 * S), Math.round(by + 20 * S), Math.round(6 * S), Math.round(38 * S), Core.idx(4, 11));
+      En.rect(Math.round(bx - 8 * S), Math.round(by), Math.round(6 * S), Math.round(17 * S), Core.idx(4, 12));
     }
 
-    for (const [slot, ox, oy] of SLOTS) {
+    for (const [slot, ox, oy, label] of SLOTS) {
       const x = px0 + ox, y = py0 + oy;
-      Art.panel(En, x, y, 42, 42, 4, true);
       const it = ch.equip[slot];
-      if (it) En.blitScaled(Sprites.icon(it.id), x + 5, y + 5, 32, 32, 0);
-      else {
-        // Three letters at scale 2 fits a 42px well; five at scale 1 did not and rendered as
-        // garbage like "c nat" and "ufft a".
-        const SHORT = { helm: 'HLM', amulet: 'AMU', armour: 'ARM', cloak: 'CLK', gaunt: 'GNT',
-          weapon: 'WPN', offhand: 'OFF', belt: 'BLT', bow: 'BOW', boots: 'BTS', ring1: 'RNG' };
-        Art.textCentred(En, x + 21, y + 15, SHORT[slot] || slot.slice(0, 3).toUpperCase(), Core.idx(0, 7), 2);
-      }
-      reg('equip', x, y, 42, 42, slot);
+      // A visible RECESSED well, whether or not something is in it. Painted the same brown as the
+      // panel behind it, an empty slot reads as a hole and its name floats unattached.
+      En.rect(x, y, 46, 46, Core.idx(0, it ? 4 : 2));
+      En.hline(x, y, 46, Core.idx(0, 1)); En.vline(x, y, 46, Core.idx(0, 1));
+      En.hline(x, y + 45, 46, Core.idx(13, 8)); En.vline(x + 45, y, 46, Core.idx(13, 8));
+      En.frameRect(x - 1, y - 1, 48, 48, Core.idx(13, it ? 12 : 7));
+      if (it) En.blitScaled(Sprites.icon(it.id), x + 3, y + 3, 40, 40, 0);
+      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 12), 1);
+      reg('equip', x, y, 46, 46, slot);
     }
 
     // Pack grid on the right.
-    const gx = f.x + 220, gy = f.inner + 40;
-    Art.text(En, gx, gy - 16, 'PACK  ' + ch.pack.length + '/30', Core.idx(13, 13), 2);
+    const gx = f.x + 320, gy = f.inner + 58;
+    Art.text(En, gx, gy - 20, 'PACK  ' + ch.pack.length + '/30', Core.idx(13, 14), 2);
     for (let i = 0; i < 30; i++) {
       const x = gx + (i % 6) * 58, y = gy + Math.floor(i / 6) * 52;
       Art.panel(En, x, y, 54, 48, 4, true);
