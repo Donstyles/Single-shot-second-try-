@@ -604,10 +604,28 @@ const UI = (() => {
     }
   }
 
+  const SHOP_TITLE = {
+    weapon: 'THE ARMOURY', armour: "ARMOURER'S", general: 'GENERAL GOODS', magic: 'APOTHECARY',
+    temple: 'TEMPLE', tavern: 'TAVERN', trainer: 'TRAINING HALL', guild: 'MAGE GUILD',
+  };
+
   function shop(g) {
     const En = E();
     const kind = g.shopKind;
-    const f = screenFrame(kind.toUpperCase(), 600, 430);
+    const f = screenFrame(SHOP_TITLE[kind] || kind.toUpperCase(), 700, 440);
+    // A PLACE, not a panel. "A door swaps the view for a menu panel"; "buildings are shells";
+    // "25% content and 75% empty brown box" — three reviews, three ways of saying the same thing,
+    // and all three named it the largest gap to MM6. MM6's own shops are painted 2D interiors with
+    // a list of goods over them, so this is the faithful answer rather than a substitute for one.
+    Art.shopInterior(En, f.x + 8, f.inner - 34, f.w - 16, f.h - 50, kind);
+    // The room stays VISIBLE. The first attempt scrimmed the whole panel and put the stock list
+    // across it, which hid the painting completely and just produced a darker brown box. The goods
+    // live in their own column on the right; the left third is the shop.
+    const listX = f.x + Math.round(f.w * 0.34);
+    En.rect(listX, f.inner - 34, f.x + f.w - 8 - listX, f.h - 50, Core.idx(0, 2));
+    for (let y = f.inner - 34; y < f.y + f.h - 16; y += 2) En.hline(listX, y, f.x + f.w - 8 - listX, Core.idx(0, 1));
+    En.vline(listX, f.inner - 34, f.h - 50, Core.idx(13, 9));
+    En.hline(f.x + 14, f.y + 34, f.w - 28, Core.idx(13, 9));
     pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
@@ -616,8 +634,10 @@ const UI = (() => {
     // own first two lines were: at the guild, the name/level line, the gold line and a red "Not
     // enough experience yet" were all drawn within four pixels of each other and came out as "an
     // unreadable smear across the top".
-    Art.text(En, f.x + f.w - 24 - Art.textWidth(g.party.gold + 'g', 2), f.inner + 18,
-      g.party.gold + 'g', Core.idx(13, 14), 2);
+    // Gold on the LEFT, over the room, clear of the goods column it used to sit behind.
+    Art.panel(En, f.x + 16, f.y + 86, 122, 26, 13, true);
+    En.frameRect(f.x + 16, f.y + 86, 122, 26, Core.idx(13, 10));
+    Art.textCentred(En, f.x + 77, f.y + 91, g.party.gold + 'g', Core.idx(13, 15), 2);
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
@@ -729,18 +749,18 @@ const UI = (() => {
       // Bigger rows and a bigger icon on its own recessed plate. At 32px on a dark panel the
       // silhouettes had almost no contrast and the whole list read as one repeated shape: "six of
       // seven items share one icon", then "6x14 vertical sticks" a round later.
-      const x = f.x + 18 + (i % 2) * 288, y = f.inner + 62 + Math.floor(i / 2) * 66;
-      if (y > f.y + f.h - 84) return;
+      const x = listX + 8, y = f.inner + 44 + i * 54;
+      if (y > f.y + f.h - 60) return;
       const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
-      Art.panel(En, x, y, 282, 60, 4, true);
-      Art.panel(En, x + 5, y + 5, 50, 50, 13, true);
-      En.frameRect(x + 5, y + 5, 50, 50, Core.idx(13, 9));
-      En.blitScaled(Sprites.icon(st.id), x + 6, y + 6, 48, 48, 0);
-      Art.text(En, x + 62, y + 10, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 14 : 7), 2);
-      Art.text(En, x + 62, y + 32, price + 'g', Core.idx(13, afford ? 14 : 7), 2);
-      if (!afford) Art.text(En, x + 180, y + 34, 'TOO DEAR', Core.idx(11, 11), 1);
-      if (afford) reg('buy', x, y, 282, 60, i);
+      Art.panel(En, x, y, f.x + f.w - 20 - x, 52, 4, true);
+      Art.panel(En, x + 4, y + 4, 44, 44, 13, true);
+      En.frameRect(x + 4, y + 4, 44, 44, Core.idx(13, 9));
+      En.blitScaled(Sprites.icon(st.id), x + 5, y + 5, 42, 42, 0);
+      Art.text(En, x + 54, y + 6, Items.ITEMS[st.id].name.slice(0, 18), Core.idx(0, afford ? 14 : 7), 2);
+      Art.text(En, x + 54, y + 28, price + 'g', Core.idx(13, afford ? 14 : 7), 2);
+      if (!afford) Art.text(En, x + 140, y + 32, 'TOO DEAR', Core.idx(11, 11), 1);
+      if (afford) reg('buy', x, y, f.x + f.w - 20 - x, 52, i);
     });
   }
 

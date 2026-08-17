@@ -615,6 +615,105 @@ const Art = (() => {
 
   // A pictorial shop sign. Blank brown planks meant a player had to walk into every door to learn
   // what it was.
+  // A PAINTED INTERIOR behind a shop's stock list. Three separate reviews said the same thing —
+  // "a door swaps the view for a menu panel", "buildings are shells", "25% content and 75% empty
+  // brown box" — and named it the largest single gap to MM6. MM6's own shops are not rendered
+  // rooms either: they are painted 2D interiors with a list of goods over them. So this is the
+  // faithful answer rather than a substitute for one.
+  function shopInterior(E, x, y, w, h, kind) {
+    const px = (cx, cy, ramp, sh) => E.px(x + cx, y + cy, Core.idx(ramp, sh));
+    const box = (cx, cy, bw, bh, ramp, sh) => E.rect(x + cx, y + cy, bw, bh, Core.idx(ramp, sh));
+
+    const warm = kind === 'temple' ? 9 : kind === 'magic' ? 12 : kind === 'guild' ? 12 : 4;
+    const wallRamp = kind === 'temple' || kind === 'guild' ? 1 : kind === 'magic' ? 0 : 4;
+
+    // Back wall: coursed masonry for stone trades, planking for the rest, lit from the lamp.
+    for (let ry = 0; ry < h; ry++) {
+      const fall = 1 - ry / h;
+      for (let rx = 0; rx < w; rx++) {
+        const cx2 = Math.abs(rx - w / 2) / (w / 2);
+        const lamp = Math.max(0, 1.15 - cx2 * 0.8 - fall * 0.25);
+        let sh = 3 + Math.round(lamp * 5);
+        if (wallRamp === 4) { if ((rx % 13) === 0) sh -= 2; }                 // plank seams
+        else { if ((ry % 11) === 0 || ((rx + (((ry / 11) | 0) & 1) * 11) % 22) === 0) sh -= 2; }
+        px(rx, ry, wallRamp, sh < 1 ? 1 : sh);
+      }
+    }
+
+    // Floorboards, in perspective: the courses get shallower toward the back wall.
+    const fy = Math.round(h * 0.62);
+    let step = 3;
+    for (let ry = h - 1, k = 0; ry > fy; k++) {
+      const band = Math.max(2, step);
+      for (let b = 0; b < band && ry > fy; b++, ry--) {
+        for (let rx = 0; rx < w; rx++) {
+          px(rx, ry, 5, (b === 0 ? 3 : 6) + (((rx + k * 3) % 17) === 0 ? -2 : 0));
+        }
+      }
+      step = Math.max(2, step - 1);
+    }
+
+    // A hanging lamp with a warm pool — the one emissive thing in the room.
+    const lx = Math.round(w * 0.17);
+    for (let ry = 0; ry < 16; ry++) px(lx, ry, 13, 6);
+    for (let ry = 16; ry < 24; ry++) {
+      const ww = 9 - Math.abs(ry - 20);
+      for (let rx = -ww; rx <= ww; rx++) px(lx + rx, ry, 13, ry < 20 ? 11 : 7);
+    }
+    for (let ry = 22; ry < 28; ry++) for (let rx = -3; rx <= 3; rx++) {
+      if (rx * rx + (ry - 24) * (ry - 24) > 10) continue;
+      px(lx + rx, ry, 15, 13);
+    }
+
+    // Shelves either side, stacked with trade goods.
+    for (const side of [0, 1]) {
+      const sx = side ? w - 96 : 12;
+      for (let shelf = 0; shelf < 3; shelf++) {
+        const sy = Math.round(h * 0.16) + shelf * 34;
+        box(sx, sy + 22, 84, 4, 4, 3);
+        box(sx, sy + 22, 84, 1, 4, 9);
+        for (let g = 0; g < 5; g++) {
+          const gx = sx + 5 + g * 16;
+          const hsh = (Core.hashStr('goods' + kind + shelf + g + side) >>> 0);
+          const gh2 = 8 + (hsh % 12);
+          const ramp = kind === 'weapon' ? [14, 14, 13, 4, 14][g % 5]
+            : kind === 'armour' ? [14, 1, 14, 13, 1][g % 5]
+            : kind === 'magic' ? [12, 11, 6, 15, 12][g % 5]
+            : kind === 'temple' ? [13, 0, 13, 9, 13][g % 5]
+            : [4, 6, 11, 2, 13][g % 5];
+          for (let ry = 0; ry < gh2; ry++) {
+            const bw = (hsh & 1) && ry < 3 ? 4 : 9;
+            for (let rx = 0; rx < bw; rx++) px(gx + rx + (9 - bw) / 2 | 0, sy + 22 - ry, ramp, 7 + ((rx + ry) & 1) * 3 - (rx > bw - 3 ? 3 : 0));
+          }
+        }
+      }
+    }
+
+    // The counter, across the front, with the keeper behind it.
+    const cy0 = Math.round(h * 0.60);
+    box(0, cy0, w, 8, 4, 9);
+    box(0, cy0 + 8, w, h - cy0 - 8, 4, 5);
+    for (let rx = 0; rx < w; rx += 19) box(rx, cy0 + 8, 2, h - cy0 - 8, 4, 3);
+    box(0, cy0, w, 2, 4, 12);
+
+    // Keeper: shoulders, head, and an apron in the trade's colour.
+    const kx = Math.round(w * 0.17), ky = cy0 - 44;
+    box(kx - 22, ky + 16, 44, 30, warm, 8);
+    box(kx - 22, ky + 16, 44, 2, warm, 11);
+    for (let ry = 0; ry < 20; ry++) {
+      for (let rx = -10; rx <= 10; rx++) {
+        if ((rx * rx) / 100 + ((ry - 10) * (ry - 10)) / 110 > 1) continue;
+        px(kx + rx, ky + ry - 4, 10, 11 - Math.round((rx + 10) / 20 * 4));
+      }
+    }
+    for (let ry = -6; ry < 4; ry++) for (let rx = -11; rx <= 11; rx++) {
+      if ((rx * rx) / 130 + ((ry) * (ry)) / 40 > 1) continue;
+      px(kx + rx, ky + ry - 4, 4, 6 - ((rx + ry) & 1));
+    }
+    px(kx - 4, ky + 6, 0, 2); px(kx + 4, ky + 6, 0, 2);
+    for (let rx = -3; rx <= 3; rx++) px(kx + rx, ky + 12, 11, 6);
+  }
+
   function shopSign(E, kind, x, y, s) {
     const k = s || 2;
     const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
@@ -638,7 +737,7 @@ const Art = (() => {
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
-    panel, button, gameFrame, stonework, arrowGlyph, bar, step, hudIcon, shopSign,
+    panel, button, gameFrame, stonework, arrowGlyph, bar, step, hudIcon, shopSign, shopInterior,
     get tick() { return tick; },
   };
 })();
