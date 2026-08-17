@@ -1294,22 +1294,22 @@ const Items = (() => {
   // ---------------------------------------------------------------- monsters
   // `ai`: 'melee' | 'ranged' | 'caster' | 'brute'. `hide` feeds Perception.
   const MONSTERS = {
-    rat:         { name: 'Giant Rat',       level: 1,  hp: 8,   ac: 4,  atk: 2,  dmg: { n: 1, sides: 3 }, xp: 12,   speed: 90,  ai: 'melee',  loot: 0, resist: {} },
-    goblin:      { name: 'Goblin',          level: 2,  hp: 14,  ac: 7,  atk: 4,  dmg: { n: 1, sides: 5 }, xp: 28,   speed: 95,  ai: 'melee',  loot: 1, resist: {} },
-    goblin_arch: { name: 'Goblin Archer',   level: 3,  hp: 16,  ac: 8,  atk: 6,  dmg: { n: 1, sides: 6 }, xp: 40,   speed: 100, ai: 'ranged', loot: 1, resist: {} },
-    wolf:        { name: 'Grey Wolf',       level: 3,  hp: 22,  ac: 9,  atk: 7,  dmg: { n: 1, sides: 7 }, xp: 46,   speed: 70,  ai: 'melee',  loot: 0, resist: {}, drops: 'wolf_pelt' },
-    bandit:      { name: 'Bandit',          level: 4,  hp: 30,  ac: 12, atk: 9,  dmg: { n: 1, sides: 8, plus: 1 }, xp: 70, speed: 95, ai: 'melee', loot: 2, resist: {} },
-    bandit_capt: { name: 'Bandit Captain',  level: 7,  hp: 62,  ac: 18, atk: 15, dmg: { n: 2, sides: 6, plus: 2 }, xp: 190, speed: 90, ai: 'melee', loot: 3, resist: {} },
-    skeleton:    { name: 'Skeleton',        level: 4,  hp: 26,  ac: 13, atk: 10, dmg: { n: 1, sides: 8 }, xp: 78,   speed: 100, ai: 'melee',  loot: 1, resist: { cold: 60, poison: 200, dark: 100 } },
-    zombie:      { name: 'Zombie',          level: 5,  hp: 46,  ac: 9,  atk: 9,  dmg: { n: 2, sides: 5 }, xp: 96,   speed: 130, ai: 'brute',  loot: 1, resist: { poison: 200, dark: 80 } },
-    ghoul:       { name: 'Ghoul',           level: 6,  hp: 54,  ac: 15, atk: 13, dmg: { n: 2, sides: 6 }, xp: 140,  speed: 90,  ai: 'melee',  loot: 2, resist: { poison: 200, dark: 100 }, inflict: 'disease' },
-    wraith:      { name: 'Barrow Wraith',   level: 9,  hp: 70,  ac: 22, atk: 18, dmg: { n: 2, sides: 8 }, xp: 300,  speed: 80,  ai: 'caster', loot: 3, resist: { phys: 120, cold: 100, dark: 200 }, school: 'dark' },
-    spider:      { name: 'Cave Spider',     level: 4,  hp: 24,  ac: 14, atk: 10, dmg: { n: 1, sides: 6 }, xp: 82,   speed: 75,  ai: 'melee',  loot: 1, resist: { poison: 150 }, inflict: 'poison' },
-    kobold:      { name: 'Kobold Digger',   level: 3,  hp: 18,  ac: 10, atk: 6,  dmg: { n: 1, sides: 6 }, xp: 44,   speed: 90,  ai: 'melee',  loot: 1, resist: {} },
-    kobold_sham: { name: 'Kobold Shaman',   level: 5,  hp: 26,  ac: 11, atk: 8,  dmg: { n: 1, sides: 5 }, xp: 110,  speed: 100, ai: 'caster', loot: 2, resist: {}, school: 'fire' },
-    ogre:        { name: 'Ogre',            level: 8,  hp: 96,  ac: 16, atk: 16, dmg: { n: 3, sides: 6 }, xp: 260,  speed: 125, ai: 'brute',  loot: 2, resist: { mind: 80 } },
+    rat:         { name: 'Giant Rat',       level: 1,  hp: 8,   ac: 4,  atk: 2,  dmg: { n: 1, sides: 3 }, xp: 38,   speed: 90,  ai: 'melee',  loot: 0, resist: {} },
+    goblin:      { name: 'Goblin',          level: 2,  hp: 14,  ac: 7,  atk: 4,  dmg: { n: 1, sides: 5 }, xp: 90,   speed: 95,  ai: 'melee',  loot: 1, resist: {} },
+    goblin_arch: { name: 'Goblin Archer',   level: 3,  hp: 16,  ac: 8,  atk: 6,  dmg: { n: 1, sides: 6 }, xp: 128,   speed: 100, ai: 'ranged', loot: 1, resist: {} },
+    wolf:        { name: 'Grey Wolf',       level: 3,  hp: 22,  ac: 9,  atk: 7,  dmg: { n: 1, sides: 7 }, xp: 147,   speed: 70,  ai: 'melee',  loot: 0, resist: {}, drops: 'wolf_pelt' },
+    bandit:      { name: 'Bandit',          level: 4,  hp: 30,  ac: 12, atk: 9,  dmg: { n: 1, sides: 8, plus: 1 }, xp: 224, speed: 95, ai: 'melee', loot: 2, resist: {} },
+    bandit_capt: { name: 'Bandit Captain',  level: 7,  hp: 62,  ac: 18, atk: 15, dmg: { n: 2, sides: 6, plus: 2 }, xp: 608, speed: 90, ai: 'melee', loot: 3, resist: {} },
+    skeleton:    { name: 'Skeleton',        level: 4,  hp: 26,  ac: 13, atk: 10, dmg: { n: 1, sides: 8 }, xp: 250,   speed: 100, ai: 'melee',  loot: 1, resist: { cold: 60, poison: 200, dark: 100 } },
+    zombie:      { name: 'Zombie',          level: 5,  hp: 46,  ac: 9,  atk: 9,  dmg: { n: 2, sides: 5 }, xp: 307,   speed: 130, ai: 'brute',  loot: 1, resist: { poison: 200, dark: 80 } },
+    ghoul:       { name: 'Ghoul',           level: 6,  hp: 54,  ac: 15, atk: 13, dmg: { n: 2, sides: 6 }, xp: 448,  speed: 90,  ai: 'melee',  loot: 2, resist: { poison: 200, dark: 100 }, inflict: 'disease' },
+    wraith:      { name: 'Barrow Wraith',   level: 9,  hp: 70,  ac: 22, atk: 18, dmg: { n: 2, sides: 8 }, xp: 960,  speed: 80,  ai: 'caster', loot: 3, resist: { phys: 120, cold: 100, dark: 200 }, school: 'dark' },
+    spider:      { name: 'Cave Spider',     level: 4,  hp: 24,  ac: 14, atk: 10, dmg: { n: 1, sides: 6 }, xp: 262,   speed: 75,  ai: 'melee',  loot: 1, resist: { poison: 150 }, inflict: 'poison' },
+    kobold:      { name: 'Kobold Digger',   level: 3,  hp: 18,  ac: 10, atk: 6,  dmg: { n: 1, sides: 6 }, xp: 141,   speed: 90,  ai: 'melee',  loot: 1, resist: {} },
+    kobold_sham: { name: 'Kobold Shaman',   level: 5,  hp: 26,  ac: 11, atk: 8,  dmg: { n: 1, sides: 5 }, xp: 352,  speed: 100, ai: 'caster', loot: 2, resist: {}, school: 'fire' },
+    ogre:        { name: 'Ogre',            level: 8,  hp: 96,  ac: 16, atk: 16, dmg: { n: 3, sides: 6 }, xp: 832,  speed: 125, ai: 'brute',  loot: 2, resist: { mind: 80 } },
     troll:       { name: 'Marsh Troll',     level: 10, hp: 130, ac: 20, atk: 20, dmg: { n: 3, sides: 7 }, xp: 420,  speed: 115, ai: 'brute',  loot: 3, resist: { phys: 60, poison: 120 }, regen: 3 },
-    harpy:       { name: 'Harpy',           level: 6,  hp: 40,  ac: 19, atk: 12, dmg: { n: 2, sides: 5 }, xp: 150,  speed: 65,  ai: 'melee',  loot: 2, resist: { elec: 60 }, inflict: 'afraid' },
+    harpy:       { name: 'Harpy',           level: 6,  hp: 40,  ac: 19, atk: 12, dmg: { n: 2, sides: 5 }, xp: 480,  speed: 65,  ai: 'melee',  loot: 2, resist: { elec: 60 }, inflict: 'afraid' },
     elemental:   { name: 'Ash Elemental',   level: 11, hp: 120, ac: 24, atk: 21, dmg: { n: 3, sides: 8 }, xp: 500,  speed: 95,  ai: 'caster', loot: 3, resist: { fire: 250, phys: 80 }, school: 'fire' },
     knight_ash:  { name: 'Ashen Knight',    level: 12, hp: 160, ac: 30, atk: 24, dmg: { n: 3, sides: 9 }, xp: 620,  speed: 100, ai: 'melee',  loot: 4, resist: { phys: 100, dark: 150 } },
     lich:        { name: 'Barrow Lich',     level: 14, hp: 190, ac: 28, atk: 26, dmg: { n: 3, sides: 8 }, xp: 900,  speed: 85,  ai: 'caster', loot: 4, resist: { cold: 200, dark: 250, poison: 250 }, school: 'dark' },
@@ -3769,6 +3769,14 @@ const Art = (() => {
     // degrees and move it exactly nowhere. The button was never broken; the picture on it was, and
     // a control a player cannot identify is as good as one that does not work.
     const R = 8;
+    // Sidestep: a solid triangle with a bar behind it, so it cannot be confused with the turn arc.
+    if (dir === 'sideL' || dir === 'sideR') {
+      const sg = dir === 'sideL' ? -1 : 1;
+      for (let i = 0; i < 7; i++) E.vline(cx + sg * (1 + i), cy - (6 - i), (6 - i) * 2 + 1, pi);
+      E.vline(cx - sg * 4, cy - 6, 13, pi);
+      E.vline(cx - sg * 5, cy - 6, 13, pi);
+      return;
+    }
     if (dir === 'up' || dir === 'down') {
       for (let i = 0; i < R; i++) {
         const half = i;
@@ -4940,7 +4948,19 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
     const hh = Core.Clock.hhmm();
     Art.text(En, lx + lw - 8 - Art.textWidth(hh, 2), HUD.y + 86, hh, Core.idx(9, 12), 2);
-    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 18), Core.idx(2, 14), 2);
+    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 11), Core.idx(2, 14), 2);
+    // A burning torch must be visible somewhere. "You will burn all twelve without knowing" —
+    // lighting one printed a log line, consumed the item, and then nothing said it was lit or how
+    // long it had left. Shortest-remaining first, and it turns red as it runs out.
+    if (g.buffList) {
+      g.buffList().slice(0, 2).forEach((bf, i) => {
+        const bx2 = lx + 128 + i * 84;
+        if (bx2 + 80 > lx + lw) return;
+        Art.panel(En, bx2, HUD.y + 102, 80, 20, 13, true);
+        Art.text(En, bx2 + 4, HUD.y + 104, bf.name.slice(0, 5).toUpperCase() + ' ' + bf.mins,
+          Core.idx(bf.mins < 15 ? 11 : 6, 15), 1);
+      });
+    }
 
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
@@ -4976,13 +4996,18 @@ const UI = (() => {
     // ---- movement cluster, bottom of the left column
     const bw = 80, bh = 34, gap = 3;
     const mx = L.x + 4;
-    const my = L.y + L.h - (bh * 3 + gap * 2) - 8;
+    const my = L.y + L.h - (bh * 4 + gap * 3) - 6;
     const half = (bw - gap) >> 1;
+    // STRAFE, because MM6 taught you to sidestep in the first dungeon and this build wedges you
+    // into corners constantly. A veteran: "when you wedge yourself in a corner your only recourse
+    // is to back out the way you came." Turn on the middle row, sidestep on the row below it.
     const moves = [
       ['fwd', mx, my, bw, bh, 'up'],
       ['turnL', mx, my + bh + gap, half, bh, 'left'],
       ['turnR', mx + half + gap, my + bh + gap, half, bh, 'right'],
-      ['back', mx, my + (bh + gap) * 2, bw, bh, 'down'],
+      ['strafeL', mx, my + (bh + gap) * 2, half, bh, 'sideL'],
+      ['strafeR', mx + half + gap, my + (bh + gap) * 2, half, bh, 'sideR'],
+      ['back', mx, my + (bh + gap) * 3, bw, bh, 'down'],
     ];
     for (const [id, x, y, w, h, glyph] of moves) {
       const down = !!g.keys[id] || (g.keyLatch && g.keyLatch[id] > 0);
@@ -4993,6 +5018,8 @@ const UI = (() => {
       // they were strafe controls.
       if (glyph === 'left' || glyph === 'right') {
         Art.textCentred(En, x + w / 2, y + h - 11, 'TURN', Core.idx(13, down ? 15 : 11), 1);
+      } else if (glyph === 'sideL' || glyph === 'sideR') {
+        Art.textCentred(En, x + w / 2, y + h - 11, 'STEP', Core.idx(13, down ? 15 : 11), 1);
       }
       reg('move', x, y, w, h, id);
     }
@@ -5248,8 +5275,18 @@ const UI = (() => {
     pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
+    // ONLY the schools this class can ever use. A Knight whose own description says "No magic at
+    // all" was shown nine schools, four tiers each, every entry marked "not learned" — thirty-six
+    // promises the class can never keep.
+    const usable = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
+    if (!usable.length) {
+      Art.text(En, f.x + 24, f.inner + 40, ch.name + ' works no magic.', Core.idx(13, 14), 2);
+      Art.text(En, f.x + 24, f.inner + 66, Rules.CLASSES[ch.cls].name + 's never learn a spell.', Core.idx(0, 13), 2);
+      Art.text(En, f.x + 24, f.inner + 92, 'Pick a caster from the tabs above.', Core.idx(0, 12), 2);
+      return;
+    }
     // School tabs down the left.
-    Spellcraft.SCHOOL_IDS.forEach((s, i) => {
+    usable.forEach((s, i) => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
@@ -6005,7 +6042,7 @@ const Game = (() => {
 
     // Starting kit, so the first fight is winnable.
     const kit = { knight: ['short_sword', 'padded'], templar: ['short_sword', 'padded'],
-      ranger: ['short_bow', 'padded'], priest: ['club', 'padded'], mage: ['dagger', 'padded'],
+      ranger: ['short_bow', 'dagger', 'padded'], priest: ['club', 'padded'], mage: ['dagger', 'padded'],
       warden: ['quarterstaff', 'padded'] };
     members.forEach((ch) => {
       for (const id of (kit[ch.cls] || ['dagger'])) {
@@ -6278,7 +6315,11 @@ const Game = (() => {
 
     // XP split across the living. A dead character earns nothing (Rules enforces it).
     const alive = state.party.members.filter((c) => !Rules.isDead(c));
-    const share = Math.max(1, Math.round(def.xp / Math.max(1, alive.length)));
+    // The FULL award to every survivor, not a quarter each. Splitting it meant a Giant Rat worth
+    // 12 XP paid 6 apiece against a 1,000 XP level, which is 167 kills of the tutorial monster at
+    // twenty seconds a kill. MM6 paid each character the monster's value and expected level 2 in
+    // twenty or thirty fights; a curve nobody can feel moving is a curve that is not there.
+    const share = def.xp;
     for (const c of alive) Rules.awardXP(c, share);
 
     // Loot. Quest items sort first so a full pack never destroys the run.
@@ -6680,9 +6721,29 @@ const Game = (() => {
       if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
+    // Prefer the portal the party is FACING, then anything within arm's reach. A pure radius test
+    // picked whichever door happened to be nearest to the party's centre, which in a ring of
+    // shoulder-to-shoulder buildings is often the one behind you.
+    let bestPortal = null, bestScore = 1e9;
     for (const portal of m.portals) {
-      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 2.4 ||
-          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 2.2) return { kind: 'portal', portal };
+      const dx = portal.x + 0.5 - p.x, dy = portal.y + 0.5 - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 3.0) continue;
+      const facing = (dx * Math.cos(p.ang) + dy * Math.sin(p.ang)) / (d || 1);
+      if (facing < 0.2 && d > 1.4) continue;                 // behind you and not underfoot
+      const score = d - facing * 1.2;                        // ahead beats merely near
+      if (score < bestScore) { bestScore = score; bestPortal = portal; }
+    }
+    if (bestPortal) return { kind: 'portal', portal: bestPortal };
+
+    // A DRAWN DOOR that opens nothing must still answer. Houses carry doors as dressing, and they
+    // are the same painted planks with the same iron ring as a shop's — a veteran stood at one with
+    // "the door filling a third of the frame", pressed USE, and was told "Nothing here. A door is 8
+    // steps ahead", which is the shop door on the far side of the block. Silence at a door the
+    // player can see is the single most confusing thing a town can do.
+    for (const d of m.decor) {
+      if (d.kind !== 'door' || d.shop) continue;
+      if (Math.hypot(d.x - p.x, d.y - p.y) < 2.2) return { kind: 'house', decor: d };
     }
     return null;
   }
@@ -6692,8 +6753,9 @@ const Game = (() => {
     if (!t) {
       // A bare "Nothing here." four times in a row taught a player nothing. Point at the nearest
       // thing that IS interactive.
-      let best = null, bd = 9;
+      let best = null, bd = 24;
       for (const q of state.map.portals) {
+        if (q.shop === undefined && q.kind !== 'stairs' && q.kind !== 'door' && !q.to) continue;
         const d = Math.hypot(q.x + 0.5 - state.party.x, q.y + 0.5 - state.party.y);
         if (d < bd) { bd = d; best = q; }
       }
@@ -6765,6 +6827,10 @@ const Game = (() => {
       t.decor.regrowAt = Clock.t + Core.MIN_PER_DAY;
       Log.push('You gather ' + Items.ITEMS[t.decor.item].name + '.', 'good');
       return true;
+    }
+    if (t.kind === 'house') {
+      Log.push('The door is barred from within. Somebody lives here.', 'info');
+      return false;
     }
     if (t.kind === 'portal') {
       return usePortal(t.portal);
@@ -7692,6 +7758,15 @@ const Game = (() => {
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
     state.countItem = countItem;
+    // What is currently running on the party, for the HUD. Names and minutes only; the UI must
+    // never reach into the buff table itself.
+    state.buffList = () => {
+      const b = state.party.buffs || {};
+      return Object.keys(b)
+        .filter((k) => b[k].until > Clock.t)
+        .map((k) => ({ name: k, mins: Math.max(0, Math.round(b[k].until - Clock.t)) }))
+        .sort((x, y) => x.mins - y.mins);
+    };
     state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
     // The nearest hostile the party is actually facing, shaped for a nameplate. UI must never walk
     // the entity list itself; that is how a second implementation of "what counts as a foe" is born.

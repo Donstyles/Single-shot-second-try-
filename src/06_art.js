@@ -568,6 +568,14 @@ const Art = (() => {
     // degrees and move it exactly nowhere. The button was never broken; the picture on it was, and
     // a control a player cannot identify is as good as one that does not work.
     const R = 8;
+    // Sidestep: a solid triangle with a bar behind it, so it cannot be confused with the turn arc.
+    if (dir === 'sideL' || dir === 'sideR') {
+      const sg = dir === 'sideL' ? -1 : 1;
+      for (let i = 0; i < 7; i++) E.vline(cx + sg * (1 + i), cy - (6 - i), (6 - i) * 2 + 1, pi);
+      E.vline(cx - sg * 4, cy - 6, 13, pi);
+      E.vline(cx - sg * 5, cy - 6, 13, pi);
+      return;
+    }
     if (dir === 'up' || dir === 'down') {
       for (let i = 0; i < R; i++) {
         const half = i;

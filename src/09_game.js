@@ -135,7 +135,7 @@ const Game = (() => {
 
     // Starting kit, so the first fight is winnable.
     const kit = { knight: ['short_sword', 'padded'], templar: ['short_sword', 'padded'],
-      ranger: ['short_bow', 'padded'], priest: ['club', 'padded'], mage: ['dagger', 'padded'],
+      ranger: ['short_bow', 'dagger', 'padded'], priest: ['club', 'padded'], mage: ['dagger', 'padded'],
       warden: ['quarterstaff', 'padded'] };
     members.forEach((ch) => {
       for (const id of (kit[ch.cls] || ['dagger'])) {
@@ -408,7 +408,11 @@ const Game = (() => {
 
     // XP split across the living. A dead character earns nothing (Rules enforces it).
     const alive = state.party.members.filter((c) => !Rules.isDead(c));
-    const share = Math.max(1, Math.round(def.xp / Math.max(1, alive.length)));
+    // The FULL award to every survivor, not a quarter each. Splitting it meant a Giant Rat worth
+    // 12 XP paid 6 apiece against a 1,000 XP level, which is 167 kills of the tutorial monster at
+    // twenty seconds a kill. MM6 paid each character the monster's value and expected level 2 in
+    // twenty or thirty fights; a curve nobody can feel moving is a curve that is not there.
+    const share = def.xp;
     for (const c of alive) Rules.awardXP(c, share);
 
     // Loot. Quest items sort first so a full pack never destroys the run.
@@ -810,9 +814,29 @@ const Game = (() => {
       if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
+    // Prefer the portal the party is FACING, then anything within arm's reach. A pure radius test
+    // picked whichever door happened to be nearest to the party's centre, which in a ring of
+    // shoulder-to-shoulder buildings is often the one behind you.
+    let bestPortal = null, bestScore = 1e9;
     for (const portal of m.portals) {
-      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 2.4 ||
-          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 2.2) return { kind: 'portal', portal };
+      const dx = portal.x + 0.5 - p.x, dy = portal.y + 0.5 - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 3.0) continue;
+      const facing = (dx * Math.cos(p.ang) + dy * Math.sin(p.ang)) / (d || 1);
+      if (facing < 0.2 && d > 1.4) continue;                 // behind you and not underfoot
+      const score = d - facing * 1.2;                        // ahead beats merely near
+      if (score < bestScore) { bestScore = score; bestPortal = portal; }
+    }
+    if (bestPortal) return { kind: 'portal', portal: bestPortal };
+
+    // A DRAWN DOOR that opens nothing must still answer. Houses carry doors as dressing, and they
+    // are the same painted planks with the same iron ring as a shop's — a veteran stood at one with
+    // "the door filling a third of the frame", pressed USE, and was told "Nothing here. A door is 8
+    // steps ahead", which is the shop door on the far side of the block. Silence at a door the
+    // player can see is the single most confusing thing a town can do.
+    for (const d of m.decor) {
+      if (d.kind !== 'door' || d.shop) continue;
+      if (Math.hypot(d.x - p.x, d.y - p.y) < 2.2) return { kind: 'house', decor: d };
     }
     return null;
   }
@@ -822,8 +846,9 @@ const Game = (() => {
     if (!t) {
       // A bare "Nothing here." four times in a row taught a player nothing. Point at the nearest
       // thing that IS interactive.
-      let best = null, bd = 9;
+      let best = null, bd = 24;
       for (const q of state.map.portals) {
+        if (q.shop === undefined && q.kind !== 'stairs' && q.kind !== 'door' && !q.to) continue;
         const d = Math.hypot(q.x + 0.5 - state.party.x, q.y + 0.5 - state.party.y);
         if (d < bd) { bd = d; best = q; }
       }
@@ -895,6 +920,10 @@ const Game = (() => {
       t.decor.regrowAt = Clock.t + Core.MIN_PER_DAY;
       Log.push('You gather ' + Items.ITEMS[t.decor.item].name + '.', 'good');
       return true;
+    }
+    if (t.kind === 'house') {
+      Log.push('The door is barred from within. Somebody lives here.', 'info');
+      return false;
     }
     if (t.kind === 'portal') {
       return usePortal(t.portal);
@@ -1822,6 +1851,15 @@ const Game = (() => {
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
     state.countItem = countItem;
+    // What is currently running on the party, for the HUD. Names and minutes only; the UI must
+    // never reach into the buff table itself.
+    state.buffList = () => {
+      const b = state.party.buffs || {};
+      return Object.keys(b)
+        .filter((k) => b[k].until > Clock.t)
+        .map((k) => ({ name: k, mins: Math.max(0, Math.round(b[k].until - Clock.t)) }))
+        .sort((x, y) => x.mins - y.mins);
+    };
     state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
     // The nearest hostile the party is actually facing, shaped for a nameplate. UI must never walk
     // the entity list itself; that is how a second implementation of "what counts as a foe" is born.

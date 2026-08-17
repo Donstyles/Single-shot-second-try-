@@ -124,7 +124,19 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
     const hh = Core.Clock.hhmm();
     Art.text(En, lx + lw - 8 - Art.textWidth(hh, 2), HUD.y + 86, hh, Core.idx(9, 12), 2);
-    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 18), Core.idx(2, 14), 2);
+    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 11), Core.idx(2, 14), 2);
+    // A burning torch must be visible somewhere. "You will burn all twelve without knowing" —
+    // lighting one printed a log line, consumed the item, and then nothing said it was lit or how
+    // long it had left. Shortest-remaining first, and it turns red as it runs out.
+    if (g.buffList) {
+      g.buffList().slice(0, 2).forEach((bf, i) => {
+        const bx2 = lx + 128 + i * 84;
+        if (bx2 + 80 > lx + lw) return;
+        Art.panel(En, bx2, HUD.y + 102, 80, 20, 13, true);
+        Art.text(En, bx2 + 4, HUD.y + 104, bf.name.slice(0, 5).toUpperCase() + ' ' + bf.mins,
+          Core.idx(bf.mins < 15 ? 11 : 6, 15), 1);
+      });
+    }
 
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
@@ -160,13 +172,18 @@ const UI = (() => {
     // ---- movement cluster, bottom of the left column
     const bw = 80, bh = 34, gap = 3;
     const mx = L.x + 4;
-    const my = L.y + L.h - (bh * 3 + gap * 2) - 8;
+    const my = L.y + L.h - (bh * 4 + gap * 3) - 6;
     const half = (bw - gap) >> 1;
+    // STRAFE, because MM6 taught you to sidestep in the first dungeon and this build wedges you
+    // into corners constantly. A veteran: "when you wedge yourself in a corner your only recourse
+    // is to back out the way you came." Turn on the middle row, sidestep on the row below it.
     const moves = [
       ['fwd', mx, my, bw, bh, 'up'],
       ['turnL', mx, my + bh + gap, half, bh, 'left'],
       ['turnR', mx + half + gap, my + bh + gap, half, bh, 'right'],
-      ['back', mx, my + (bh + gap) * 2, bw, bh, 'down'],
+      ['strafeL', mx, my + (bh + gap) * 2, half, bh, 'sideL'],
+      ['strafeR', mx + half + gap, my + (bh + gap) * 2, half, bh, 'sideR'],
+      ['back', mx, my + (bh + gap) * 3, bw, bh, 'down'],
     ];
     for (const [id, x, y, w, h, glyph] of moves) {
       const down = !!g.keys[id] || (g.keyLatch && g.keyLatch[id] > 0);
@@ -177,6 +194,8 @@ const UI = (() => {
       // they were strafe controls.
       if (glyph === 'left' || glyph === 'right') {
         Art.textCentred(En, x + w / 2, y + h - 11, 'TURN', Core.idx(13, down ? 15 : 11), 1);
+      } else if (glyph === 'sideL' || glyph === 'sideR') {
+        Art.textCentred(En, x + w / 2, y + h - 11, 'STEP', Core.idx(13, down ? 15 : 11), 1);
       }
       reg('move', x, y, w, h, id);
     }
@@ -432,8 +451,18 @@ const UI = (() => {
     pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
 
+    // ONLY the schools this class can ever use. A Knight whose own description says "No magic at
+    // all" was shown nine schools, four tiers each, every entry marked "not learned" — thirty-six
+    // promises the class can never keep.
+    const usable = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
+    if (!usable.length) {
+      Art.text(En, f.x + 24, f.inner + 40, ch.name + ' works no magic.', Core.idx(13, 14), 2);
+      Art.text(En, f.x + 24, f.inner + 66, Rules.CLASSES[ch.cls].name + 's never learn a spell.', Core.idx(0, 13), 2);
+      Art.text(En, f.x + 24, f.inner + 92, 'Pick a caster from the tabs above.', Core.idx(0, 12), 2);
+      return;
+    }
     // School tabs down the left.
-    Spellcraft.SCHOOL_IDS.forEach((s, i) => {
+    usable.forEach((s, i) => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
