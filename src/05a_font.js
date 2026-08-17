@@ -180,8 +180,11 @@ const Font = (() => {
   def('3', 28, [a(13, 30, 9, 9, -50, 200), a(13, 10, 10, 10, 200, 480)]);
   def('4', 30, [s(20, 0, 20, CAP, STEM), s(20, CAP, 3, 12, STEM - 1), b(3, 28, 12),
     r(13, 0, 27, SET)]);
-  def('5', 28, [r(7, CAP - HAIR, 26, CAP), s(8, CAP, 8, 24, STEM), r(8, 22, 17, 26),
-    a(15, 13, 11, 13, -80, 190)]);
+  // '5' had a bowl sweeping nearly the full circle, which read as an S at a glance and as a 6 in a
+  // price. A veteran read "53g" as 59g and "165g" as "16'5g" in the armourer's — the one string in
+  // a shop that has to be unambiguous. The bowl is open at the upper left now, the way a 5 is.
+  def('5', 28, [r(6, CAP - HAIR, 26, CAP), s(8, CAP, 8, 23, STEM), r(8, 21, 17, 25),
+    a(15, 12, 11, 12, -168, 82)]);
   def('6', 28, [a(14, 11, 11, 11, 0, 360), a(18, 26, 13, 15, 60, 170)]);
   def('7', 27, [r(3, CAP - HAIR, 26, CAP), s(24, CAP, 10, 0, STEM), r(4, 0, 16, SET)]);
   def('8', 29, [a(14, 30, 9, 9, 0, 360), a(14, 10, 11, 11, 0, 360)]);
@@ -198,6 +201,10 @@ const Font = (() => {
   def("'", 12, [s(6, CAP - 12, 6, CAP, 5)]);
   def('"', 19, [s(6, CAP - 12, 6, CAP, 5), s(14, CAP - 12, 14, CAP, 5)]);
   def('-', 20, [r(3, 18, 18, 22)]);
+  // The UI writes an EM DASH — "MAP — HARROWGATE VALE", "Rest the night — 10 gold". It was not in
+  // the face, so five separate screens rendered a '?' where the separator belonged.
+  def('\u2014', 34, [r(1, 18, 33, 22)]);
+  def('\u2013', 24, [r(1, 18, 23, 22)]);
   def('/', 24, [s(3, -3, 21, CAP + 3, STEM - 1)]);
   def('(', 16, [a(17, 19, 13, 23, 126, 234, STEM + 1)]);
   def(')', 16, [a(-1, 19, 13, 23, -54, 54, STEM + 1)]);
@@ -245,7 +252,7 @@ const Font = (() => {
   }
 
   // Rasterise one glyph at a given unit scale. `scale` maps font units to output pixels.
-  function raster(glyph, scale, weight, ss) {
+  function raster(glyph, scale, weight, ss, cap) {
     const advPx = Math.max(1, Math.round(glyph.adv * scale));
     const top = ASC, bot = -DESC;
     const rows = Math.ceil((top - bot) * scale);
@@ -284,7 +291,28 @@ const Font = (() => {
         if (hitv) cov[((py / ss) | 0) * W + ((px / ss) | 0)]++;
       }
     }
-    return { w: advPx, h: H, adv: advPx, cov, cw: W, lsb: -PADPX, nsamp };
+    // AUTO-FIT THE SPACING TO THE DRAWING.
+    //
+    // The advances above were authored by eye in font units and never checked against the
+    // rasterised ink. Measured at cap 12, FORTY glyphs painted outside their own advance box —
+    // 'r' by 2px on an advance of 6, a 33% overrun, so its shoulder landed inside the next letter
+    // and "Thornmarch" read "Thommarch", "Dorn" read "Dom", "Harrowgate" read "Hanowgate". A
+    // veteran found all three by reading the game's own words back wrong.
+    //
+    // A type designer does not guess bearings; they fit them to the outline. So does this: find
+    // the ink, seat it a bearing in from the pen, and make the advance the ink plus a bearing each
+    // side. Narrow letters stay narrow and wide letters stay wide, because the width comes from
+    // the drawing. Only the spacing is normalised, and it can no longer disagree with the shapes.
+    let inkL = W, inkR = -1;
+    for (let yy = 0; yy < H; yy++) {
+      for (let xx = 0; xx < W; xx++) {
+        if (cov[yy * W + xx] > 0) { if (xx < inkL) inkL = xx; if (xx > inkR) inkR = xx; }
+      }
+    }
+    if (inkR < 0) return { w: advPx, h: H, adv: advPx, cov, cw: W, lsb: -PADPX, nsamp };
+    const bear = Math.max(1, Math.round(cap * 0.10));
+    const fitted = bear + (inkR - inkL + 1) + bear;
+    return { w: fitted, h: H, adv: fitted, cov, cw: W, lsb: bear - inkL, nsamp };
   }
 
   // ------------------------------------------------------------------ faces
@@ -315,7 +343,7 @@ const Font = (() => {
       rows: Math.ceil((ASC + DESC) * scale),
       base: Math.ceil(ASC * scale),
     };
-    for (const ch of Object.keys(G)) f.glyphs[ch] = raster(G[ch], scale, weight, ss);
+    for (const ch of Object.keys(G)) f.glyphs[ch] = raster(G[ch], scale, weight, ss, cap);
     FACES.set(cap, f);
     return f;
   }
