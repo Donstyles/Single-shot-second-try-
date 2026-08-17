@@ -21,3 +21,8 @@ assets/raw/
 # npm
 node_modules/
 package-lock.json
+
+# Reference screenshots for the discriminator: measurement and comparison ONLY.
+# Never shipped, never sent to a generation API, never committed. No asset rips, ever.
+critique/reference/
+critique/discriminator/
