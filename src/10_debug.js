@@ -136,8 +136,45 @@ const Debug = (() => {
       state.pointer.down = false;
       if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, false);
     };
-    canvas.addEventListener('pointerdown', (e) => { down(e.clientX, e.clientY); e.preventDefault(); });
-    canvas.addEventListener('pointerup', (e) => { up(e.clientX, e.clientY); e.preventDefault(); });
+    // Bind EVERY input family. Pointer events alone left the game unreachable in any context that
+    // dispatches touch or plain mouse events, and "the title screen ate four taps" is the worst
+    // possible first three seconds.
+    // De-duplicate PER PHASE. A browser may fire pointer AND mouse AND touch for one physical tap,
+    // but press and release must be tracked separately — sharing one timestamp swallows the
+    // release of any fast tap, which would leave movement keys stuck down forever.
+    let lastDownAt = -1e9, lastUpAt = -1e9;
+    const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+    const gdown = (cx, cy) => {
+      const t = nowMs();
+      if (t - lastDownAt < 30) return;
+      lastDownAt = t;
+      down(cx, cy);
+    };
+    const gup = (cx, cy) => {
+      const t = nowMs();
+      if (t - lastUpAt < 30) return;
+      lastUpAt = t;
+      up(cx, cy);
+    };
+
+    canvas.addEventListener('pointerdown', (e) => { gdown(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('pointerup', (e) => { gup(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('mousedown', (e) => { gdown(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('mouseup', (e) => { gup(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0]; if (t) gdown(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    canvas.addEventListener('touchend', (e) => {
+      const t = e.changedTouches[0]; if (t) gup(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    // Last-resort fallback: if nothing above produced a press, a plain click still starts the game.
+    canvas.addEventListener('click', (e) => {
+      if (nowMs() - lastDownAt < 400) return;      // a real press already handled it
+      const p = toFb(e.clientX, e.clientY);
+      if (hasGame() && Game.onTap) { Game.onTap(p.x, p.y, true); Game.onTap(p.x, p.y, false); }
+    });
     canvas.addEventListener('pointermove', (e) => {
       const p = toFb(e.clientX, e.clientY);
       state.pointer.x = p.x; state.pointer.y = p.y;

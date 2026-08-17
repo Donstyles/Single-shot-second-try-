@@ -231,7 +231,9 @@ const Core = (() => {
   // Advanced by integer milliseconds through an accumulator kept in integer "micro-minutes",
   // so a scripted session at a fixed timestep is exact rather than nearly-exact.
   const MIN_PER_DAY = 1440;
-  const GAME_MIN_PER_REAL_SEC = 6;   // a full day is 4 real minutes
+  // A full day in 16 real minutes. At the previous rate (a day every four minutes) a player lost
+  // two in-game days to walking across a town, and the screen went black at minute eight.
+  const GAME_MIN_PER_REAL_SEC = 1.5;
 
   const Clock = {
     t: 9 * 60,        // world starts at 09:00 on day 0
@@ -240,9 +242,9 @@ const Core = (() => {
 
     advance(dtMs) {
       if (this.paused) return 0;
-      this.micro += (dtMs | 0) * GAME_MIN_PER_REAL_SEC;
-      const add = (this.micro / 1000) | 0;
-      if (add > 0) { this.micro -= add * 1000; this.t += add; }
+      this.micro += Math.round((dtMs | 0) * GAME_MIN_PER_REAL_SEC * 2);
+      const add = (this.micro / 2000) | 0;
+      if (add > 0) { this.micro -= add * 2000; this.t += add; }
       return add;
     },
 

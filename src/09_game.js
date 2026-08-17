@@ -211,7 +211,17 @@ const Game = (() => {
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
     else if (World.passable(m, nx, p.y, p.z)) p.x = nx;
     else if (World.passable(m, p.x, ny, p.z)) p.y = ny;
-    else return false;
+    else {
+      // Say so. Silent failure is indistinguishable from a frozen renderer, and that is exactly
+      // what a first-time player concluded after twenty-four presses.
+      if (Clock.t - (state._lastBlock || -99) > 2) {
+        state._lastBlock = Clock.t;
+        const h = World.H(m, nx, ny);
+        Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
+          : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
+      }
+      return false;
+    }
     p.z = World.walkHeight(m, p.x, p.y, p.z);
     markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
     return true;
@@ -584,15 +594,31 @@ const Game = (() => {
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
     for (const portal of m.portals) {
-      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 1.6 ||
-          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 1.3) return { kind: 'portal', portal };
+      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 2.4 ||
+          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 2.2) return { kind: 'portal', portal };
     }
     return null;
   }
 
   function interact() {
     const t = interactTarget();
-    if (!t) { Log.push('Nothing here.', 'info'); return false; }
+    if (!t) {
+      // A bare "Nothing here." four times in a row taught a player nothing. Point at the nearest
+      // thing that IS interactive.
+      let best = null, bd = 9;
+      for (const q of state.map.portals) {
+        const d = Math.hypot(q.x + 0.5 - state.party.x, q.y + 0.5 - state.party.y);
+        if (d < bd) { bd = d; best = q; }
+      }
+      if (best) {
+        const ang = Math.atan2(best.y + 0.5 - state.party.y, best.x + 0.5 - state.party.x) - state.party.ang;
+        const rel = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        const dir = Math.abs(rel) < 0.6 ? 'ahead' : Math.abs(rel) > 2.5 ? 'behind you'
+          : rel > 0 ? 'to your right' : 'to your left';
+        Log.push('Nothing here. A door is ' + Math.round(bd) + ' paces ' + dir + '.', 'info');
+      } else Log.push('Nothing here.', 'info');
+      return false;
+    }
 
     if (t.kind === 'npc') {
       state.talkingTo = t.npc;
@@ -1086,21 +1112,35 @@ const Game = (() => {
 
   function onTap(x, y, down) {
     const r = UI.hit(x, y);
-    if (!r) { if (!down) state.pressed = null; return; }
-
-    if (down) {
-      if (r.id === 'move') { state.keys[r.data] = true; state.pressed = r.data; }
-      else state.pressed = r.data;
+    if (!r) {
+      if (!down) { state.pressed = null; for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false; }
       return;
     }
 
-    // Release: clear held movement, then act.
-    for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false;
-    state.pressed = null;
+    // Movement is the ONLY thing that needs press-and-hold. Everything else fires on PRESS: a
+    // first-time player tapped NEW GAME four times and the game never started, because acting on
+    // release meant any hiccup in down/up pairing swallowed the input entirely.
+    if (r.id === 'move') {
+      if (down) { state.keys[r.data] = true; state.pressed = r.data; }
+      else { for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false; state.pressed = null; }
+      return;
+    }
+
+    if (!down) { state.pressed = null; return; }   // action already fired on press
+    state.pressed = r.data;
 
     switch (r.id) {
       case 'pc': state.active = r.data; break;
-      case 'btn': openScreen(r.data); break;
+      case 'btn':
+        if (r.data === 'book') {
+          // Open on a school this character can actually USE. Opening on Fire for a Priest made
+          // every page read "not learned" and taught the player that magic does not work.
+          const ch = state.party.members[state.active];
+          const usable = Spellcraft.SCHOOL_IDS.filter((s) => Rules.mastery(ch, s) > 0);
+          if (usable.length && usable.indexOf(state.bookSchool) < 0) { state.bookSchool = usable[0]; state.bookPage = 0; }
+        }
+        openScreen(r.data);
+        break;
       case 'act': {
         // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
         if (state.combat.active && nearestEnemy(18)) {

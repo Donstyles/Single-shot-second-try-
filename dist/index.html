@@ -262,7 +262,9 @@ const Core = (() => {
   // Advanced by integer milliseconds through an accumulator kept in integer "micro-minutes",
   // so a scripted session at a fixed timestep is exact rather than nearly-exact.
   const MIN_PER_DAY = 1440;
-  const GAME_MIN_PER_REAL_SEC = 6;   // a full day is 4 real minutes
+  // A full day in 16 real minutes. At the previous rate (a day every four minutes) a player lost
+  // two in-game days to walking across a town, and the screen went black at minute eight.
+  const GAME_MIN_PER_REAL_SEC = 1.5;
 
   const Clock = {
     t: 9 * 60,        // world starts at 09:00 on day 0
@@ -271,9 +273,9 @@ const Core = (() => {
 
     advance(dtMs) {
       if (this.paused) return 0;
-      this.micro += (dtMs | 0) * GAME_MIN_PER_REAL_SEC;
-      const add = (this.micro / 1000) | 0;
-      if (add > 0) { this.micro -= add * 1000; this.t += add; }
+      this.micro += Math.round((dtMs | 0) * GAME_MIN_PER_REAL_SEC * 2);
+      const add = (this.micro / 2000) | 0;
+      if (add > 0) { this.micro -= add * 2000; this.t += add; }
       return add;
     },
 
@@ -2460,6 +2462,23 @@ const Engine = (() => {
   const bandY0 = new Int16Array(16);
   const bandY1 = new Int16Array(16);
 
+  // Fade a texel toward the sky by moving its SHADE, and only dither across the narrow band where
+  // the ramp finally gives out. A full-frame checkerboard is a screen door, not haze.
+  function fogShade(texel, light, fog, skyBand, y, fogRow, fogJit) {
+    const ramp = texel & 0xf0;
+    const shade = (texel & 0x0f) + light;
+    if (!skyBand || fog <= 0.02) return Core.shade(ramp, shade);
+    const skyPi = skyBand[y - VIEW.y];
+    if (fog >= 0.90) return skyPi;
+    const skyShade = skyPi & 0x0f;
+    // Walk the shade toward the sky's brightness. Most of the fade happens here, in-ramp.
+    const lerped = Math.round(shade + (skyShade - shade) * fog);
+    if (fog < 0.62) return Core.shade(ramp, lerped);
+    // Crossover: dither between the faded surface and the sky over ~0.28 of the range only.
+    const t = (fog - 0.62) / 0.28;
+    return (t > FOG_BAYER[fogRow + (y & 7)] + fogJit) ? skyPi : Core.shade(ramp, lerped);
+  }
+
   function render3D(cam, world) {
     const map = cam.map;
     if (!map) { testCard(); return; }
@@ -2528,10 +2547,10 @@ const Engine = (() => {
         const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512;
 
         // ---- ground / water surface
+        const isWater = mat === World.MAT.water;
+        const surfH = isWater ? map.sea : gh;
         const yG = (horizon + (eyeZ - gh) * invD) | 0;
         if (!solid && yG < ybuf) {
-          const isWater = mat === World.MAT.water;
-          const surfH = isWater ? map.sea : gh;
           const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
           const top = yS < VIEW.y ? VIEW.y : yS;
           if (top < ybuf) {
@@ -2560,7 +2579,7 @@ const Engine = (() => {
             if (bot > ytop) {
               const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
               const light = dungeonLight(cam, wx, wy, map) - 4;
-              for (let y = ytop; y < bot; y++) buf[y * W + px] = Core.shade(ct & 0xf0, (ct & 0x0f) + light);
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit);
               ytop = bot;
             }
           }
@@ -2583,15 +2602,13 @@ const Engine = (() => {
             const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
             const lod = Art.lodFor(dist);
             for (let y = top; y < ybuf; y++) {
-              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + lightDelta);
+              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit);
             }
             ybuf = top;
           }
@@ -2618,11 +2635,9 @@ const Engine = (() => {
               let taken = false;
               for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
               if (taken) continue;
-              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               const wh = eyeZ - (y - horizon) / invD;
               const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
-              buf[y * W + px] = Core.shade(stx & 0xf0, (stx & 0x0f) + spanLight);
+              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -2750,16 +2765,58 @@ const Art = (() => {
     '7C14141408|081414187C|7C08040408|4854545420|043F444020|3C4040207C|1C2040201C|3C4030403C|' +
     '4428102844|0C5050503C|4464544C44|0008364100|00007F0000|0041360800|0804081008';
 
+  // Glyphs that MUST descend below the baseline, written row-major because that is the only way to
+  // author a descender legibly. Rows 0-6 are the body, rows 7-8 the tail.
+  const DESCENDERS = {
+    g: ['.....', '.....', '.###.', '#...#', '#...#', '.####', '....#', '#...#', '.###.'],
+    p: ['.....', '.....', '####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    q: ['.....', '.....', '.####', '#...#', '#...#', '.####', '....#', '....#', '....#'],
+    y: ['.....', '.....', '#...#', '#...#', '#...#', '.####', '....#', '#...#', '.###.'],
+    j: ['..#..', '.....', '..#..', '..#..', '..#..', '..#..', '..#..', '#.#..', '.##..'],
+    ',': ['.....', '.....', '.....', '.....', '.....', '.....', '..##.', '..#..', '.#...'],
+    ';': ['.....', '.....', '..##.', '..##.', '.....', '..##.', '..##.', '..#..', '.#...'],
+    // 'm' with no shoulder join reads as three separate strokes: "Thornnnarch".
+    m: ['.....', '.....', '##.##', '#.#.#', '#.#.#', '#.#.#', '#.#.#', '.....', '.....'],
+    // 'Q' needs its tail to be distinguishable from 'O' at phone size.
+    Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#', '.....', '.....'],
+  };
+
+  const GLYPH_H = 9;
+
+  // 5 columns per glyph, 9 bits each (bit 0 = top row).
   const FONT = (() => {
     const parts = FONT_HEX.replace(/\s/g, '').split('|');
-    const out = new Uint8Array(parts.length * 5);
+    const out = new Uint16Array(parts.length * 5);
     for (let i = 0; i < parts.length; i++) {
       for (let c = 0; c < 5; c++) out[i * 5 + c] = parseInt(parts[i].substr(c * 2, 2), 16) || 0;
+    }
+    // Overwrite the glyphs that need a descender or a better join.
+    for (const ch of Object.keys(DESCENDERS)) {
+      const idx = ch.charCodeAt(0) - 32;
+      const rows = DESCENDERS[ch];
+      for (let c = 0; c < 5; c++) {
+        let bits = 0;
+        for (let r = 0; r < GLYPH_H; r++) if (rows[r][c] === '#') bits |= (1 << r);
+        out[idx * 5 + c] = bits;
+      }
     }
     return out;
   })();
 
-  const CH_W = 6, CH_H = 8;   // 5px glyph + 1px gap
+  // PROPORTIONAL advance per glyph: ink width plus one column of side bearing. Fixed-pitch text is
+  // the other half of why the log read as a terminal rather than as a game.
+  const ADVANCE = (() => {
+    const adv = new Uint8Array(FONT.length / 5);
+    for (let i = 0; i < adv.length; i++) {
+      let last = -1;
+      for (let c = 0; c < 5; c++) if (FONT[i * 5 + c]) last = c;
+      // Space keeps a real width; everything else is trimmed to its ink.
+      adv[i] = last < 0 ? 3 : last + 2;
+    }
+    return adv;
+  })();
+
+  const CH_W = 6, CH_H = 10;
 
   function charCols(ch) {
     const code = ch.charCodeAt(0);
@@ -2771,23 +2828,34 @@ const Art = (() => {
     const s = scale || 1;
     let cx = x;
     for (let i = 0; i < str.length; i++) {
-      const o = charCols(str[i]);
-      if (o >= 0) {
+      const code = str.charCodeAt(i);
+      const gi = (code < 32 || code > 126) ? -1 : code - 32;
+      if (gi >= 0) {
+        const o = gi * 5;
         for (let c = 0; c < 5; c++) {
           const bits = FONT[o + c];
-          for (let r = 0; r < 7; r++) {
+          if (!bits) continue;
+          for (let r = 0; r < GLYPH_H; r++) {
             if (!(bits & (1 << r))) continue;
             if (s === 1) E.px(cx + c, y + r, pi);
             else E.rect(cx + c * s, y + r * s, s, s, pi);
           }
         }
-      }
-      cx += CH_W * s;
+        cx += ADVANCE[gi] * s;
+      } else cx += 4 * s;
     }
     return cx - x;
   }
 
-  const textWidth = (str, scale) => str.length * CH_W * (scale || 1);
+  function textWidth(str, scale) {
+    const s = scale || 1;
+    let w = 0;
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      w += (code < 32 || code > 126) ? 4 * s : ADVANCE[code - 32] * s;
+    }
+    return w;
+  }
 
   // Text with a 1px dark drop, which is what makes light type survive on a busy background.
   function textShadow(E, x, y, str, pi, scale) {
@@ -3095,17 +3163,69 @@ const Art = (() => {
     }
   }
 
+  // ---------------------------------------------------------------- hud icons
+  // Every shipped 1998 CRPG hand-painted its command bar: a helm, a pack, a book, a map. Six
+  // three-letter text labels in flat rectangles read as placeholder tooling, and "MNU" reads as a
+  // debug string. These are drawn, not typed.
+  function hudIcon(E, kind, x, y, s) {
+    const k = s || 2;
+    const px = (cx, cy, ramp, sh) => E.rect(x + cx * k, y + cy * k, k, k, Core.idx(ramp, sh));
+    const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
+
+    if (kind === 'sheet') {            // a helm, visored
+      box(3, 1, 6, 2, 14, 11); box(2, 3, 8, 5, 14, 9);
+      box(3, 4, 6, 2, 0, 2);           // visor slit
+      box(2, 8, 8, 1, 14, 6);
+      px(5, 0, 11, 12); px(6, 0, 11, 12);
+    } else if (kind === 'inv') {       // a pack with straps
+      box(2, 3, 8, 6, 4, 8); box(2, 2, 8, 1, 4, 11);
+      box(4, 0, 4, 2, 4, 6);           // flap
+      px(4, 5, 13, 12); px(7, 5, 13, 12);
+    } else if (kind === 'book') {      // an open spellbook
+      box(1, 2, 4, 7, 0, 13); box(7, 2, 4, 7, 0, 13);
+      box(5, 1, 2, 8, 4, 5);           // spine
+      px(2, 4, 12, 11); px(3, 6, 12, 11); px(8, 4, 12, 11); px(9, 6, 12, 11);
+    } else if (kind === 'map') {       // a folded map
+      box(1, 2, 10, 7, 2, 12);
+      box(4, 2, 1, 7, 2, 8); box(8, 2, 1, 7, 2, 8);   // folds
+      px(2, 4, 11, 12); px(3, 5, 11, 12); px(9, 6, 11, 12);
+    } else if (kind === 'rest') {      // a tent under a moon
+      for (let i = 0; i < 5; i++) box(6 - i, 4 + i, 1 + i * 2, 1, 4, 7 + (i & 1));
+      box(1, 9, 11, 1, 5, 5);
+      px(9, 1, 13, 14); px(10, 1, 13, 14); px(10, 2, 13, 14);
+    } else if (kind === 'menu') {      // a sealed scroll
+      box(2, 2, 8, 7, 2, 13);
+      box(2, 2, 8, 1, 2, 9); box(2, 8, 8, 1, 2, 9);
+      px(5, 5, 11, 11); px(6, 5, 11, 11); px(5, 6, 11, 11); px(6, 6, 11, 11);
+    }
+  }
+
+  // A pictorial shop sign. Blank brown planks meant a player had to walk into every door to learn
+  // what it was.
+  function shopSign(E, kind, x, y, s) {
+    const k = s || 2;
+    const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
+    if (kind === 'weapon') { box(5, 0, 2, 7, 14, 12); box(3, 6, 6, 1, 13, 10); box(5, 7, 2, 3, 4, 7); }
+    else if (kind === 'armour') { box(3, 1, 6, 7, 14, 10); box(2, 2, 1, 4, 14, 8); box(9, 2, 1, 4, 14, 8); }
+    else if (kind === 'general') { box(2, 3, 8, 6, 4, 8); box(4, 1, 4, 2, 4, 6); }
+    else if (kind === 'magic') { box(5, 1, 2, 9, 4, 6); box(3, 0, 6, 2, 12, 12); }
+    else if (kind === 'temple') { box(5, 0, 2, 10, 0, 14); box(2, 3, 8, 2, 0, 14); }
+    else if (kind === 'tavern') { box(3, 3, 6, 6, 13, 10); box(9, 4, 2, 3, 13, 8); box(3, 2, 6, 1, 0, 13); }
+    else if (kind === 'trainer') { box(2, 4, 8, 2, 14, 11); box(4, 2, 1, 6, 4, 7); box(7, 2, 1, 6, 4, 7); }
+    else if (kind === 'guild') { box(3, 1, 6, 8, 12, 9); box(5, 3, 2, 4, 13, 13); }
+  }
+
   // ---------------------------------------------------------------- animation
   let tick = 0;
   function step() { tick++; }
 
   return {
-    TS, FONT, CH_W, CH_H,
+    TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
     text, textShadow, textCentred, textWidth,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
-    panel, button, gameFrame, bar, step,
+    panel, button, gameFrame, bar, step, hudIcon, shopSign,
     get tick() { return tick; },
   };
 })();
@@ -3306,6 +3426,12 @@ const Sprites = (() => {
         const taper = trunkW + Math.round((y - trunkTop) / Math.max(1, h - trunkTop) * 1.6);
         for (let x = -taper; x <= taper; x++) put(cx + x, y, 4, clamp(8 - Math.abs(x + 1), 3, 12));
       }
+      // Root flare: without a darkened, widening base the trunk ends in a flat cut and the tree
+      // reads as floating above the ground.
+      for (let y = h - 4; y < h; y++) {
+        const flare = trunkW + 2 + (y - (h - 4));
+        for (let x = -flare; x <= flare; x++) put(cx + x, y, 5, clamp(5 - Math.abs(x) / 2, 2, 7));
+      }
       if (kind !== 'ashstump') {
         const leafRamp = kind === 'deadtree' ? 4 : 7;
         if (kind === 'pine') {
@@ -3321,14 +3447,24 @@ const Sprites = (() => {
             }
           }
         } else {
-          const cyy = Math.round(h * 0.30), rr = 15;
-          for (let y = -rr; y <= rr; y++) {
-            for (let x = -rr; x <= rr; x++) {
-              const dd = Math.hypot(x, y * 1.15);
-              if (dd > rr) continue;
-              if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;   // bare branches
-              put(cx + x, cyy + y, leafRamp,
-                clamp(11 - Math.round((x + rr) / (rr * 2) * 5) - Math.round((y + rr) / (rr * 2) * 2), 3, 13));
+          // Four overlapping lobes of different size, then a per-pixel noise nibble at the rim.
+          // A clean ellipse is what makes a tree read as a modern low-poly asset.
+          const cyy = Math.round(h * 0.30);
+          const lobes = [[0, 0, 13], [-8, 3, 9], [8, 2, 10], [-2, -7, 8], [4, 8, 7]];
+          for (const [ox, oy, rr] of lobes) {
+            for (let y = -rr; y <= rr; y++) {
+              for (let x = -rr; x <= rr; x++) {
+                const dd = Math.hypot(x, y * 1.12);
+                if (dd > rr) continue;
+                // Ragged rim: drop scattered pixels in the outer 22% so the edge is alpha-cut
+                // foliage rather than a geometric arc.
+                if (dd > rr * 0.78 && ((x * 7 + y * 13 + ox * 3) & 3) === 0) continue;
+                if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;
+                const gx = x + ox, gy = y + oy;
+                put(cx + gx, cyy + gy, leafRamp,
+                  clamp(11 - Math.round((gx + 16) / 32 * 5) - Math.round((gy + 16) / 32 * 3)
+                    + (((gx * 5 + gy * 3) & 3) === 0 ? 1 : 0), 3, 13));
+              }
             }
           }
         }
@@ -3373,11 +3509,16 @@ const Sprites = (() => {
     }
 
     const out = Uint8Array.from(d);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (d[y * w + x]) continue;
-        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
-            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+    // Trees and shrubs get NO outline. A hard 1px rim around foliage reads as a rendered solid,
+    // which is exactly the "low-poly asset pack" tell; hard-edged props keep theirs.
+    const soft = /oak|pine|deadtree|bush|reed/.test(kind);
+    if (!soft) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (d[y * w + x]) continue;
+          if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+              (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+        }
       }
     }
     return { w, h, data: out };
@@ -3456,17 +3597,43 @@ const Sprites = (() => {
 
     const kind = it.kind || 'misc';
     if (kind === 'weapon') {
-      const bow = it.slot === 'bow';
-      if (bow) {
-        for (let a = -14; a <= 14; a++) {
-          const x = 10 + Math.round(Math.cos(a / 18) * 7);
-          put(x, 16 + a, 4, 8);
-        }
+      const sk = it.skill;
+      if (sk === 'bow') {
+        for (let a = -14; a <= 14; a++) put(10 + Math.round(Math.cos(a / 18) * 7), 16 + a, 4, 8);
         for (let y = 2; y < 30; y++) put(18, y, 0, 10);
-      } else {
-        for (let y = 3; y < 22; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
-        for (let x = 10; x <= 22; x++) put(x, 22, 13, 9);
-        for (let y = 23; y < 29; y++) put(16, y, 4, 7);
+      } else if (sk === 'axe') {
+        for (let y = 4; y < 29; y++) put(20, y, 4, 7);                       // haft
+        for (let y = 4; y < 16; y++) {
+          const wdt = 8 - Math.abs(y - 10);
+          for (let x = 0; x < wdt; x++) put(19 - x, y, 14, 12 - (x >> 1));   // blade
+        }
+      } else if (sk === 'mace') {
+        for (let y = 12; y < 29; y++) put(16, y, 4, 7);                      // haft
+        for (let y = 3; y < 13; y++) for (let x = -5; x <= 5; x++) {
+          if (Math.hypot(x, y - 8) > 5.4) continue;
+          put(16 + x, y, 14, 11 - Math.abs(x) / 2);                          // head
+        }
+        for (const [fx, fy] of [[-7, 8], [7, 8], [0, 1], [0, 15]]) put(16 + fx, fy, 14, 13);
+      } else if (sk === 'staff') {
+        for (let y = 1; y < 30; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 4, 8 - Math.abs(x));
+        for (let x = -4; x <= 4; x++) put(16 + x, 4, 4, 6);                   // binding
+        put(16, 1, 12, 13); put(15, 2, 12, 12); put(17, 2, 12, 12);
+      } else if (sk === 'spear') {
+        for (let y = 8; y < 30; y++) put(16, y, 4, 7);
+        for (let y = 1; y < 9; y++) {
+          const wdt = Math.max(0, 3 - Math.abs(y - 5));
+          for (let x = -wdt; x <= wdt; x++) put(16 + x, y, 14, 12 - Math.abs(x));
+        }
+      } else if (sk === 'dagger') {
+        for (let y = 8; y < 21; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 14, 12 - Math.abs(x));
+        for (let x = 12; x <= 20; x++) put(x, 21, 13, 10);
+        for (let y = 22; y < 27; y++) put(16, y, 4, 7);
+      } else {                                                                // sword
+        const long = (it.dmg && (it.dmg.n * it.dmg.sides) >= 12);
+        for (let y = long ? 2 : 6; y < 21; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
+        for (let x = 9; x <= 23; x++) put(x, 21, 13, 10);                      // crossguard
+        for (let y = 22; y < 28; y++) put(16, y, 4, 7);                        // grip
+        put(16, 28, 13, 12);                                                   // pommel
       }
     } else if (kind === 'armour') {
       for (let y = 5; y < 27; y++) {
@@ -3608,16 +3775,16 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 106, (g.map.town ? g.map.town.name + ', ' : '') + g.map.name, Core.idx(2, 12), 1);
 
     // ---- buttons, two rows of three, each a comfortable finger target
+    // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
+    // possible way to read as placeholder tooling, and "MNU" is a debug string.
     const BX = 640 - 114, BW = 54, BH = 36;
-    const btns = [
-      ['CHR', 'sheet'], ['INV', 'inv'], ['SPL', 'book'],
-      ['MAP', 'map'], ['RST', 'rest'], ['MNU', 'menu'],
-    ];
-    btns.forEach((b, i) => {
+    const btns = ['sheet', 'inv', 'book', 'map', 'rest', 'menu'];
+    btns.forEach((id, i) => {
       const bx = BX + (i % 2) * (BW + 4);
       const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
-      Art.button(En, bx, by, BW, BH, b[0], g.pressed === b[1], 2);
-      if (interactive) reg('btn', bx, by, BW, BH, b[1]);
+      Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
+      Art.hudIcon(En, id, bx + 11, by + 6, 2);
+      if (interactive) reg('btn', bx, by, BW, BH, id);
     });
   }
 
@@ -3625,7 +3792,7 @@ const UI = (() => {
   // Drawn INSIDE the 3D viewport, translucent-by-dither so they never hide the world entirely.
   function drawTouchControls(g) {
     const En = E(), V = En.VIEW;
-    const S = 62, pad = 8;
+    const S = 44, pad = 4;
     const bx = V.x + pad, by = V.y + V.h - S * 2 - pad * 2;
 
     const pad4 = [
@@ -3645,24 +3812,26 @@ const UI = (() => {
     reg('act', ax, ay, S, S, 'act');
 
     if (g.combat.active) {
-      ghostButton(ax - S - 6, ay, S, S, 'CAST', g.pressed === 'cast');
-      reg('cast', ax - S - 6, ay, S, S, 'cast');
-      ghostButton(ax, ay - S - 6, S, S, 'WAIT', g.pressed === 'wait');
-      reg('wait', ax, ay - S - 6, S, S, 'wait');
+      ghostButton(ax - S - 4, ay, S, S, 'CST', g.pressed === 'cast');
+      reg('cast', ax - S - 4, ay, S, S, 'cast');
+      ghostButton(ax, ay - S - 4, S, S, 'WAIT', g.pressed === 'wait');
+      reg('wait', ax, ay - S - 4, S, S, 'wait');
     }
   }
 
   // A button that lets the world show through on a checker, which is how a 1998 game faked alpha.
+  // Solid, bevelled, and small. The old version was a 50% checkerboard, which was ALSO doing duty
+  // as windows, portrait backing and distance haze — one pattern doing six jobs is what you reach
+  // for when you have no art.
   function ghostButton(x, y, w, h, label, down) {
     const En = E();
-    for (let yy = y; yy < y + h; yy++) {
-      for (let xx = x; xx < x + w; xx++) {
-        if ((xx + yy) & 1) continue;
-        En.px(xx, yy, Core.idx(0, down ? 5 : 2));
-      }
-    }
-    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 9));
-    Art.textCentred(En, x + w / 2, y + (h >> 1) - 7, label, Core.idx(0, 15), 2);
+    En.rect(x, y, w, h, Core.idx(4, down ? 3 : 5));
+    En.hline(x, y, w, Core.idx(4, down ? 3 : 9));
+    En.vline(x, y, h, Core.idx(4, down ? 3 : 9));
+    En.hline(x, y + h - 1, w, Core.idx(4, down ? 9 : 2));
+    En.vline(x + w - 1, y, h, Core.idx(4, down ? 9 : 2));
+    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 8));
+    Art.textCentred(En, x + w / 2, y + (h >> 1) - 5, label, Core.idx(13, 14), 1);
   }
 
   // ---------------------------------------------------------------- screens
@@ -3712,7 +3881,7 @@ const UI = (() => {
     // Stats in two columns.
     y = f.inner + 164;
     Rules.STATS.forEach((s, i) => {
-      const cx = f.x + 24 + (i % 2) * 200;
+      const cx = f.x + 24 + (i % 2) * 260;
       const cy = y + Math.floor(i / 2) * 22;
       const v = Rules.effStat(ch, s);
       const b = Rules.statBonus(v);
@@ -3812,7 +3981,8 @@ const UI = (() => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
-      Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
+      Art.button(En, x, y, 96, 34, null, on, 2);
+      Art.text(En, x + 6, y + 9, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), Core.idx(0, on ? 15 : 14), 2);
       if (!on) {
         // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
         // were invisible on a phone.
@@ -4367,7 +4537,17 @@ const Game = (() => {
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
     else if (World.passable(m, nx, p.y, p.z)) p.x = nx;
     else if (World.passable(m, p.x, ny, p.z)) p.y = ny;
-    else return false;
+    else {
+      // Say so. Silent failure is indistinguishable from a frozen renderer, and that is exactly
+      // what a first-time player concluded after twenty-four presses.
+      if (Clock.t - (state._lastBlock || -99) > 2) {
+        state._lastBlock = Clock.t;
+        const h = World.H(m, nx, ny);
+        Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
+          : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
+      }
+      return false;
+    }
     p.z = World.walkHeight(m, p.x, p.y, p.z);
     markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
     return true;
@@ -4740,15 +4920,31 @@ const Game = (() => {
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
     for (const portal of m.portals) {
-      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 1.6 ||
-          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 1.3) return { kind: 'portal', portal };
+      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 2.4 ||
+          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 2.2) return { kind: 'portal', portal };
     }
     return null;
   }
 
   function interact() {
     const t = interactTarget();
-    if (!t) { Log.push('Nothing here.', 'info'); return false; }
+    if (!t) {
+      // A bare "Nothing here." four times in a row taught a player nothing. Point at the nearest
+      // thing that IS interactive.
+      let best = null, bd = 9;
+      for (const q of state.map.portals) {
+        const d = Math.hypot(q.x + 0.5 - state.party.x, q.y + 0.5 - state.party.y);
+        if (d < bd) { bd = d; best = q; }
+      }
+      if (best) {
+        const ang = Math.atan2(best.y + 0.5 - state.party.y, best.x + 0.5 - state.party.x) - state.party.ang;
+        const rel = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        const dir = Math.abs(rel) < 0.6 ? 'ahead' : Math.abs(rel) > 2.5 ? 'behind you'
+          : rel > 0 ? 'to your right' : 'to your left';
+        Log.push('Nothing here. A door is ' + Math.round(bd) + ' paces ' + dir + '.', 'info');
+      } else Log.push('Nothing here.', 'info');
+      return false;
+    }
 
     if (t.kind === 'npc') {
       state.talkingTo = t.npc;
@@ -5242,21 +5438,35 @@ const Game = (() => {
 
   function onTap(x, y, down) {
     const r = UI.hit(x, y);
-    if (!r) { if (!down) state.pressed = null; return; }
-
-    if (down) {
-      if (r.id === 'move') { state.keys[r.data] = true; state.pressed = r.data; }
-      else state.pressed = r.data;
+    if (!r) {
+      if (!down) { state.pressed = null; for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false; }
       return;
     }
 
-    // Release: clear held movement, then act.
-    for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false;
-    state.pressed = null;
+    // Movement is the ONLY thing that needs press-and-hold. Everything else fires on PRESS: a
+    // first-time player tapped NEW GAME four times and the game never started, because acting on
+    // release meant any hiccup in down/up pairing swallowed the input entirely.
+    if (r.id === 'move') {
+      if (down) { state.keys[r.data] = true; state.pressed = r.data; }
+      else { for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false; state.pressed = null; }
+      return;
+    }
+
+    if (!down) { state.pressed = null; return; }   // action already fired on press
+    state.pressed = r.data;
 
     switch (r.id) {
       case 'pc': state.active = r.data; break;
-      case 'btn': openScreen(r.data); break;
+      case 'btn':
+        if (r.data === 'book') {
+          // Open on a school this character can actually USE. Opening on Fire for a Priest made
+          // every page read "not learned" and taught the player that magic does not work.
+          const ch = state.party.members[state.active];
+          const usable = Spellcraft.SCHOOL_IDS.filter((s) => Rules.mastery(ch, s) > 0);
+          if (usable.length && usable.indexOf(state.bookSchool) < 0) { state.bookSchool = usable[0]; state.bookPage = 0; }
+        }
+        openScreen(r.data);
+        break;
       case 'act': {
         // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
         if (state.combat.active && nearestEnemy(18)) {
@@ -5871,8 +6081,45 @@ const Debug = (() => {
       state.pointer.down = false;
       if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, false);
     };
-    canvas.addEventListener('pointerdown', (e) => { down(e.clientX, e.clientY); e.preventDefault(); });
-    canvas.addEventListener('pointerup', (e) => { up(e.clientX, e.clientY); e.preventDefault(); });
+    // Bind EVERY input family. Pointer events alone left the game unreachable in any context that
+    // dispatches touch or plain mouse events, and "the title screen ate four taps" is the worst
+    // possible first three seconds.
+    // De-duplicate PER PHASE. A browser may fire pointer AND mouse AND touch for one physical tap,
+    // but press and release must be tracked separately — sharing one timestamp swallows the
+    // release of any fast tap, which would leave movement keys stuck down forever.
+    let lastDownAt = -1e9, lastUpAt = -1e9;
+    const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+    const gdown = (cx, cy) => {
+      const t = nowMs();
+      if (t - lastDownAt < 30) return;
+      lastDownAt = t;
+      down(cx, cy);
+    };
+    const gup = (cx, cy) => {
+      const t = nowMs();
+      if (t - lastUpAt < 30) return;
+      lastUpAt = t;
+      up(cx, cy);
+    };
+
+    canvas.addEventListener('pointerdown', (e) => { gdown(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('pointerup', (e) => { gup(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('mousedown', (e) => { gdown(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('mouseup', (e) => { gup(e.clientX, e.clientY); e.preventDefault(); });
+    canvas.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0]; if (t) gdown(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    canvas.addEventListener('touchend', (e) => {
+      const t = e.changedTouches[0]; if (t) gup(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    // Last-resort fallback: if nothing above produced a press, a plain click still starts the game.
+    canvas.addEventListener('click', (e) => {
+      if (nowMs() - lastDownAt < 400) return;      // a real press already handled it
+      const p = toFb(e.clientX, e.clientY);
+      if (hasGame() && Game.onTap) { Game.onTap(p.x, p.y, true); Game.onTap(p.x, p.y, false); }
+    });
     canvas.addEventListener('pointermove', (e) => {
       const p = toFb(e.clientX, e.clientY);
       state.pointer.x = p.x; state.pointer.y = p.y;

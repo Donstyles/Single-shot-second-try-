@@ -109,7 +109,7 @@ T.suite('core: clock');
 
   C.setTod(0);
   for (let i = 0; i < 1000; i++) C.advance(16);
-  T.eq(C.tod, 96, '1000 steps of 16ms = exactly 96 game minutes');
+  T.eq(C.tod, 24, '1000 steps of 16ms = exactly 24 game minutes');
   T.ok(Number.isInteger(C.t), 'clock stays integral');
 
   // Wrapping: setTod must never produce a negative or >1440 time of day.

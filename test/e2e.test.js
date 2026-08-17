@@ -103,7 +103,7 @@ const T = require('./_harness.js');
   T.eq(clock.noon.phase, 'noon', 'noon phase');
   T.eq(clock.night.hhmm, '23:00', 'setTod(1380) is 23:00');
   T.eq(clock.night.phase, 'night', 'night phase');
-  T.eq(clock.advanced, 96, '1000 fixed 16ms steps advance exactly 96 game minutes');
+  T.eq(clock.advanced, 24, '1000 fixed 16ms steps advance exactly 24 game minutes');
   T.ok(clock.integer, 'clock.t stays an integer');
 
   T.suite('harness contract');
@@ -381,6 +381,105 @@ const T = require('./_harness.js');
   })()`);
   T.ok(modal.openCount >= 6, 'the HUD registers its buttons during play (' + modal.openCount + ')');
   T.eq(modal.modalCount, 0, 'and registers NONE of them behind a modal panel');
+
+  // ---- regressions from the r8 first-impression review ("would not keep playing"). The worst of
+  // these made the game unreachable on a phone, which is the entire product.
+  T.suite('first-impression regressions');
+
+  const clientPt = await page.evaluate(`(() => {
+    const r = document.getElementById('fb').getBoundingClientRect();
+    return { left: r.left, top: r.top, w: r.width, h: r.height };
+  })()`);
+  const toClient = (fx, fy) => ({
+    x: clientPt.left + (fx / 640) * clientPt.w,
+    y: clientPt.top + (fy / 480) * clientPt.h,
+  });
+
+  // Each input family gets its own tick with a real gap, because that is how a browser behaves.
+  // Firing all three inside one synchronous block makes the de-dup guard look broken when it is
+  // doing exactly its job.
+  const startedBy = {};
+  for (const fam of ['pointer', 'mouse', 'touch']) {
+    const p = toClient(320, 278);   // centre of NEW GAME
+    startedBy[fam] = await page.evaluate(([f, cx, cy]) => {
+      const c = document.getElementById('fb');
+      Game.state.screen = 'title';
+      UI.draw(Game.state);
+      if (f === 'pointer') {
+        c.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, bubbles: true }));
+        c.dispatchEvent(new PointerEvent('pointerup', { clientX: cx, clientY: cy, bubbles: true }));
+      } else if (f === 'mouse') {
+        c.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, bubbles: true }));
+        c.dispatchEvent(new MouseEvent('mouseup', { clientX: cx, clientY: cy, bubbles: true }));
+      } else {
+        const t = new Touch({ clientX: cx, clientY: cy, identifier: 1, target: c });
+        c.dispatchEvent(new TouchEvent('touchstart', { changedTouches: [t], bubbles: true, cancelable: true }));
+        c.dispatchEvent(new TouchEvent('touchend', { changedTouches: [t], bubbles: true, cancelable: true }));
+      }
+      return Game.state.screen === 'creation';
+    }, [fam, p.x, p.y]);
+    await page.waitForTimeout(120);
+  }
+
+  const tap = await page.evaluate(`(() => {
+    const out = { startedBy: {} };
+
+    // A single PRESS must act — no hold required.
+    Game.state.screen = null;
+    window.__game.gotoMap('harrowgate', 64, 64, 0);
+    UI.draw(Game.state);
+    const hit = UI.regions().find(x => x.id === 'btn' && x.data === 'map');
+    Game.onTap(hit.x + 4, hit.y + 4, true);
+    out.pressOpensScreen = Game.state.screen === 'map';
+    Game.closeScreens();
+
+    // Blocked movement must SAY SO.
+    Core.Log.clear();
+    Game.state.screen = null;
+    const m = Game.state.map;
+    let found = null;
+    for (let a = 0; a < 32 && found === null; a++) {
+      const ang = (a / 32) * Math.PI * 2;
+      const tx = Game.state.party.x + Math.cos(ang) * 1.2, ty = Game.state.party.y + Math.sin(ang) * 1.2;
+      if (!World.passable(m, tx, ty, Game.state.party.z)) found = ang;
+    }
+    if (found !== null) {
+      Game.state.party.ang = found;
+      Game.state.keys.fwd = true;
+      for (let i = 0; i < 30; i++) Game.update(16);
+      Game.state.keys.fwd = false;
+    }
+    out.blockedSaidSomething = found === null ? 'no wall nearby' : Core.Log.lines.length > 0;
+
+    // A release must ALWAYS clear held movement, or a fast tap leaves the party walking forever.
+    Game.onTap(-1, -1, true);
+    Game.state.keys.fwd = true;
+    Game.onTap(-1, -1, false);
+    out.releaseClearsMovement = !Game.state.keys.fwd;
+
+    // The spellbook must open on a school the character can actually use.
+    Game.state.active = 1;
+    Game.state.bookSchool = 'fire';
+    UI.draw(Game.state);
+    const btn = UI.regions().find(x => x.id === 'btn' && x.data === 'book');
+    Game.onTap(btn.x + 4, btn.y + 4, true);
+    out.bookSchool = Game.state.bookSchool;
+    out.bookSchoolUsable = Rules.mastery(Game.state.party.members[1], Game.state.bookSchool) > 0;
+    Game.closeScreens();
+    Game.state.active = 0;
+
+    return out;
+  })()`);
+  tap.startedBy = startedBy;
+
+  T.ok(tap.startedBy.pointer, 'NEW GAME starts the game on a pointer tap');
+  T.ok(tap.startedBy.mouse, 'NEW GAME starts the game on a mouse click');
+  T.ok(tap.startedBy.touch, 'NEW GAME starts the game on a real touch event');
+  T.ok(tap.pressOpensScreen, 'a single PRESS acts — no hold required');
+  T.ok(tap.blockedSaidSomething === true || tap.blockedSaidSomething === 'no wall nearby',
+    'blocked movement reports why instead of failing silently');
+  T.ok(tap.bookSchoolUsable, 'the spellbook opens on a school the character can use (' + tap.bookSchool + ')');
+  T.ok(tap.releaseClearsMovement, 'a release always clears held movement — a swallowed release would walk forever');
 
   T.eq(errors, [], 'still no page errors after exercising the harness');
 
