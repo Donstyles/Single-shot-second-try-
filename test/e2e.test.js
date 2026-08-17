@@ -1085,6 +1085,53 @@ const T = require('./_harness.js');
     T.ok(fit.total > 20, 'the fitting probe covers a real spread of strings and widths');
     T.eq(fit.bad, [], 'every fitted string fits the width it was given');
 
+    // ---- NO BILLBOARD MAY EAT THE SCENE. The old near-clip required BOTH arm's length AND 78%
+    // of the viewport width, so a billboard standing a little further back but scaled enormous
+    // walked straight through it. Measured in the bandit camp: three colours covered 78.3% of the
+    // viewport, ten covered 91.2%, and there was no horizon, no ground plane and no visible enemy.
+    // The rule is about coverage now, not distance.
+    const cover = await page.evaluate(`(() => {
+      const h = window.__game;
+      h.beginGame(); h.settle(1);
+      const lm = h.landmark('greyhollow', 'camp') || h.landmark('harrowgate', 'camp');
+      if (lm) { h.gotoMap(lm.map || 'greyhollow', lm.x, lm.y, 0); h.face(Math.atan2((lm.ly||lm.y)-lm.y, (lm.lx||lm.x)-lm.x)); }
+      h.settle(3); h.redraw();
+      const V = Engine.VIEW, buf = Engine.buf, W = Engine.W;
+      const hist = new Map();
+      for (let y = 0; y < V.h; y++) {
+        for (let x = 0; x < V.w; x++) {
+          const pi = buf[(V.y + y) * W + (V.x + x)];
+          hist.set(pi, (hist.get(pi) || 0) + 1);
+        }
+      }
+      const tot = V.w * V.h;
+      const top = [...hist.values()].sort((a, b) => b - a);
+      return { colours: hist.size, top3: 100 * (top[0] + (top[1] || 0) + (top[2] || 0)) / tot };
+    })()`);
+    T.ok(cover.colours > 40,
+      'a world view carries real colour variety (' + cover.colours + ')');
+    T.ok(cover.top3 < 70,
+      'no three colours own the viewport (' + cover.top3.toFixed(1) + '%)');
+
+    // ---- The sky must not tile. The gradient band is 8 columns and was indexed by the low bits
+    // of x; 16 framebuffer pixels is exactly 13 presented pixels, so the PRESENTED sky repeated on
+    // a 13px pitch — measured 99.0% pixel-identical at that lag, autocorrelation 0.94.
+    const tile = await page.evaluate(`(() => {
+      const h = window.__game;
+      h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.setTime(720); h.settle(2); h.redraw();
+      const V = Engine.VIEW, buf = Engine.buf, W = Engine.W;
+      let same = 0, tot = 0;
+      for (let y = 4; y < 40; y++) {
+        for (let x = 60; x < V.w - 32; x++) {
+          if (buf[(V.y + y) * W + (V.x + x)] === buf[(V.y + y) * W + (V.x + x + 16)]) same++;
+          tot++;
+        }
+      }
+      return { identical: 100 * same / tot };
+    })()`);
+    T.ok(tile.identical < 80,
+      'the sky does not repeat on a fixed pitch (' + tile.identical.toFixed(1) + '% identical at 16px)');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

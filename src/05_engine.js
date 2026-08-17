@@ -332,10 +332,18 @@ const Engine = (() => {
       // would swim across the sky as the party turned, which is the one thing that would make it
       // look worse than an empty gradient. Drawn only above the horizon, and only outdoors.
       if (skyBand) {
-        const phase = sx & 7;
         const az = Math.atan2(dy, dx);
         const skyRows = horizon - VIEW.y;
         for (let y = 0; y < VIEW.h; y++) {
+          // DITHER PHASE FROM A HASH, NOT FROM (sx & 7).
+          //
+          // The gradient band is 8 columns wide and was indexed by the low bits of x, so it tiled
+          // every 8 framebuffer pixels. 8 does not survive the 0.8125 presentation scale, but 16
+          // does — 16 x 0.8125 is exactly 13 — so the PRESENTED sky repeated on a 13-pixel pitch.
+          // A cold critic measured it without knowing any of that: columns 13 apart were 99.0%
+          // pixel-identical, autocorrelation 0.94, and called it "wallpaper, not air".
+          // A hash has no period to survive the scale.
+          const phase = ((sx * 1103515245 + y * 12345) >>> 16) & 7;
           let pi = skyBand[y * 8 + phase];
           if (y < skyRows && skyRows > 0) {
             // v runs 0 overhead to 1 at the horizon; clouds pile up toward the horizon.
@@ -588,7 +596,19 @@ const Engine = (() => {
     // trunk, but a canopy is wider than its trunk and a camera under one still fills the frame with
     // flat green. Anything spanning more than 78% of the viewport at arm's length is not scenery
     // any more, it is a wall the player cannot see past, so drop it and let them see the world.
-    if (opts && opts.cullNear && tx < 1.6 && wPix > VIEW.w * 0.78) return false;
+    // The old rule required BOTH arm's length AND 78% of the width, so a billboard that stood a
+    // little further back but was scaled enormous walked straight through it. A cold critic
+    // measured the result: in the bandit camp THREE COLOURS covered 78.3% of the viewport and ten
+    // covered 91.2% — one foliage billboard had eaten the entire scene, leaving no horizon, no
+    // ground plane and no visible enemy. Its verdict was that this is the only failure in the set
+    // that is not a matter of craft: "a player cannot tell where they are."
+    //
+    // So the rule is about COVERAGE now, not distance. Nothing that is merely scenery may occupy
+    // most of the frame; if it does, it is a wall the player cannot see past.
+    if (opts && opts.cullNear
+      && (wPix > VIEW.w * 0.52 || hPix > VIEW.h * 1.30 || (tx < 1.6 && wPix > VIEW.w * 0.40))) {
+      return false;
+    }
 
     // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
