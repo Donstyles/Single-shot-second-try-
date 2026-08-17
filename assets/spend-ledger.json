@@ -431,7 +431,55 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00ef5-4c93-7613-b845-5feb33e12e15"
+    },
+    {
+      "n": 73,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef5-f43d-7ab8-900b-9144030c1f4a"
+    },
+    {
+      "n": 74,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A lean grey wolf, thick shoulder ruff, h"
+    },
+    {
+      "n": 75,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A priest in pale robes with a hood and a"
+    },
+    {
+      "n": 76,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef7-6b3a-7afa-9897-9887b94804d7"
+    },
+    {
+      "n": 77,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef7-f2e6-7b18-89d2-38978b895869"
+    },
+    {
+      "n": 78,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A giant cave spider, eight long segmente"
+    },
+    {
+      "n": 79,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ef9-8c24-743f-bbd2-b289f34dff51"
+    },
+    {
+      "n": 80,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An old archivist in dark scholarly robes"
     }
   ],
-  "spent": 572
+  "spent": 632
 }
