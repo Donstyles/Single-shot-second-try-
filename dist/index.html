@@ -1334,6 +1334,827 @@ const Items = (() => {
 if (typeof module !== 'undefined' && module.exports) module.exports = Items;
 
 
+/* ==================== 04_world.js ==================== */
+// 04_world.js — nine connected regions, their heightfields, dungeons, portals and quests.
+// Owner: world. Calls Core, Rules, Items.
+//
+// Everything here is generated from LAYOUT streams (RNG.world), so a region is reproducible from
+// the seed alone and is never serialised — only the delta from play is saved. Authored overrides
+// are applied LAST and unconditionally, because a town plaza that is flat only when the noise
+// happens to cooperate is not a town plaza.
+
+const World = (() => {
+  'use strict';
+
+  const { clamp, lerp, smooth, RNG } = Core;
+
+  // ---------------------------------------------------------------- materials
+  const SOLID = 128;
+  const MAT = {
+    grass: 0, road: 1, dirt: 2, sand: 3, rock: 4, snow: 5, marsh: 6, ash: 7,
+    water: 8, plaza: 9, wood: 10, tile: 11, moss: 12, gravel: 13,
+    // solid (drawn as extruded walls)
+    stonewall: 16, timberwall: 17, brickwall: 18, plaster: 19, cliff: 20, ice: 21, obsidian: 22,
+    ruin: 23, palisade: 24, marble: 25,
+  };
+  const isSolid = (c) => (c & SOLID) !== 0;
+  const matOf = (c) => c & 0x7f;
+
+  // Which palette ramp a material paints with. The engine shades by arithmetic on the index, so a
+  // material is a ramp plus a base shade, not a colour.
+  const MAT_RAMP = {
+    0: 6, 1: 5, 2: 5, 3: 2, 4: 1, 5: 0, 6: 7, 7: 0, 8: 8, 9: 1, 10: 4, 11: 2, 12: 7, 13: 1,
+    16: 1, 17: 4, 18: 3, 19: 2, 20: 1, 21: 8, 22: 0, 23: 1, 24: 4, 25: 0,
+  };
+
+  // ---------------------------------------------------------------- noise
+  // Position-hashed value noise: deterministic in (x, y, seed) with no call-order dependence, which
+  // a stream would have. Terrain must be identical whether generated first or ninth.
+  function hash2(x, y, seed) {
+    let h = (x * 374761393) ^ (y * 668265263) ^ (seed * 2246822519);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  function vnoise(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = smooth(x - xi), yf = smooth(y - yi);
+    const a = hash2(xi, yi, seed), b = hash2(xi + 1, yi, seed);
+    const c = hash2(xi, yi + 1, seed), d = hash2(xi + 1, yi + 1, seed);
+    return lerp(lerp(a, b, xf), lerp(c, d, xf), yf);
+  }
+
+  function fbm(x, y, seed, oct, lac, gain) {
+    let f = 1, a = 1, sum = 0, norm = 0;
+    for (let i = 0; i < oct; i++) {
+      sum += vnoise(x * f, y * f, seed + i * 7919) * a;
+      norm += a;
+      f *= lac || 2.0; a *= gain === undefined ? 0.5 : gain;
+    }
+    return sum / norm;
+  }
+
+  // Ridged noise makes mountains that look eroded rather than lumpy.
+  function ridged(x, y, seed, oct) {
+    let f = 1, a = 1, sum = 0, norm = 0;
+    for (let i = 0; i < oct; i++) {
+      const n = 1 - Math.abs(vnoise(x * f, y * f, seed + i * 1543) * 2 - 1);
+      sum += n * n * a; norm += a;
+      f *= 2.07; a *= 0.5;
+    }
+    return sum / norm;
+  }
+
+  // ---------------------------------------------------------------- regions
+  // A 3x3 world. Adjacent regions connect at their shared edge, so the map is a real graph the
+  // player walks rather than a menu of teleports.
+  //
+  //        frostmere    greyhollow    emberpeak
+  //        ashencoast   HARROWGATE    thornfens
+  //        duskwood     barrowfields  ashkeep
+  const RW = 128, RH = 128;  // cells per region — SHOTLIST.md specifies this and is the spec
+
+  const REGIONS = {
+    harrowgate: {
+      name: 'Harrowgate Vale', gx: 1, gy: 1, biome: 'temperate', level: 1,
+      sea: -3.5, hilly: 3.2, town: 'Harrowgate', townSize: 'city',
+      spawn: ['rat', 'goblin', 'wolf'], desc: 'Green valley, the road hub, and the only city.',
+    },
+    ashencoast: {
+      name: 'The Ashen Coast', gx: 0, gy: 1, biome: 'coast', level: 3,
+      sea: 0.6, hilly: 2.0, town: 'Saltmoor', townSize: 'village',
+      spawn: ['goblin', 'goblin_arch', 'harpy'], desc: 'Ocean running out into haze, cliffs and a fishing village.',
+    },
+    greyhollow: {
+      name: 'Greyhollow', gx: 1, gy: 0, biome: 'highland', level: 5,
+      sea: -8, hilly: 6.5, town: 'Pickhaven', townSize: 'village',
+      spawn: ['kobold', 'kobold_sham', 'spider'], desc: 'Mine country: spoil heaps, cut terraces, headframes.',
+    },
+    emberpeak: {
+      name: 'Emberpeak', gx: 2, gy: 0, biome: 'volcanic', level: 9,
+      sea: -12, hilly: 11.0, town: null,
+      spawn: ['elemental', 'ogre', 'troll'], desc: 'Ash slopes and lava scars under a bruised sky.',
+    },
+    thornfens: {
+      name: 'The Thornfens', gx: 2, gy: 1, biome: 'marsh', level: 6,
+      sea: 0.2, hilly: 1.2, town: 'Reedwatch', townSize: 'hamlet',
+      spawn: ['spider', 'troll', 'zombie'], desc: 'Standing water, reed banks, causeways on piles.',
+    },
+    frostmere: {
+      name: 'Frostmere', gx: 0, gy: 0, biome: 'snow', level: 8,
+      sea: -2, hilly: 7.0, town: 'Coldharbour', townSize: 'hamlet',
+      spawn: ['wolf', 'ogre', 'skeleton'], desc: 'Snowline, frozen lake, a ruined watchtower.',
+    },
+    duskwood: {
+      name: 'Duskwood', gx: 0, gy: 2, biome: 'forest', level: 4,
+      sea: -4, hilly: 3.8, town: 'Ellerby', townSize: 'village',
+      spawn: ['wolf', 'bandit', 'harpy'], desc: 'Old forest, bandit country, a shrine in a clearing.',
+    },
+    barrowfields: {
+      name: 'The Barrowfields', gx: 1, gy: 2, biome: 'barrow', level: 7,
+      sea: -5, hilly: 2.6, town: 'Mournhill', townSize: 'hamlet',
+      spawn: ['skeleton', 'zombie', 'ghoul', 'wraith'], desc: 'Grave mounds, standing stones, wrong-coloured grass.',
+    },
+    ashkeep: {
+      name: 'The Ashen Reach', gx: 2, gy: 2, biome: 'blighted', level: 12,
+      sea: -6, hilly: 5.0, town: null, gated: 'ash_key',
+      spawn: ['knight_ash', 'lich', 'elemental'], desc: 'Dead ground before the Keep. The road ends here.',
+    },
+  };
+  const REGION_IDS = Object.keys(REGIONS);
+
+  // Which regions touch, derived from the grid so the graph cannot drift from the layout.
+  function neighbours(id) {
+    const r = REGIONS[id];
+    const out = [];
+    for (const oid of REGION_IDS) {
+      if (oid === id) continue;
+      const o = REGIONS[oid];
+      const dx = o.gx - r.gx, dy = o.gy - r.gy;
+      if (Math.abs(dx) + Math.abs(dy) !== 1) continue;
+      out.push({ id: oid, dir: dx === 1 ? 'e' : dx === -1 ? 'w' : dy === 1 ? 's' : 'n' });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- dungeons
+  const DUNGEONS = {
+    barrow:     { name: 'The Sunken Barrow',   region: 'harrowgate',   w: 34, h: 26, level: 2,  theme: 'crypt',  boss: 'ghoul', ex: 102, ey: 52 },
+    smugglers:  { name: "Smuggler's Cut",      region: 'ashencoast',   w: 30, h: 22, level: 3,  theme: 'cave',   boss: 'bandit_capt' },
+    seacave:    { name: 'The Drowned Chapel',  region: 'ashencoast',   w: 32, h: 24, level: 4,  theme: 'crypt',  boss: 'wraith' },
+    mine:       { name: 'Greyhollow Deep',     region: 'greyhollow',   w: 40, h: 28, level: 5,  theme: 'mine',   boss: 'kobold_sham' },
+    minelow:    { name: 'The Lower Cut',       region: 'greyhollow',   w: 36, h: 26, level: 6,  theme: 'mine',   boss: 'ogre' },
+    forge:      { name: 'The Ember Forge',     region: 'emberpeak',    w: 38, h: 28, level: 10, theme: 'forge',  boss: 'elemental' },
+    fenhold:    { name: 'Reedwatch Hold',      region: 'thornfens',    w: 32, h: 24, level: 6,  theme: 'cave',   boss: 'troll' },
+    icetomb:    { name: 'The Frozen Tomb',     region: 'frostmere',    w: 34, h: 26, level: 8,  theme: 'ice',    boss: 'skeleton' },
+    banditden:  { name: 'The Rookery',         region: 'duskwood',     w: 30, h: 22, level: 4,  theme: 'cave',   boss: 'bandit_capt' },
+    grove:      { name: 'The Sunken Grove',    region: 'duskwood',     w: 28, h: 22, level: 5,  theme: 'cave',   boss: 'harpy' },
+    barrowdeep: { name: 'The Barrow Deep',     region: 'barrowfields', w: 40, h: 30, level: 9,  theme: 'crypt',  boss: 'lich' },
+    stonecircle:{ name: 'Under the Stones',    region: 'barrowfields', w: 30, h: 24, level: 7,  theme: 'crypt',  boss: 'wraith' },
+    keep:       { name: 'The Ashen Keep',      region: 'ashkeep',      w: 44, h: 32, level: 14, theme: 'keep',   boss: 'ash_crown', final: true },
+  };
+  const DUNGEON_IDS = Object.keys(DUNGEONS);
+
+  // ---------------------------------------------------------------- quests
+  // state: 0 unknown, 1 active, 2 done, 3 failed
+  const QUESTS = {
+    q_missing:   { name: 'The Missing Watch',    region: 'harrowgate', giver: 'captain', main: true, step: 1,
+                   text: 'Harrowgate lost a patrol to the Sunken Barrow. Find their seal and bring it back.',
+                   need: 'barrow_seal', xp: 900, gold: 300, next: 'q_ledger' },
+    q_ledger:    { name: "The Foreman's Ledger", region: 'greyhollow', giver: 'foreman', main: true, step: 2,
+                   text: 'Greyhollow Deep flooded with kobolds. Recover the ledger from the foreman office.',
+                   need: 'mine_ledger', xp: 2200, gold: 700, next: 'q_shards' },
+    q_shards:    { name: 'Shards of the Crown',  region: 'barrowfields', giver: 'archivist', main: true, step: 3,
+                   text: 'Three shards of the Ashen Crown lie in the deep barrows. Bring all three.',
+                   need: 'crown_shard', count: 3, xp: 6000, gold: 1800, next: 'q_key' },
+    q_key:       { name: 'The Ashen Key',        region: 'emberpeak', giver: 'smith', main: true, step: 4,
+                   text: 'The Ember Forge can reforge the shards into a key. The forge is not unattended.',
+                   need: 'ash_key', xp: 9000, gold: 2500, next: 'q_crown' },
+    q_crown:     { name: 'The Ashen Crown',      region: 'ashkeep', giver: 'captain', main: true, step: 5,
+                   text: 'The road ends at the Keep. End what wears the Crown.',
+                   kill: 'ash_crown', xp: 20000, gold: 6000, final: true },
+
+    q_wolves:    { name: 'Grey Wolf Bounty',     region: 'duskwood', giver: 'hunter',
+                   text: 'Wolves are taking stock on the Ellerby road. Six pelts, and the bounty is yours.',
+                   need: 'wolf_pelt', count: 6, xp: 700, gold: 400 },
+    q_herbs:     { name: 'Marshwort',            region: 'thornfens', giver: 'herbalist',
+                   text: 'Marshwort grows only where the fen is deepest. Four bundles.',
+                   need: 'herb_bundle', count: 4, xp: 900, gold: 500 },
+    q_rookery:   { name: 'Clear the Rookery',    region: 'duskwood', giver: 'captain',
+                   text: 'The Rookery bandits have a captain. Remove him.',
+                   kill: 'bandit_capt', xp: 1400, gold: 800 },
+    q_tomb:      { name: 'The Frozen Tomb',      region: 'frostmere', giver: 'archivist',
+                   text: 'Something walks in the Frozen Tomb that should be lying down.',
+                   kill: 'skeleton', killIn: 'icetomb', xp: 2600, gold: 1200 },
+    q_chapel:    { name: 'The Drowned Chapel',   region: 'ashencoast', giver: 'priest',
+                   text: 'The tide took the chapel and left something behind. Put it to rest.',
+                   kill: 'wraith', killIn: 'seacave', xp: 2000, gold: 1000 },
+  };
+  const QUEST_IDS = Object.keys(QUESTS);
+
+  // ---------------------------------------------------------------- shops
+  const SHOP_KINDS = ['weapon', 'armour', 'general', 'magic', 'temple', 'tavern', 'trainer', 'guild'];
+
+  // ---------------------------------------------------------------- heightfield
+  // Vertex grid, (w+1) x (h+1). Bilinear sampled. Dungeons are flat and skip all of this.
+  function makeTerrain(regionId, w, h) {
+    const r = REGIONS[regionId];
+    const seed = RNG.world('terrain:' + regionId).int(0x7fffffff);
+    const T = new Float32Array((w + 1) * (h + 1));
+
+    for (let y = 0; y <= h; y++) {
+      for (let x = 0; x <= w; x++) {
+        const nx = x / 26, ny = y / 26;
+        let hgt = (fbm(nx, ny, seed, 5) - 0.42) * r.hilly * 3.4;
+
+        // A ridge frames every valley, so there is always something on the horizon rather than a
+        // dead level line. This is the single loudest "not MM6" tell if it is missing.
+        const edgeX = Math.min(x, w - x) / w, edgeY = Math.min(y, h - y) / h;
+        const edge = Math.min(edgeX, edgeY);
+        const rim = clamp(1 - edge / 0.26, 0, 1);
+        const mount = ridged(nx * 0.62, ny * 0.62, seed + 4441, 4);
+        hgt += rim * rim * (7 + mount * 22) * (r.biome === 'coast' ? 0.35 : 1);
+
+        // Biome shaping.
+        if (r.biome === 'marsh') hgt = hgt * 0.35 - 0.4;
+        if (r.biome === 'volcanic') hgt += ridged(nx * 1.3, ny * 1.3, seed + 77, 3) * 9 - 2;
+        if (r.biome === 'barrow') {
+          // Grave mounds: a lattice of low domes. Reads as deliberate rather than lumpy.
+          const mx = Math.abs(((x % 17) / 17) - 0.5), my = Math.abs(((y % 19) / 19) - 0.5);
+          const d = Math.sqrt(mx * mx + my * my);
+          hgt += Math.max(0, 1 - d * 3.6) * 2.6;
+        }
+        T[y * (w + 1) + x] = hgt;
+      }
+    }
+    return T;
+  }
+
+  // ---------------------------------------------------------------- map assembly
+  function key(x, y) { return y * 4096 + x; }
+
+  function blankMap(id, name, kind, w, h) {
+    return {
+      id, name, kind, w, h,
+      cells: new Uint8Array(w * h),
+      storeys: new Uint8Array(w * h),
+      terrain: new Float32Array((w + 1) * (h + 1)),
+      spans: new Map(),
+      entities: [], portals: [], decor: [], zones: [], npcs: [],
+      sea: -999, light: 1, fogStart: 14, fogEnd: 56,
+    };
+  }
+
+  const inb = (m, x, y) => x >= 0 && y >= 0 && x < m.w && y < m.h;
+  const cellAt = (m, x, y) => (inb(m, x, y) ? m.cells[y * m.w + x] : (MAT.cliff | SOLID));
+  const setCell = (m, x, y, c) => { if (inb(m, x, y)) m.cells[y * m.w + x] = c; };
+  const setStoreys = (m, x, y, n) => { if (inb(m, x, y)) m.storeys[y * m.w + x] = n; };
+
+  // Bilinear terrain sample. THE function the renderer and every entity's feet call.
+  function H(m, x, y) {
+    if (m.kind !== 'outdoor') return 0;
+    const w = m.w;
+    let fx = clamp(x, 0, m.w - 0.001), fy = clamp(y, 0, m.h - 0.001);
+    const xi = Math.floor(fx), yi = Math.floor(fy);
+    const tx = fx - xi, ty = fy - yi;
+    const T = m.terrain, s = w + 1;
+    const a = T[yi * s + xi], b = T[yi * s + xi + 1];
+    const c = T[(yi + 1) * s + xi], d = T[(yi + 1) * s + xi + 1];
+    return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
+  }
+
+  // Flatten an area to a fixed height. Applied AFTER noise and unconditionally: a plaza that is
+  // level only when the noise cooperates is not a plaza.
+  function flatten(m, cx, cy, rx, ry, height, falloff) {
+    const s = m.w + 1;
+    const fo = falloff === undefined ? 3 : falloff;
+    for (let y = Math.max(0, cy - ry - fo); y <= Math.min(m.h, cy + ry + fo); y++) {
+      for (let x = Math.max(0, cx - rx - fo); x <= Math.min(m.w, cx + rx + fo); x++) {
+        const dx = Math.max(0, Math.abs(x - cx) - rx), dy = Math.max(0, Math.abs(y - cy) - ry);
+        const d = Math.max(dx, dy);
+        if (d > fo) continue;
+        const t = 1 - d / (fo + 0.0001);
+        const i = y * s + x;
+        m.terrain[i] = lerp(m.terrain[i], height, t * t);
+      }
+    }
+  }
+
+  // Grade a road along a polyline: carve it level-ish and paint the surface.
+  function road(m, pts, width, mat) {
+    const s = m.w + 1;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+      const steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) * 2));
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const px = lerp(x0, x1, t), py = lerp(y0, y1, t);
+        const hh = H(m, px, py);
+        for (let dy = -width; dy <= width; dy++) {
+          for (let dx = -width; dx <= width; dx++) {
+            const cx = Math.round(px + dx), cy = Math.round(py + dy);
+            if (!inb(m, cx, cy)) continue;
+            const d = Math.hypot(dx, dy);
+            if (d > width + 0.5) continue;
+            if (!isSolid(m.cells[cy * m.w + cx])) {
+              m.cells[cy * m.w + cx] = mat === undefined ? MAT.road : mat;
+            }
+            // Grade the surface so a road reads as cut into the hill rather than painted on it.
+            const wgt = clamp(1 - d / (width + 1.2), 0, 1);
+            const vi = cy * s + cx;
+            m.terrain[vi] = lerp(m.terrain[vi], hh, wgt * 0.85);
+          }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- spans
+  // The one thing a heightfield cannot express: two surfaces over one (x,y). ONE primitive gives
+  // bridges, gate arches, aqueducts and cave mouths.
+  function addSpan(m, x, y, lo, hi, tex) {
+    if (!inb(m, x, y)) return;
+    m.spans.set(key(x, y), { lo, hi, tex: tex === undefined ? MAT.stonewall : tex });
+  }
+  function spanAt(m, x, y) {
+    return m.spans.get(key(x, y)) || null;
+  }
+
+  // A bridge over a carved ravine: deck at a fixed height, ravine floor visible in the gap.
+  function bridge(m, x0, y0, x1, y1, deckH) {
+    const steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const x = Math.round(lerp(x0, x1, t)), y = Math.round(lerp(y0, y1, t));
+      for (let w = -1; w <= 1; w++) {
+        addSpan(m, x + (y0 === y1 ? 0 : w), y + (y0 === y1 ? w : 0), deckH - 0.55, deckH, MAT.stonewall);
+      }
+    }
+  }
+
+  // A gate arch: solid overhead, walkable underneath. `lo` must leave the party's 1.6 headroom.
+  function gateArch(m, x, y, dir, groundH) {
+    const lo = groundH + 2.6, hi = groundH + 6.4;
+    for (let w = -1; w <= 1; w++) {
+      addSpan(m, x + (dir === 'ns' ? w : 0), y + (dir === 'ns' ? 0 : w), lo, hi, MAT.stonewall);
+    }
+  }
+
+  // A cave mouth: an overhang above a tunnel entrance, so a dungeon portal reads as a dark opening
+  // in rock instead of a door standing in a field.
+  function caveMouth(m, x, y, groundH) {
+    for (let dy = -2; dy <= 0; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        addSpan(m, x + dx, y + dy, groundH + 2.4, groundH + 9 + Math.abs(dx), MAT.cliff);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- settlements
+  function building(m, x, y, w, h, storeys, wallMat, rng) {
+    const gh = H(m, x + w / 2, y + h / 2);
+    flatten(m, Math.round(x + w / 2), Math.round(y + h / 2), Math.ceil(w / 2) + 1, Math.ceil(h / 2) + 1, gh, 2);
+    for (let cy = y; cy < y + h; cy++) {
+      for (let cx = x; cx < x + w; cx++) {
+        if (!inb(m, cx, cy)) continue;
+        const edge = cx === x || cy === y || cx === x + w - 1 || cy === y + h - 1;
+        if (edge) {
+          m.cells[cy * m.w + cx] = wallMat | SOLID;
+          m.storeys[cy * m.w + cx] = storeys;
+        } else {
+          m.cells[cy * m.w + cx] = MAT.wood;
+        }
+      }
+    }
+    return { x, y, w, h, storeys, gh };
+  }
+
+  // Lay out a settlement: plaza, ring of buildings, shop fronts, wall and gates for a city.
+  function settlement(m, cx, cy, size, regionId, rng) {
+    const plazaR = size === 'city' ? 6 : size === 'village' ? 4 : 3;
+    const gh = H(m, cx, cy);
+    flatten(m, cx, cy, plazaR + 2, plazaR + 2, gh, 5);
+
+    for (let y = cy - plazaR; y <= cy + plazaR; y++) {
+      for (let x = cx - plazaR; x <= cx + plazaR; x++) {
+        if (inb(m, x, y)) m.cells[y * m.w + x] = MAT.plaza;
+      }
+    }
+    m.decor.push({ kind: 'fountain', x: cx + 0.5, y: cy + 0.5, z: gh });
+
+    const nShops = size === 'city' ? 8 : size === 'village' ? 5 : 3;
+    const shops = [];
+    const ring = plazaR + 4;
+    for (let i = 0; i < nShops; i++) {
+      const a = (i / nShops) * Math.PI * 2 + rng.float(-0.12, 0.12);
+      const bx = Math.round(cx + Math.cos(a) * (ring + rng.int(3)));
+      const by = Math.round(cy + Math.sin(a) * (ring + rng.int(3)));
+      const bw = 5 + rng.int(3), bh = 4 + rng.int(3);
+      // Storey variation is what stops a town reading as a grid of identical boxes.
+      const st = size === 'city' ? 1 + rng.int(3) : 1 + rng.int(2);
+      const mat = rng.pick([MAT.timberwall, MAT.plaster, MAT.brickwall, MAT.stonewall]);
+      const b = building(m, bx - (bw >> 1), by - (bh >> 1), bw, bh, st, mat, rng);
+      const kind = SHOP_KINDS[i % SHOP_KINDS.length];
+      shops.push({ kind, x: bx, y: by, b });
+      // A door cell facing the plaza, with a sign.
+      const dx = Math.sign(cx - bx), dy = Math.sign(cy - by);
+      const doorX = bx + (Math.abs(dx) > Math.abs(dy) ? dx * ((bw >> 1)) : 0);
+      const doorY = by + (Math.abs(dx) > Math.abs(dy) ? 0 : dy * ((bh >> 1)));
+      m.portals.push({
+        x: doorX, y: doorY, to: 'shop:' + kind, kind: 'door',
+        tx: doorX + dx, ty: doorY + dy, tang: 0, shop: kind, region: regionId,
+      });
+      m.decor.push({ kind: 'sign', x: doorX + 0.5, y: doorY + 0.5, z: b.gh + 2.2, shop: kind });
+      setCell(m, doorX, doorY, MAT.wood);
+    }
+
+    // Houses that are pure dressing: a settlement of only shops reads as a strip mall.
+    const nHouses = size === 'city' ? 16 : size === 'village' ? 8 : 4;
+    for (let i = 0; i < nHouses; i++) {
+      const a = rng.float(0, Math.PI * 2), d = ring + 2 + rng.int(Math.max(1, (size === 'city' ? 2 : 14)));
+      const bx = Math.round(cx + Math.cos(a) * d), by = Math.round(cy + Math.sin(a) * d);
+      if (!inb(m, bx - 3, by - 3) || !inb(m, bx + 4, by + 4)) continue;
+      let clear = true;
+      for (let y = by - 4; y <= by + 4 && clear; y++) {
+        for (let x = bx - 4; x <= bx + 4; x++) if (isSolid(cellAt(m, x, y))) { clear = false; break; }
+      }
+      if (!clear) continue;
+      building(m, bx - 2, by - 2, 4 + rng.int(3), 4 + rng.int(2), 1 + rng.int(2),
+        rng.pick([MAT.timberwall, MAT.plaster]), rng);
+    }
+
+    // City wall with gate arches. The gates are the s03 shot.
+    if (size === 'city') {
+      const wr = ring + 4;   // gate lands at x = cx + 14, which is what s03/s04 are framed against
+      for (let y = cy - wr; y <= cy + wr; y++) {
+        for (let x = cx - wr; x <= cx + wr; x++) {
+          if (!inb(m, x, y)) continue;
+          const onEdge = Math.abs(Math.abs(x - cx) - wr) < 1 || Math.abs(Math.abs(y - cy) - wr) < 1;
+          const inside = Math.abs(x - cx) <= wr && Math.abs(y - cy) <= wr;
+          if (onEdge && inside) {
+            m.cells[y * m.w + x] = MAT.stonewall | SOLID;
+            m.storeys[y * m.w + x] = 2;
+          }
+        }
+      }
+      // Four gates, each an ARCH: walk under, wall solid overhead.
+      const gates = [[cx + wr, cy, 'ns'], [cx - wr, cy, 'ns'], [cx, cy + wr, 'ew'], [cx, cy - wr, 'ew']];
+      for (const [gx, gy, dir] of gates) {
+        for (let w = -1; w <= 1; w++) {
+          const px = gx + (dir === 'ns' ? 0 : w), py = gy + (dir === 'ns' ? w : 0);
+          setCell(m, px, py, MAT.road);
+          setStoreys(m, px, py, 0);
+        }
+        gateArch(m, gx, gy, dir, H(m, gx, gy));
+        m.decor.push({ kind: 'brazier', x: gx + 0.5, y: gy + 0.5, z: H(m, gx, gy) });
+      }
+      m.gates = gates.map(([x, y]) => ({ x, y }));
+    }
+
+    return { cx, cy, shops, plazaR };
+  }
+
+  // ---------------------------------------------------------------- outdoor region
+  function buildRegion(id) {
+    const r = REGIONS[id];
+    const rng = RNG.world('region:' + id);
+    const m = blankMap(id, r.name, 'outdoor', RW, RH);
+    m.region = id;
+    m.terrain = makeTerrain(id, RW, RH);
+    m.sea = r.sea;
+    m.level = r.level;
+    m.biome = r.biome;
+    m.spawnTable = r.spawn.slice();
+
+    // Ground material from height and biome. Water is "below level", never a painted tile.
+    const base = { temperate: MAT.grass, coast: MAT.sand, highland: MAT.gravel, volcanic: MAT.ash,
+      marsh: MAT.marsh, snow: MAT.snow, forest: MAT.moss, barrow: MAT.grass, blighted: MAT.ash }[r.biome];
+    for (let y = 0; y < RH; y++) {
+      for (let x = 0; x < RW; x++) {
+        const h = H(m, x + 0.5, y + 0.5);
+        let mat = base;
+        if (h < r.sea) mat = MAT.water;
+        else if (h < r.sea + 1.2 && (r.biome === 'coast' || r.biome === 'marsh')) mat = MAT.sand;
+        else if (h > 16) mat = r.biome === 'snow' || r.biome === 'highland' ? MAT.snow : MAT.rock;
+        else if (h > 9) mat = MAT.rock;
+        m.cells[y * RW + x] = mat;
+      }
+    }
+
+    // Cliff walls where the slope is impassable: terrain fences the valley instead of an invisible
+    // wall the player bumps into.
+    for (let y = 0; y < RH; y++) {
+      for (let x = 0; x < RW; x++) {
+        const h = H(m, x + 0.5, y + 0.5);
+        const hx = Math.abs(H(m, x + 1.5, y + 0.5) - h);
+        const hy = Math.abs(H(m, x + 0.5, y + 1.5) - h);
+        if (Math.max(hx, hy) > MAX_CLIMB * 2.2 && h > r.sea) {
+          m.cells[y * RW + x] = MAT.cliff | SOLID;
+          m.storeys[y * RW + x] = 1;
+        }
+      }
+    }
+
+    // Edge exits to neighbouring regions, at the middle of each shared edge.
+    const nb = neighbours(id);
+    const exits = [];
+    for (const n of nb) {
+      const p = n.dir === 'e' ? [RW - 2, RH >> 1] : n.dir === 'w' ? [1, RH >> 1]
+        : n.dir === 's' ? [RW >> 1, RH - 2] : [RW >> 1, 1];
+      const back = { e: 'w', w: 'e', n: 's', s: 'n' }[n.dir];
+      const tp = back === 'e' ? [RW - 5, RH >> 1] : back === 'w' ? [4, RH >> 1]
+        : back === 's' ? [RW >> 1, RH - 5] : [RW >> 1, 4];
+      // Carve a pass through the rim so the exit is reachable.
+      flatten(m, p[0], p[1], 3, 3, Math.min(H(m, p[0], p[1]), 2.0), 7);
+      exits.push({ dir: n.dir, x: p[0], y: p[1], to: n.id, tx: tp[0], ty: tp[1] });
+      m.portals.push({
+        x: p[0], y: p[1], to: n.id, kind: 'edge',
+        tx: tp[0], ty: tp[1], tang: n.dir === 'e' ? 0 : n.dir === 'w' ? Math.PI : n.dir === 's' ? Math.PI / 2 : -Math.PI / 2,
+        locked: REGIONS[n.id].gated || null,
+      });
+    }
+
+    // Settlement, then roads from it to every exit.
+    let town = null;
+    if (r.town) {
+      town = settlement(m, RW >> 1, RH >> 1, r.townSize, id, rng);
+      m.town = { name: r.town, x: town.cx, y: town.cy, size: r.townSize, shops: town.shops };
+      for (const e of exits) road(m, [[town.cx, town.cy], [e.x, e.y]], r.townSize === 'city' ? 2 : 1);
+    } else {
+      // No town: still connect the exits to each other so the region is traversable.
+      for (let i = 0; i < exits.length; i++) {
+        road(m, [[exits[i].x, exits[i].y], [RW >> 1, RH >> 1]], 1);
+      }
+    }
+
+    // Dungeon entrances, each a cave mouth in a cliff face.
+    const mine = DUNGEON_IDS.filter((d) => DUNGEONS[d].region === id);
+    m.dungeons = [];
+    mine.forEach((did, i) => {
+      const spec = DUNGEONS[did];
+      const a = (i / Math.max(1, mine.length)) * Math.PI * 2 + 0.7;
+      const dist = 38 + rng.int(14);
+      const dx = spec.ex !== undefined ? spec.ex : clamp(Math.round((RW >> 1) + Math.cos(a) * dist), 8, RW - 9);
+      const dy = spec.ey !== undefined ? spec.ey : clamp(Math.round((RH >> 1) + Math.sin(a) * dist), 8, RH - 9);
+      const gh = H(m, dx, dy);
+      flatten(m, dx, dy, 3, 3, gh, 4);
+      for (let y = dy - 1; y <= dy + 1; y++) for (let x = dx - 2; x <= dx + 2; x++) setCell(m, x, y, MAT.gravel);
+      caveMouth(m, dx, dy, gh);
+      m.portals.push({ x: dx, y: dy, to: did, kind: 'stairs', tx: 3, ty: 3, tang: 0 });
+      m.decor.push({ kind: 'brazier', x: dx - 1.5, y: dy + 0.5, z: gh });
+      m.decor.push({ kind: 'brazier', x: dx + 2.5, y: dy + 0.5, z: gh });
+      m.dungeons.push({ id: did, x: dx, y: dy });
+      if (town) road(m, [[town.cx, town.cy], [dx, dy]], 1, MAT.dirt);
+    });
+
+    // A ravine with a bridge over it. The s06 shot, and the thing that makes a heightfield
+    // demonstrably more than a hill generator.
+    if (r.biome !== 'marsh' && r.biome !== 'coast') {
+      const ry = (RH >> 1) - 8;   // s06 looks north from y=62.5 onto this
+      const s = RW + 1;
+      // The ravine spans only x 66..90 and TAPERS at both ends. A ravine that crosses the whole
+      // map would swallow s04's wilderness camera, and a ravine that stops dead reads as a bug.
+      const RX0 = 66, RX1 = 90;
+      for (let x = RX0; x <= RX1; x++) {
+        const edge = Math.min(x - RX0, RX1 - x) / 9;
+        const taper = clamp(edge, 0, 1);
+        if (taper <= 0.01) continue;
+        for (let dy = -4; dy <= 4; dy++) {
+          const y = ry + dy;
+          if (y < 1 || y >= RH) continue;
+          const t = 1 - Math.abs(dy) / 4.5;
+          const vi = y * s + x;
+          m.terrain[vi] = lerp(m.terrain[vi], -7.5, t * t * taper);
+          if (Math.abs(dy) <= 2 && taper > 0.5) m.cells[y * RW + x] = MAT.rock;
+        }
+      }
+      const bx = 84;   // s06 stands at x=84.5
+      bridge(m, bx, ry - 5, bx, ry + 5, 1.2);
+      m.bridge = { x: bx, y: ry };
+    }
+
+    // Scatter decor by biome. Density is what makes a region feel inhabited rather than empty.
+    const treeKind = { forest: 'pine', temperate: 'oak', snow: 'deadtree', marsh: 'reed',
+      volcanic: 'ashstump', barrow: 'standingstone', coast: 'rock', highland: 'rock', blighted: 'deadtree' }[r.biome];
+    const nDecor = 460;
+    for (let i = 0; i < nDecor; i++) {
+      const x = rng.float(2, RW - 2), y = rng.float(2, RH - 2);
+      const cx = Math.floor(x), cy = Math.floor(y);
+      const c = m.cells[cy * RW + cx];
+      if (isSolid(c)) continue;
+      const mt = matOf(c);
+      if (mt === MAT.water || mt === MAT.road || mt === MAT.plaza || mt === MAT.wood) continue;
+      const h = H(m, x, y);
+      if (h < r.sea + 0.3) continue;
+      m.decor.push({ kind: rng.chance(0.82) ? treeKind : rng.pick(['rock', 'bush', 'stump']), x, y, z: h });
+    }
+
+    // Monster spawn points, kept off roads and away from the settlement.
+    const nSpawn = 40 + r.level * 2;
+    for (let i = 0; i < nSpawn; i++) {
+      const x = rng.float(4, RW - 4), y = rng.float(4, RH - 4);
+      const cx = Math.floor(x), cy = Math.floor(y);
+      if (isSolid(m.cells[cy * RW + cx])) continue;
+      if (matOf(m.cells[cy * RW + cx]) === MAT.water) continue;
+      if (town && Math.hypot(x - town.cx, y - town.cy) < 34) continue;
+      m.entities.push({
+        eid: 'e' + id + '_' + i, kind: rng.pick(r.spawn), x, y, z: H(m, x, y),
+        ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x, y },
+      });
+    }
+
+    m.fogStart = r.biome === 'marsh' ? 8 : 16;
+    m.fogEnd = r.biome === 'marsh' ? 34 : 62;
+    return m;
+  }
+
+  const MAX_CLIMB = 0.75;
+
+  // ---------------------------------------------------------------- dungeons
+  // Rooms joined by corridors, then a guaranteed path check. A dungeon whose boss room is not
+  // reachable is a softlock, so connectivity is asserted, not hoped for.
+  function buildDungeon(did) {
+    const d = DUNGEONS[did];
+    const rng = RNG.world('dungeon:' + did);
+    const m = blankMap(did, d.name, 'dungeon', d.w, d.h);
+    m.level = d.level;
+    m.theme = d.theme;
+    m.region = d.region;
+    m.light = 0.12;
+    m.fogStart = 4; m.fogEnd = 15;
+
+    const wallMat = { crypt: MAT.stonewall, cave: MAT.cliff, mine: MAT.timberwall,
+      forge: MAT.obsidian, ice: MAT.ice, keep: MAT.marble }[d.theme] || MAT.stonewall;
+    const floorMat = { crypt: MAT.tile, cave: MAT.gravel, mine: MAT.dirt,
+      forge: MAT.ash, ice: MAT.snow, keep: MAT.marble }[d.theme] || MAT.tile;
+
+    m.cells.fill(wallMat | SOLID);
+    m.storeys.fill(1);
+
+    const rooms = [];
+    const tries = 90;
+    for (let i = 0; i < tries && rooms.length < 12; i++) {
+      const rw = 4 + rng.int(6), rh = 4 + rng.int(5);
+      const rx = 1 + rng.int(d.w - rw - 2), ry = 1 + rng.int(d.h - rh - 2);
+      let overlap = false;
+      for (const o of rooms) {
+        if (rx < o.x + o.w + 1 && rx + rw + 1 > o.x && ry < o.y + o.h + 1 && ry + rh + 1 > o.y) { overlap = true; break; }
+      }
+      if (overlap) continue;
+      rooms.push({ x: rx, y: ry, w: rw, h: rh, cx: rx + (rw >> 1), cy: ry + (rh >> 1) });
+    }
+
+    for (const r of rooms) {
+      for (let y = r.y; y < r.y + r.h; y++) {
+        for (let x = r.x; x < r.x + r.w; x++) m.cells[y * d.w + x] = floorMat;
+      }
+    }
+
+    // Corridors: connect every room to the previous one, so the graph is a guaranteed chain, then
+    // add a few extra links for loops.
+    const carve = (x0, y0, x1, y1) => {
+      let x = x0, y = y0;
+      while (x !== x1) { m.cells[y * d.w + x] = floorMat; x += Math.sign(x1 - x); }
+      while (y !== y1) { m.cells[y * d.w + x] = floorMat; y += Math.sign(y1 - y); }
+      m.cells[y * d.w + x] = floorMat;
+    };
+    for (let i = 1; i < rooms.length; i++) carve(rooms[i - 1].cx, rooms[i - 1].cy, rooms[i].cx, rooms[i].cy);
+    for (let i = 0; i < 3 && rooms.length > 3; i++) {
+      const a = rng.pick(rooms), b = rng.pick(rooms);
+      if (a !== b) carve(a.cx, a.cy, b.cx, b.cy);
+    }
+
+    // Entrance in room 0, beside the stairs rather than on them.
+    const first = rooms[0];
+    m.entry = { x: first.cx, y: first.cy };
+    for (let y = 1; y <= 3; y++) for (let x = 1; x <= 3; x++) m.cells[y * d.w + x] = floorMat;
+    carve(2, 2, first.cx, first.cy);
+    m.portals.push({
+      x: 2, y: 2, to: d.region, kind: 'stairs',
+      // Landing coordinates are MANDATORY and sit BESIDE the reciprocal portal, never on it:
+      // missing coords softlock, and landing on the return trigger bounces the player straight back.
+      tx: 0, ty: 0, tang: 0, exitToRegion: true, dungeon: did,
+    });
+
+    // Boss room is the one furthest from the entrance.
+    let boss = rooms[rooms.length - 1], bestD = -1;
+    for (const r of rooms) {
+      const dd = Math.hypot(r.cx - 2, r.cy - 2);
+      if (dd > bestD) { bestD = dd; boss = r; }
+    }
+    m.bossRoom = boss;
+    m.entities.push({
+      eid: did + '_boss', kind: d.boss, x: boss.cx + 0.5, y: boss.cy + 0.5, z: 0,
+      ang: 0, state: 'idle', boss: true, home: { x: boss.cx, y: boss.cy },
+    });
+
+    // Populate. Density scales with dungeon level.
+    const pop = 8 + Math.round(d.level * 1.3);
+    const table = REGIONS[d.region].spawn;
+    for (let i = 0; i < pop; i++) {
+      const r = rng.pick(rooms);
+      if (r === rooms[0]) continue;
+      m.entities.push({
+        eid: did + '_e' + i, kind: rng.pick(table),
+        x: r.x + 0.5 + rng.int(r.w), y: r.y + 0.5 + rng.int(r.h), z: 0,
+        ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x: r.cx, y: r.cy },
+      });
+    }
+
+    // Chests, and the quest item if this dungeon holds one.
+    for (let i = 0; i < 3 + rng.int(4); i++) {
+      const r = rng.pick(rooms);
+      m.decor.push({ kind: 'chest', x: r.x + 0.5 + rng.int(r.w), y: r.y + 0.5 + rng.int(r.h), z: 0,
+        tier: clamp(Math.round(d.level / 3), 1, 5), opened: false, id: did + '_c' + i });
+    }
+    for (let i = 0; i < 4 + rng.int(5); i++) {
+      const r = rng.pick(rooms);
+      m.decor.push({ kind: 'brazier', x: r.x + 0.5 + rng.int(r.w), y: r.y + 0.5 + rng.int(r.h), z: 0 });
+    }
+
+    m.rooms = rooms;
+    return m;
+  }
+
+  // Quest items live in specific dungeons, placed on the boss room floor so the main chain is
+  // always completable by playing rather than by luck.
+  const QUEST_ITEM_SITES = {
+    barrow_seal: ['barrow'],
+    mine_ledger: ['mine'],
+    crown_shard: ['barrowdeep', 'stonecircle', 'icetomb'],
+    ash_key: ['forge'],
+  };
+
+  // ---------------------------------------------------------------- assembly
+  function build(seed) {
+    RNG.setSeed(seed === undefined ? 7 : seed);
+    const maps = {};
+    for (const id of REGION_IDS) maps[id] = buildRegion(id);
+    for (const id of DUNGEON_IDS) maps[id] = buildDungeon(id);
+
+    // Wire dungeon exits back to the cave mouth they came from, BESIDE it, never on it.
+    for (const did of DUNGEON_IDS) {
+      const d = DUNGEONS[did];
+      const rm = maps[d.region];
+      const site = rm.dungeons.find((x) => x.id === did);
+      const p = maps[did].portals.find((x) => x.exitToRegion);
+      if (site && p) { p.tx = site.x; p.ty = site.y + 2; p.tang = Math.PI / 2; }
+    }
+
+    // Place quest items.
+    for (const item of Object.keys(QUEST_ITEM_SITES)) {
+      for (const did of QUEST_ITEM_SITES[item]) {
+        const m = maps[did];
+        if (!m || !m.bossRoom) continue;
+        m.decor.push({
+          kind: 'questitem', item, id: did + '_q_' + item,
+          x: m.bossRoom.cx + 0.5, y: m.bossRoom.cy + 1.5, z: 0, taken: false,
+        });
+      }
+    }
+
+    // NPCs: quest givers in their region's settlement, plus wanderers.
+    for (const qid of QUEST_IDS) {
+      const q = QUESTS[qid];
+      const m = maps[q.region];
+      if (!m || !m.town) {
+        // A region with no town puts its giver at the regional landmark instead of nowhere.
+        const host = maps.harrowgate;
+        host.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid,
+          x: host.town.x + 2.5 + host.npcs.length, y: host.town.y + 3.5, z: H(host, host.town.x, host.town.y) });
+        continue;
+      }
+      m.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid,
+        x: m.town.x + 1.5 + m.npcs.length * 1.6, y: m.town.y + 2.5, z: H(m, m.town.x, m.town.y) });
+    }
+
+    return { seed: RNG.seed, maps, regions: REGIONS, dungeons: DUNGEONS, quests: QUESTS };
+  }
+
+  // ---------------------------------------------------------------- queries
+  // The walk surface at a point: terrain, or a span's top when the party is on it.
+  function walkHeight(m, x, y, currentZ) {
+    const g = H(m, x, y);
+    const s = spanAt(m, Math.floor(x), Math.floor(y));
+    if (!s) return g;
+    // On the deck if already at or above it; otherwise underneath on the ground.
+    if (currentZ !== undefined && currentZ >= s.hi - 0.9) return s.hi;
+    return g;
+  }
+
+  // Can the party stand at (x,y) coming from height z? Blocks solids, deep water, cliffs that are
+  // too steep, and anything without headroom under a span.
+  function passable(m, x, y, fromZ) {
+    if (x < 0.4 || y < 0.4 || x > m.w - 0.4 || y > m.h - 0.4) return false;
+    const cx = Math.floor(x), cy = Math.floor(y);
+    const c = cellAt(m, cx, cy);
+    const s = spanAt(m, cx, cy);
+    const onDeck = s && fromZ !== undefined && fromZ >= s.hi - 0.9;
+    if (isSolid(c) && !onDeck) return false;
+    if (m.kind === 'dungeon') return true;
+    const h = H(m, x, y);
+    if (!onDeck) {
+      if (h < m.sea - 0.6) return false;                       // deep water
+      if (fromZ !== undefined && h - fromZ > MAX_CLIMB) return false;   // too steep to climb
+      // Headroom: moving UNDER a span needs the party's full height.
+      if (s && s.lo - h < 1.6) return false;
+    }
+    return true;
+  }
+
+  return {
+    MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB,
+    REGIONS, REGION_IDS, DUNGEONS, DUNGEON_IDS, QUESTS, QUEST_IDS, SHOP_KINDS,
+    RW, RH, neighbours,
+    hash2, vnoise, fbm, ridged,
+    blankMap, cellAt, setCell, H, flatten, road, addSpan, spanAt, bridge, gateArch, caveMouth,
+    buildRegion, buildDungeon, build, walkHeight, passable, QUEST_ITEM_SITES,
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = World;
+
+
 /* ==================== 05_engine.js ==================== */
 // 05_engine.js — framebuffer, raster primitives, presentation, and the 3D renderer.
 // Owner: engine. Calls Core and World.
@@ -1492,28 +2313,2541 @@ const Engine = (() => {
   const FOV_V = 2 * Math.atan(Math.tan(FOV_H / 2) * (VIEW.h / VIEW.w));
   const PROJ = VIEW.h / (2 * Math.tan(FOV_V / 2));
 
-  // ---------------------------------------------------------------- 3D
-  // R2 replaces this body with the per-column heightfield march described in ARCHITECTURE.md §7.
-  // It is deliberately a visible placeholder rather than a silent no-op: a blank viewport in a
-  // capture must be unmistakably "not implemented", not "maybe the world failed to load".
-  function render3D(cam) {
+  // ================================================================ the 3D pass
+  // A per-column heightfield march. This REPLACES the floor caster rather than sitting beside it:
+  // one loop produces terrain, buildings, roofs and spans, because they are all the same thing —
+  // an interval of solid matter over a cell.
+  //
+  // A flat grid of full-height walls reads as Wolfenstein, not MM6, and no texture quality repairs
+  // that. Everything below exists to make the ground itself have shape.
+
+  const STOREY = 3.20;
+  const EYE = 1.30;
+  const MAX_STEPS = 150;
+
+  // Ordered-dither fog. Palette indices cannot be blended arithmetically across ramps, so distance
+  // fade is a dithered REPLACEMENT with the sky index — which is exactly what 1998 did, and why
+  // fog dissolves geometry into the sky instead of into black.
+  const FOG_BAYER = [
+    0.0078, 0.5078, 0.1328, 0.6328, 0.0391, 0.5391, 0.1641, 0.6641,
+    0.7578, 0.2578, 0.8828, 0.3828, 0.7891, 0.2891, 0.9141, 0.4141,
+    0.1953, 0.6953, 0.0703, 0.5703, 0.2266, 0.7266, 0.1016, 0.6016,
+    0.9453, 0.4453, 0.8203, 0.3203, 0.9766, 0.4766, 0.8516, 0.3516,
+    0.0547, 0.5547, 0.1797, 0.6797, 0.0234, 0.5234, 0.1484, 0.6484,
+    0.8047, 0.3047, 0.9297, 0.4297, 0.7734, 0.2734, 0.8984, 0.3984,
+    0.2422, 0.7422, 0.1172, 0.6172, 0.2109, 0.7109, 0.0859, 0.5859,
+    0.9922, 0.4922, 0.8672, 0.3672, 0.9609, 0.4609, 0.8359, 0.3359,
+  ];
+
+  // Per-column span bands already drawn, so a bridge deck can occupy rows ABOVE ground that is
+  // already filled. Front-to-back with a single "filled to y" marker breaks exactly here; this is
+  // the one place the cheap trick does not survive contact.
+  const bandY0 = new Int16Array(16);
+  const bandY1 = new Int16Array(16);
+
+  function render3D(cam, world) {
+    const map = cam.map;
+    if (!map) { testCard(); return; }
+
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
-    for (let y = 0; y < VIEW.h; y++) {
-      const t = y / VIEW.h;
-      hline(VIEW.x, VIEW.y + y, VIEW.w, Core.idx(9, 3 + ((t * 9) | 0)));
+
+    const dungeon = map.kind === 'dungeon';
+    const horizon = VIEW.y + (VIEW.h >> 1) + (cam.horizon || 0);
+    const eyeZ = cam.z + EYE;
+    const cosA = Math.cos(cam.ang), sinA = Math.sin(cam.ang);
+    const halfFov = Math.tan(FOV_H / 2);
+
+    const skyBand = Art.skyBand ? Art.skyBand() : null;
+    const light = map.light === undefined ? 1 : map.light;
+    const sun = Art.sunShade ? Art.sunShade(light) : 0;
+    const fogStart = map.fogStart, fogEnd = map.fogEnd;
+
+    for (let sx = 0; sx < VIEW.w; sx++) {
+      const px = VIEW.x + sx;
+
+      // Sky first: everything the march does not cover stays sky, so a column that reaches the
+      // horizon needs no separate pass.
+      if (skyBand) {
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y];
+      } else {
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
+      }
+
+      const camX = ((sx + 0.5) / VIEW.w) * 2 - 1;
+      const rdx = cosA - sinA * camX * halfFov;
+      const rdy = sinA + cosA * camX * halfFov;
+      const rl = Math.hypot(rdx, rdy);
+      const dx = rdx / rl, dy = rdy / rl;
+
+      let ybuf = VIEW.y + VIEW.h;       // filled upward from the bottom of the viewport
+      let nBands = 0;
+      let dist = 0.30;
+      let step = dungeon ? 0.035 : 0.055;
+      zb[px] = 1e9;
+
+      for (let s = 0; s < MAX_STEPS && ybuf > VIEW.y; s++) {
+        // Step size grows with distance: ~150 steps then reach ~200 cells, and far detail collapses
+        // into haze exactly where we want it anyway.
+        dist += step;
+        step *= dungeon ? 1.020 : 1.028;
+        if (dist > fogEnd + 12) break;
+
+        const wx = cam.x + dx * dist, wy = cam.y + dy * dist;
+        const cx = Math.floor(wx), cy = Math.floor(wy);
+        if (cx < 0 || cy < 0 || cx >= map.w || cy >= map.h) break;
+
+        const ci = cy * map.w + cx;
+        const cell = map.cells[ci];
+        const solid = (cell & 128) !== 0;
+        const mat = cell & 0x7f;
+
+        const gh = dungeon ? 0 : World.H(map, wx, wy);
+        const invD = PROJ / dist;
+
+        // Fog: how much of this sample is eaten by distance.
+        const fog = clamp((dist - fogStart) / Math.max(1, fogEnd - fogStart), 0, 1);
+        const fogRow = (sx & 7) * 8;
+        // Break the Bayer lattice: without this the threshold is periodic in screen space and a
+        // large evenly-fogged face reads as a visible grid rather than as haze.
+        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512 - 0.03;
+
+        // ---- ground / water surface
+        const yG = (horizon + (eyeZ - gh) * invD) | 0;
+        if (!solid && yG < ybuf) {
+          const isWater = mat === World.MAT.water;
+          const surfH = isWater ? map.sea : gh;
+          const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
+          const top = yS < VIEW.y ? VIEW.y : yS;
+          if (top < ybuf) {
+            const texel = Art.groundTexel(mat, wx, wy, map);
+            // Slope shading: the dot of the surface normal with the key direction. This is what
+            // makes hills read as hills rather than as a painted gradient.
+            const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
+            const base = (texel & 0x0f) + sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const ramp = texel & 0xf0;
+            for (let y = top; y < ybuf; y++) {
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+            }
+            ybuf = top;
+          }
+        }
+
+        // ---- solid cell: extrude a prism from the terrain. Buildings, cliffs, dungeon walls and
+        // variable storey heights all come out of this one branch.
+        if (solid) {
+          const storeys = map.storeys[ci] || 1;
+          const topH = gh + storeys * STOREY;
+          const yT = (horizon + (eyeZ - topH) * invD) | 0;
+          const top = yT < VIEW.y ? VIEW.y : yT;
+          if (top < ybuf) {
+            // Wall u from whichever axis this face is more aligned to.
+            const u = Math.abs(dx) > Math.abs(dy) ? (wy - cy) : (wx - cx);
+            const face = Math.abs(dx) > Math.abs(dy) ? 1 : 0;
+            const texel = Art.wallTexel(mat, u, 0, face);
+            const ramp = texel & 0xf0;
+            const baseShade = (texel & 0x0f) + sun - (face ? 1 : 0) +
+              (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const span = topH - gh;
+            for (let y = top; y < ybuf; y++) {
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
+              // v from the screen row back to world height, so texture does not swim with distance.
+              const wh = eyeZ - (y - horizon) / invD;
+              const v = clamp((topH - wh) / span, 0, 0.999);
+              const tx = Art.wallTexel(mat, u, v, face);
+              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + baseShade - (texel & 0x0f));
+            }
+            ybuf = top;
+          }
+          if (zb[px] > dist) zb[px] = dist;
+          // A solid prism occludes everything lower behind it; keep marching only for taller
+          // terrain and spans above.
+        }
+
+        // ---- overhead spans: bridges, gate arches, aqueducts, cave mouths. ONE primitive.
+        const sp = map.spans.get(cy * 4096 + cx);
+        if (sp) {
+          const yHi = (horizon + (eyeZ - sp.hi) * invD) | 0;
+          const yLo = (horizon + (eyeZ - sp.lo) * invD) | 0;
+          let a = yHi < VIEW.y ? VIEW.y : yHi;
+          let b = yLo > ybuf ? ybuf : yLo;
+          if (b > a) {
+            const texel = Art.wallTexel(sp.tex, (wx - cx), 0, 0);
+            const ramp = texel & 0xf0;
+            const base = (texel & 0x0f) + sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            for (let y = a; y < b; y++) {
+              // Skip rows an earlier, nearer band already claimed.
+              let taken = false;
+              for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
+              if (taken) continue;
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+            }
+            if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
+            if (zb[px] > dist) zb[px] = dist;
+          }
+        }
+      }
+    }
+
+    clipReset();
+  }
+
+  // Torch radius indoors. A dungeon lit by a global ambient reads as a lit room with the lights
+  // off; the falloff around the party is most of what makes a corridor feel like a corridor.
+  function dungeonLight(cam, wx, wy, map) {
+    const d = Math.hypot(wx - cam.x, wy - cam.y);
+    const radius = cam.torch || 7.5;
+    return Math.round(clamp(1 - d / radius, 0, 1) * 9) - 2;
+  }
+
+  // ---------------------------------------------------------------- sprites
+  // Billboards composited against zb. Feet sit at the WALK SURFACE — terrain height, or a span's
+  // deck when the entity is on one — never a constant ground plane.
+  function drawSprite(cam, spr, wx, wy, wz, hWorld, opts) {
+    const dxw = wx - cam.x, dyw = wy - cam.y;
+    const cosA = Math.cos(-cam.ang), sinA = Math.sin(-cam.ang);
+    const tx = dxw * cosA - dyw * sinA;
+    const ty = dxw * sinA + dyw * cosA;
+    if (tx < 0.25) return null;                         // behind the camera
+
+    const halfFov = Math.tan(FOV_H / 2);
+    const sx = VIEW.x + (VIEW.w / 2) * (1 + (ty / tx) / halfFov);
+    const invD = PROJ / tx;
+    const horizon = VIEW.y + (VIEW.h >> 1) + (cam.horizon || 0);
+    const eyeZ = cam.z + EYE;
+
+    const hPix = hWorld * invD;
+    const wPix = hPix * (spr.w / spr.h);
+    const yFeet = horizon + (eyeZ - wz) * invD;
+    const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
+
+    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return null;
+
+    // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
+    clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
+    const lit = opts && opts.lit !== undefined ? opts.lit : 0;
+    const mirror = opts && opts.mirror;
+    const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
+    const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
+    const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
+
+    for (let x = xa; x < xb; x++) {
+      if (zb[x] < tx) continue;                          // occluded by geometry in this column
+      let sxi = ((x - x0) * xs) | 0;
+      if (mirror) sxi = spr.w - 1 - sxi;
+      if (sxi < 0 || sxi >= spr.w) continue;
+      for (let y = ya; y < yb; y++) {
+        const syi = ((y - y0) * ys) | 0;
+        if (syi < 0 || syi >= spr.h) continue;
+        const pi = spr.data[syi * spr.w + sxi];
+        if (pi === 0) continue;
+        buf[y * W + x] = Core.shade(pi & 0xf0, (pi & 0x0f) + lit);
+      }
     }
     clipReset();
+    return { x: x0, y: y0, w: wPix, h: hPix, dist: tx };
+  }
+
+  // Which of the 8 facings to draw, and whether to mirror. Sprites are baked for 0..180 only;
+  // the other three eighths are the same frames flipped, exactly as 1998 sprite sheets did.
+  function facingFor(entAng, camX, camY, entX, entY, nFacings) {
+    const toCam = Math.atan2(camY - entY, camX - entX);
+    let rel = toCam - entAng;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    const mirror = rel < 0;
+    const a = Math.abs(rel) / Math.PI;
+    return { index: clamp(Math.round(a * (nFacings - 1)), 0, nFacings - 1), mirror };
   }
 
   return {
     W, H, buf, zb,
     clip, clipReset, clear, px, pxFast, hline, vline, rect, frameRect, blit, blitScaled,
-    present, testCard, render3D,
-    VIEW, HUD, FOV_H, FOV_V, PROJ,
+    present, testCard, render3D, drawSprite, facingFor, dungeonLight,
+    VIEW, HUD, FOV_H, FOV_V, PROJ, STOREY, EYE,
   };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
+
+
+/* ==================== 06_art.js ==================== */
+// 06_art.js — procedural textures, sky, font, UI ornament, and the texel functions the renderer
+// calls every step of every column.
+// Owner: art. Calls Core.
+//
+// Everything here is generated once at boot from LAYOUT streams and cached. Baked assets from
+// assets/tex override the procedural version when present, which is how the art pass upgrades the
+// game without the engine changing at all.
+
+const Art = (() => {
+  'use strict';
+
+  const { clamp, lerp, RNG, Clock } = Core;
+
+  const TS = 64;          // procedural texture edge; baked textures may be 128
+  const TMASK = TS - 1;
+
+  // ---------------------------------------------------------------- font
+  // 5x7, column-major, bit 0 = top row. Drawn at integer scale so it stays crisp when the 640x480
+  // framebuffer is letterboxed onto a phone.
+  const FONT_HEX =
+    '0000000000|00005F0000|0007000700|147F147F14|242A7F2A12|2313086462|3649552250|0005030000|' +
+    '001C224100|0041221C00|14083E0814|08083E0808|0000503000|0808080808|0000606000|2010080402|' +
+    '3E5149453E|00427F4000|4261514946|2141454B31|1814127F10|2745454539|3C4A494930|0171090503|' +
+    '3649494936|064949291E|0036360000|0056360000|0814224100|1414141414|0041221408|0201510906|' +
+    '324979413E|7E1111117E|7F49494936|3E41414122|7F4141221C|7F49494941|7F09090901|3E4149497A|' +
+    '7F0808087F|00417F4100|2040413F01|7F08142241|7F40404040|7F020C027F|7F04081  07F|3E4141413E|' +
+    '7F09090906|3E4151215E|7F09192946|4649494931|01017F0101|3F4040403F|1F2040201F|3F40384 03F|' +
+    '6314081463|0708700807|6151494543|007F414100|0204081020|0041417F00|0402010204|4040404040|' +
+    '0001020400|2054545478|7F48444438|3844444420|384444487F|3854545418|087E090102|0C5252523E|' +
+    '7F08040478|00447D4000|204044 3D00|7F10284400|00417F4000|7C04180478|7C08040478|3844444438|' +
+    '7C14141408|081414187C|7C08040408|4854545420|043F444020|3C4040207C|1C2040201C|3C4030403C|' +
+    '4428102844|0C5050503C|4464544C44|0008364100|00007F0000|0041360800|0804081008';
+
+  const FONT = (() => {
+    const parts = FONT_HEX.replace(/\s/g, '').split('|');
+    const out = new Uint8Array(parts.length * 5);
+    for (let i = 0; i < parts.length; i++) {
+      for (let c = 0; c < 5; c++) out[i * 5 + c] = parseInt(parts[i].substr(c * 2, 2), 16) || 0;
+    }
+    return out;
+  })();
+
+  const CH_W = 6, CH_H = 8;   // 5px glyph + 1px gap
+
+  function charCols(ch) {
+    const code = ch.charCodeAt(0);
+    if (code < 32 || code > 126) return -1;
+    return (code - 32) * 5;
+  }
+
+  function text(E, x, y, str, pi, scale) {
+    const s = scale || 1;
+    let cx = x;
+    for (let i = 0; i < str.length; i++) {
+      const o = charCols(str[i]);
+      if (o >= 0) {
+        for (let c = 0; c < 5; c++) {
+          const bits = FONT[o + c];
+          for (let r = 0; r < 7; r++) {
+            if (!(bits & (1 << r))) continue;
+            if (s === 1) E.px(cx + c, y + r, pi);
+            else E.rect(cx + c * s, y + r * s, s, s, pi);
+          }
+        }
+      }
+      cx += CH_W * s;
+    }
+    return cx - x;
+  }
+
+  const textWidth = (str, scale) => str.length * CH_W * (scale || 1);
+
+  // Text with a 1px dark drop, which is what makes light type survive on a busy background.
+  function textShadow(E, x, y, str, pi, scale) {
+    text(E, x + (scale || 1), y + (scale || 1), str, Core.idx(0, 1), scale);
+    return text(E, x, y, str, pi, scale);
+  }
+
+  function textCentred(E, cx, y, str, pi, scale) {
+    return text(E, Math.round(cx - textWidth(str, scale) / 2), y, str, pi, scale);
+  }
+
+  // ---------------------------------------------------------------- textures
+  const TEX = Object.create(null);
+  const BAKED = Object.create(null);
+
+  function noise2(x, y, seed) {
+    return World.vnoise(x, y, seed);
+  }
+
+  // Build a 64x64 indexed texture for a material. Structure first, grain second: a wall reads as
+  // masonry because of its COURSES, not because of its noise.
+  function makeTexture(mat, ramp, seed) {
+    const t = new Uint8Array(TS * TS);
+    const r = RNG.world('tex:' + mat);
+    const M = World.MAT;
+
+    for (let y = 0; y < TS; y++) {
+      for (let x = 0; x < TS; x++) {
+        let shade = 8;
+        const n = noise2(x / 7, y / 7, seed) * 2 - 1;
+        const fine = noise2(x / 2.2, y / 2.2, seed + 91) * 2 - 1;
+
+        if (mat === M.stonewall || mat === M.ruin || mat === M.plaza || mat === M.marble) {
+          // Ashlar courses: 16px high, offset every other row, 2px mortar.
+          const course = Math.floor(y / 16);
+          const off = (course & 1) ? 12 : 0;
+          const bx = (x + off) % 24, by = y % 16;
+          const joint = bx < 2 || by < 2;
+          shade = joint ? 4 : 9 + n * 2.2 + fine * 0.8;
+          if (!joint && (bx === 2 || by === 2)) shade += 2;         // lit top-left chamfer
+          if (!joint && (bx === 23 || by === 15)) shade -= 1.5;
+          if (mat === M.marble) shade += 2 + noise2(x / 18, y / 4, seed) * 3;
+        } else if (mat === M.brickwall) {
+          const course = Math.floor(y / 8);
+          const off = (course & 1) ? 6 : 0;
+          const bx = (x + off) % 12, by = y % 8;
+          const joint = bx < 1 || by < 1;
+          shade = joint ? 4 : 9 + n * 1.6;
+        } else if (mat === M.timberwall || mat === M.wood || mat === M.palisade) {
+          // Vertical planks with a seam every 8px and long grain.
+          const plank = Math.floor(x / 8);
+          const seam = (x % 8) === 0;
+          shade = seam ? 4 : 8 + noise2(x / 1.4, y / 14, seed + plank * 13) * 4;
+        } else if (mat === M.plaster) {
+          shade = 11 + n * 1.4 + fine * 0.6;
+          if (y > TS - 10) shade -= 2;                              // damp at the base
+        } else if (mat === M.cliff || mat === M.rock || mat === M.obsidian) {
+          const b = noise2(x / 5, y / 9, seed) * 2 - 1;
+          shade = 7 + b * 4 + fine * 1.2;
+        } else if (mat === M.grass || mat === M.moss) {
+          shade = 8 + n * 2.4 + fine * 1.6;
+        } else if (mat === M.road || mat === M.dirt || mat === M.gravel) {
+          shade = 8 + n * 1.8 + fine * 2.2;
+        } else if (mat === M.sand) {
+          shade = 11 + n * 1.2 + fine * 0.8;
+        } else if (mat === M.snow || mat === M.ice) {
+          shade = 13 + n * 1.6;
+        } else if (mat === M.water) {
+          shade = 7 + Math.sin(x / 5) * 1.2 + n * 1.6;
+        } else if (mat === M.marsh) {
+          shade = 6 + n * 3;
+        } else if (mat === M.ash) {
+          shade = 5 + n * 2.6 + fine * 1.2;
+        } else if (mat === M.tile) {
+          const bx = x % 16, by = y % 16;
+          shade = (bx < 1 || by < 1) ? 4 : 9 + n * 1.2;
+        } else {
+          shade = 8 + n * 2;
+        }
+
+        t[y * TS + x] = Core.shade(ramp << 4, Math.round(shade));
+      }
+    }
+    return t;
+  }
+
+  function texFor(mat) {
+    if (BAKED[mat]) return BAKED[mat];
+    let t = TEX[mat];
+    if (!t) {
+      const ramp = World.MAT_RAMP[mat] === undefined ? 1 : World.MAT_RAMP[mat];
+      t = TEX[mat] = makeTexture(mat, ramp, Core.hashStr('m' + mat) & 0xffff);
+    }
+    return t;
+  }
+
+  // Baked textures are indexed PNGs decoded at boot. They replace the procedural version for that
+  // material and nothing else in the engine changes.
+  function installBaked(mat, indices, size) {
+    BAKED[mat] = indices;
+    BAKED[mat].size = size;
+  }
+
+  const texSize = (t) => t.size || TS;
+
+  // ---- the two functions the march calls in its innermost loop
+  function groundTexel(mat, wx, wy, map) {
+    const t = texFor(mat);
+    const S = texSize(t), Mk = S - 1;
+    // Ground textures repeat every 2 cells: a 1:1 mapping makes a road read as a tiled floor.
+    const u = ((wx * S / 2) | 0) & Mk;
+    const v = ((wy * S / 2) | 0) & Mk;
+    return t[v * S + u];
+  }
+
+  function wallTexel(mat, u, v, face) {
+    const t = texFor(mat);
+    const S = texSize(t), Mk = S - 1;
+    const ui = ((u * S) | 0) & Mk;
+    const vi = ((v * S) | 0) & Mk;
+    return t[vi * S + ui];
+  }
+
+  // Slope shading from the terrain gradient against the key direction (upper-left, matching the
+  // sprite rig). Hills read as hills because of this and almost nothing else.
+  function slopeShade(map, wx, wy) {
+    const h0 = World.H(map, wx, wy);
+    const hx = World.H(map, wx + 0.9, wy) - h0;
+    const hy = World.H(map, wx, wy + 0.9) - h0;
+    return clamp(Math.round((-hx * 1.6 - hy * 1.1)), -4, 4);
+  }
+
+  // ---------------------------------------------------------------- sky
+  // A vertical band per viewport row for the current hour. Regenerated only when the hour bucket
+  // or horizon changes: it is a per-frame read, not a per-frame build.
+  let skyCache = null, skyKey = '';
+
+  const SKY_KEYS = {
+    night:     { top: [9, 1], hor: [9, 4],  sun: -5 },
+    dawn:      { top: [9, 5], hor: [15, 9], sun: -2 },
+    morning:   { top: [9, 8], hor: [9, 12], sun: 0 },
+    noon:      { top: [9, 10], hor: [9, 14], sun: 1 },
+    afternoon: { top: [9, 9], hor: [9, 13], sun: 0 },
+    dusk:      { top: [9, 4], hor: [15, 8], sun: -2 },
+  };
+
+  function skyBand(horizonOverride) {
+    const E = Engine;
+    const phase = Clock.phase();
+    const horizon = (E.VIEW.h >> 1) + (horizonOverride || 0);
+    const k = phase + ':' + horizon;
+    if (skyCache && skyKey === k) return skyCache;
+
+    const spec = SKY_KEYS[phase] || SKY_KEYS.noon;
+    const band = new Uint8Array(E.VIEW.h);
+    for (let y = 0; y < E.VIEW.h; y++) {
+      // Gradient from zenith to horizon, then a warmer band right at the skyline.
+      const t = clamp(y / Math.max(1, horizon), 0, 1);
+      const ramp = t > 0.86 ? spec.hor[0] : spec.top[0];
+      const a = spec.top[1], b = spec.hor[1];
+      const sh = Math.round(lerp(a, b, t));
+      band[y] = Core.shade(ramp << 4, sh);
+    }
+    skyCache = band; skyKey = k;
+    return band;
+  }
+
+  // Global light contribution from the sun, as a shade delta. This is how time of day reaches every
+  // surface without any asset being generated twice.
+  function sunShade(mapLight) {
+    const d = Clock.daylight();
+    const base = Math.round(lerp(-5, 2, d));
+    return Math.round(base * (mapLight === undefined ? 1 : mapLight));
+  }
+
+  // ---------------------------------------------------------------- ui ornament
+  // Bevelled panel: two-tone border plus a darker plate. Cheap, and it is what makes a 1998 UI read
+  // as moulded rather than as flat rectangles.
+  function panel(E, x, y, w, h, ramp, dark) {
+    const r = ramp === undefined ? 4 : ramp;
+    E.rect(x, y, w, h, Core.idx(r, dark ? 3 : 5));
+    E.hline(x, y, w, Core.idx(r, 10));
+    E.vline(x, y, h, Core.idx(r, 10));
+    E.hline(x, y + h - 1, w, Core.idx(r, 2));
+    E.vline(x + w - 1, y, h, Core.idx(r, 2));
+    E.frameRect(x + 1, y + 1, w - 2, h - 2, Core.idx(r, dark ? 2 : 4));
+  }
+
+  // A raised button. `down` swaps the bevel, which is the entire visual language of "pressed".
+  function button(E, x, y, w, h, label, down, scale) {
+    const r = 13;
+    E.rect(x, y, w, h, Core.idx(r, down ? 4 : 7));
+    E.hline(x, y, w, Core.idx(r, down ? 3 : 12));
+    E.vline(x, y, h, Core.idx(r, down ? 3 : 12));
+    E.hline(x, y + h - 1, w, Core.idx(r, down ? 12 : 3));
+    E.vline(x + w - 1, y, h, Core.idx(r, down ? 12 : 3));
+    if (label) {
+      const s = scale || 2;
+      textCentred(E, x + w / 2, y + ((h - 7 * s) >> 1) + (down ? 1 : 0), label, Core.idx(0, 14), s);
+    }
+  }
+
+  // The ornate outer frame: the viewport hole must stay index 0 so nothing paints over the 3D view.
+  function gameFrame(E) {
+    const V = E.VIEW;
+    // Border band around the viewport.
+    panel(E, 0, 0, E.W, V.y, 13, true);
+    panel(E, 0, V.y, V.x, V.h, 13, true);
+    panel(E, V.x + V.w, V.y, E.W - V.x - V.w, V.h, 13, true);
+    E.frameRect(V.x - 1, V.y - 1, V.w + 2, V.h + 2, Core.idx(13, 9));
+    // Corner rosettes.
+    for (const [cx, cy] of [[V.x - 1, V.y - 1], [V.x + V.w - 3, V.y - 1],
+      [V.x - 1, V.y + V.h - 3], [V.x + V.w - 3, V.y + V.h - 3]]) {
+      E.rect(cx - 1, cy - 1, 5, 5, Core.idx(13, 11));
+      E.rect(cx, cy, 3, 3, Core.idx(13, 6));
+    }
+  }
+
+  function bar(E, x, y, w, h, frac, ramp) {
+    E.rect(x, y, w, h, Core.idx(0, 2));
+    E.frameRect(x, y, w, h, Core.idx(0, 5));
+    const fw = Math.round((w - 2) * clamp(frac, 0, 1));
+    if (fw > 0) {
+      E.rect(x + 1, y + 1, fw, h - 2, Core.idx(ramp, 9));
+      E.hline(x + 1, y + 1, fw, Core.idx(ramp, 12));
+    }
+  }
+
+  // ---------------------------------------------------------------- animation
+  let tick = 0;
+  function step() { tick++; }
+
+  return {
+    TS, FONT, CH_W, CH_H,
+    text, textShadow, textCentred, textWidth,
+    makeTexture, texFor, installBaked, groundTexel, wallTexel, slopeShade,
+    skyBand, sunShade, SKY_KEYS,
+    panel, button, gameFrame, bar, step,
+    get tick() { return tick; },
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = Art;
+
+
+/* ==================== 06b_sprites.js ==================== */
+// 06b_sprites.js — sprite, portrait, paperdoll and icon painters.
+// Owner: sprites. Calls Core, Art.
+//
+// Two sources, one interface. Baked foundry frames (assets/sprites/*.json, embedded by build.js)
+// are used when present; otherwise a procedural painter stands in. The engine never knows which it
+// got, which is what lets the art pass upgrade the game without touching the renderer.
+
+const Sprites = (() => {
+  'use strict';
+
+  const { clamp, RNG } = Core;
+
+  const cache = Object.create(null);
+  const BAKED = Object.create(null);
+
+  // ---------------------------------------------------------------- baked
+  // Decode indexed PNGs the build embedded. The browser decodes them for free, which is why the
+  // payload is PNG rather than raw index arrays.
+  function installBaked(manifest) {
+    if (!manifest) return 0;
+    let n = 0;
+    for (const id of Object.keys(manifest)) {
+      BAKED[id] = manifest[id];
+      n++;
+    }
+    return n;
+  }
+
+  // Decode a base64 indexed PNG into {w,h,data} using a canvas. Index recovery works because the
+  // build writes the game palette into the PNG's PLTE, so a decoded RGB maps back 1:1.
+  function decodePNG(b64, pal) {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + b64;
+    return img;   // callers await decode; see prepareBaked
+  }
+
+  async function prepareBaked() {
+    const out = {};
+    for (const id of Object.keys(BAKED)) {
+      const m = BAKED[id];
+      const facings = [];
+      for (const f of m.facings) {
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + f.png; });
+        const c = document.createElement('canvas');
+        c.width = f.w; c.height = f.h;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, f.w, f.h).data;
+        const data = new Uint8Array(f.w * f.h);
+        for (let i = 0, p = 0; i < data.length; i++, p += 4) {
+          data[i] = d[p + 3] < 128 ? 0 : Core.palIdx(d[p], d[p + 1], d[p + 2]);
+        }
+        facings.push({ w: f.w, h: f.h, data });
+      }
+      out[id] = { facings, h: m.h, aspect: m.aspect };
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- procedural
+  // Stand-in creature painter. Deliberately silhouette-first: a blob that reads at 40px beats a
+  // detailed thing that does not, and the silhouette is the best predictor of "reads as MM6".
+  function paintCreature(kind, w, h) {
+    const d = new Uint8Array(w * h);
+    const r = RNG.world('spr:' + kind);
+    const M = Items.MONSTERS[kind] || { level: 1 };
+
+    // Body plan varies by rough archetype so a skeleton does not look like an ogre.
+    const heavy = /ogre|troll|zombie|knight|elemental|crown/.test(kind);
+    const thin = /skeleton|wraith|lich|harpy|spider|rat/.test(kind);
+    const ramp = /skeleton|lich|wraith/.test(kind) ? 0
+      : /goblin|troll|harpy/.test(kind) ? 6
+      : /elemental|crown/.test(kind) ? 15
+      : /knight|steel/.test(kind) ? 14
+      : /zombie|ghoul/.test(kind) ? 7
+      : 10;
+
+    const cx = w >> 1;
+    const bodyW = Math.round(w * (heavy ? 0.52 : thin ? 0.26 : 0.38));
+    const headR = Math.round(w * (heavy ? 0.15 : 0.13));
+    const shoulderY = Math.round(h * 0.30);
+    const hipY = Math.round(h * 0.66);
+
+    const put = (x, y, sh) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      d[y * w + x] = Core.shade(ramp << 4, sh);
+    };
+
+    // Legs
+    for (let y = hipY; y < h; y++) {
+      const spread = Math.round((y - hipY) * 0.22) + 2;
+      const lw = Math.max(2, Math.round(bodyW * 0.22));
+      for (let k = 0; k < lw; k++) {
+        put(cx - spread - k, y, 7 - (k >> 1));
+        put(cx + spread + k, y, 6 - (k >> 1));
+      }
+    }
+    // Torso: a tapered barrel, lit from upper-left to match the foundry rig.
+    for (let y = shoulderY; y < hipY; y++) {
+      const t = (y - shoulderY) / Math.max(1, hipY - shoulderY);
+      const ww = Math.round(bodyW * (1 - t * 0.18));
+      for (let x = -ww; x <= ww; x++) {
+        const lit = 10 - Math.round(Math.abs(x + ww * 0.35) / ww * 5);
+        put(cx + x, y, clamp(lit, 3, 13));
+      }
+    }
+    // Arms
+    for (let y = shoulderY + 1; y < hipY - 1; y++) {
+      const t = (y - shoulderY) / Math.max(1, hipY - shoulderY);
+      const off = bodyW + 1 + Math.round(Math.sin(t * 2.4) * 2);
+      for (let k = 0; k < Math.max(2, Math.round(bodyW * 0.28)); k++) {
+        put(cx - off - k, y, 9 - (k >> 1));
+        put(cx + off + k, y, 6 - (k >> 1));
+      }
+    }
+    // Head
+    for (let y = -headR; y <= headR; y++) {
+      for (let x = -headR; x <= headR; x++) {
+        if (x * x + y * y > headR * headR) continue;
+        const lit = 11 - Math.round((x + headR) / (headR * 2) * 5) - Math.round((y + headR) / (headR * 2) * 2);
+        put(cx + x, shoulderY - headR + y, clamp(lit, 4, 14));
+      }
+    }
+    // Eyes: two dark pips. At 40px this is the only facial feature that survives, and it is the
+    // one that makes a shape read as a creature rather than a rock.
+    put(cx - Math.max(1, headR >> 1), shoulderY - headR, 1);
+    put(cx + Math.max(1, headR >> 1), shoulderY - headR, 1);
+    if (/goblin|troll|ogre/.test(kind)) {
+      // Horns, because the silhouette test is what matters most.
+      for (let k = 0; k < headR; k++) {
+        put(cx - headR - k + 1, shoulderY - headR - k - 1, 5);
+        put(cx + headR + k - 1, shoulderY - headR - k - 1, 5);
+      }
+    }
+
+    // 1px dark outline outside the silhouette — what separates 1998 pre-rendered from a modern
+    // render pasted on a background.
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[y * w + x]) continue;
+        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) {
+          out[y * w + x] = Core.idx(0, 2);
+        }
+      }
+    }
+    return { w, h, data: out };
+  }
+
+  function creature(kind, facing) {
+    const baked = BAKED.__ready && BAKED.__ready[kind];
+    if (baked) return baked.facings[clamp(facing || 0, 0, baked.facings.length - 1)];
+    const k = 'c:' + kind;
+    if (!cache[k]) cache[k] = paintCreature(kind, 48, 64);
+    return cache[k];
+  }
+
+  // ---------------------------------------------------------------- decor
+  function paintDecor(kind) {
+    const w = 40, h = 56;
+    const clamp = Core.clamp;
+    const d = new Uint8Array(w * h);
+    const put = (x, y, ramp, sh) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      d[y * w + x] = Core.shade(ramp << 4, sh);
+    };
+    const cx = w >> 1;
+
+    if (kind === 'oak' || kind === 'pine' || kind === 'deadtree' || kind === 'ashstump') {
+      // Trunk and canopy MUST overlap. The first version started the trunk below where the canopy
+      // ended, which drew a floating crown and a detached post — the defect reads instantly as
+      // "sprites are not grounded" and no amount of texture work hides it.
+      const canopyBottom = kind === 'pine' ? Math.round(h * 0.72) : Math.round(h * 0.58);
+      const trunkTop = kind === 'ashstump' ? Math.round(h * 0.78) : Math.round(canopyBottom * 0.72);
+      const trunkW = kind === 'ashstump' ? 4 : 2;
+      for (let y = trunkTop; y < h; y++) {
+        const taper = trunkW + Math.round((y - trunkTop) / Math.max(1, h - trunkTop) * 1.6);
+        for (let x = -taper; x <= taper; x++) put(cx + x, y, 4, clamp(8 - Math.abs(x + 1), 3, 12));
+      }
+      if (kind !== 'ashstump') {
+        const leafRamp = kind === 'deadtree' ? 4 : 7;
+        if (kind === 'pine') {
+          for (let t = 0; t < 4; t++) {
+            const cyy = Math.round(h * (0.10 + t * 0.16));
+            const rr = 5 + t * 4;
+            for (let y = -rr; y <= rr + 2; y++) {
+              for (let x = -rr; x <= rr; x++) {
+                if (Math.abs(x) + Math.abs(y) * 1.3 > rr) continue;
+                put(cx + x, cyy + y, leafRamp,
+                  clamp(11 - Math.round((x + rr) / (rr * 2 + 1) * 5) - Math.round((y + rr) / (rr * 2 + 1) * 2), 3, 13));
+              }
+            }
+          }
+        } else {
+          const cyy = Math.round(h * 0.30), rr = 15;
+          for (let y = -rr; y <= rr; y++) {
+            for (let x = -rr; x <= rr; x++) {
+              const dd = Math.hypot(x, y * 1.15);
+              if (dd > rr) continue;
+              if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;   // bare branches
+              put(cx + x, cyy + y, leafRamp,
+                clamp(11 - Math.round((x + rr) / (rr * 2) * 5) - Math.round((y + rr) / (rr * 2) * 2), 3, 13));
+            }
+          }
+        }
+      }
+    } else if (kind === 'rock' || kind === 'standingstone') {
+      const rh = kind === 'standingstone' ? Math.round(h * 0.8) : Math.round(h * 0.35);
+      const rw = kind === 'standingstone' ? 5 : 11;
+      for (let y = h - rh; y < h; y++) {
+        const t = (y - (h - rh)) / rh;
+        const ww = Math.round(rw * (kind === 'standingstone' ? 1 : 0.5 + t * 0.5));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 1, clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+      }
+    } else if (kind === 'reed' || kind === 'bush') {
+      for (let i = 0; i < 26; i++) {
+        const bx = cx - 9 + ((i * 7) % 19);
+        const bh = 14 + ((i * 11) % 18);
+        for (let y = h - bh; y < h; y++) put(bx, y, kind === 'reed' ? 6 : 7, 6 + ((i + y) & 3));
+      }
+    } else if (kind === 'brazier') {
+      for (let y = h - 18; y < h; y++) for (let x = -3; x <= 3; x++) put(cx + x, y, 14, 6);
+      for (let y = h - 30; y < h - 16; y++) {
+        const ww = 7 - Math.abs(y - (h - 23));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 15, clamp(9 + ((x + y) & 3), 6, 15));
+      }
+    } else if (kind === 'fountain') {
+      for (let y = h - 16; y < h; y++) for (let x = -14; x <= 14; x++) put(cx + x, y, 1, 8 - (Math.abs(x) >> 2));
+      for (let y = h - 30; y < h - 14; y++) for (let x = -3; x <= 3; x++) put(cx + x, y, 8, 10);
+    } else if (kind === 'chest') {
+      for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
+      for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
+      put(cx, h - 12, 13, 13);
+    } else if (kind === 'sign') {
+      for (let y = h - 26; y < h; y++) put(cx, y, 4, 6);
+      for (let y = h - 40; y < h - 24; y++) for (let x = -10; x <= 10; x++) put(cx + x, y, 4, 9 - (Math.abs(x) >> 3));
+    } else if (kind === 'stump') {
+      for (let y = h - 12; y < h; y++) for (let x = -6; x <= 6; x++) put(cx + x, y, 4, 7);
+    } else if (kind === 'questitem') {
+      for (let y = h - 22; y < h - 6; y++) {
+        const ww = 8 - Math.abs(y - (h - 14));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 13, clamp(11 + ((x + y) & 1) * 2, 8, 15));
+      }
+    }
+
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[y * w + x]) continue;
+        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+      }
+    }
+    return { w, h, data: out };
+  }
+
+  function decor(kind) {
+    const k = 'd:' + kind;
+    if (!cache[k]) cache[k] = paintDecor(kind);
+    return cache[k];
+  }
+
+  const DECOR_HEIGHT = {
+    oak: 6.5, pine: 8.0, deadtree: 5.5, ashstump: 2.4, reed: 1.6, bush: 1.2,
+    rock: 1.8, standingstone: 4.2, brazier: 2.0, fountain: 2.4, chest: 1.1,
+    sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6,
+  };
+
+  // ---------------------------------------------------------------- portraits
+  // 64x72 character portraits. Class and sex drive the palette and the silhouette; the point is
+  // that four party members are instantly distinguishable at a glance in the HUD.
+  function paintPortrait(seed, cls, sex) {
+    const w = 64, h = 72;
+    const d = new Uint8Array(w * h);
+    const r = RNG.world('portrait:' + seed + cls + sex);
+    const skin = 10, hairRamp = r.pick([4, 5, 13, 0]);
+    const clothRamp = { knight: 14, templar: 13, ranger: 7, priest: 0, mage: 12, warden: 6 }[cls] || 11;
+    const put = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h) d[y * w + x] = Core.shade(ramp << 4, sh); };
+
+    // Background plate so a portrait never sits on the raw HUD.
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) put(x, y, 1, 3 + ((x + y) & 1));
+
+    const cx = w >> 1;
+    // Shoulders
+    for (let y = h - 20; y < h; y++) {
+      const ww = 20 + (y - (h - 20));
+      for (let x = -ww; x <= ww; x++) put(cx + x, y, clothRamp, clamp(9 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+    }
+    // Head
+    const hr = 17;
+    for (let y = -hr; y <= hr + 3; y++) {
+      for (let x = -hr + 2; x <= hr - 2; x++) {
+        if ((x * x) / ((hr - 2) * (hr - 2)) + (y * y) / ((hr + 2) * (hr + 2)) > 1) continue;
+        put(cx + x, h - 30 + y, skin, clamp(12 - Math.round((x + hr) / (hr * 2) * 5) - Math.round((y + hr) / (hr * 2) * 2), 4, 14));
+      }
+    }
+    // Hair
+    const hairY = h - 30 - hr;
+    for (let y = 0; y < (sex === 'f' ? 26 : 14); y++) {
+      const ww = Math.round((hr - 1) * Math.sin(Math.min(1, (y + 3) / 16) * Math.PI * 0.62));
+      for (let x = -ww - (sex === 'f' ? 2 : 0); x <= ww + (sex === 'f' ? 2 : 0); x++) {
+        if (y > 8 && Math.abs(x) < ww - 4) continue;      // leave the face clear
+        put(cx + x, hairY + y, hairRamp, clamp(9 - ((x + y) & 3), 3, 13));
+      }
+    }
+    // Eyes and mouth
+    put(cx - 6, h - 32, 0, 2); put(cx - 5, h - 32, 0, 2);
+    put(cx + 5, h - 32, 0, 2); put(cx + 6, h - 32, 0, 2);
+    for (let x = -3; x <= 3; x++) put(cx + x, h - 22, 10, 6);
+
+    Core.shade(0, 0);
+    return { w, h, data: d };
+  }
+
+  function portrait(idx, cls, sex) {
+    const k = 'p:' + idx + cls + sex;
+    if (!cache[k]) cache[k] = paintPortrait(idx, cls, sex);
+    return cache[k];
+  }
+
+  // ---------------------------------------------------------------- item icons
+  function paintIcon(id) {
+    const w = 32, h = 32;
+    const d = new Uint8Array(w * h);
+    const it = Items.ITEMS[id] || {};
+    const put = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h) d[y * w + x] = Core.shade(ramp << 4, sh); };
+
+    const kind = it.kind || 'misc';
+    if (kind === 'weapon') {
+      const bow = it.slot === 'bow';
+      if (bow) {
+        for (let a = -14; a <= 14; a++) {
+          const x = 10 + Math.round(Math.cos(a / 18) * 7);
+          put(x, 16 + a, 4, 8);
+        }
+        for (let y = 2; y < 30; y++) put(18, y, 0, 10);
+      } else {
+        for (let y = 3; y < 22; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
+        for (let x = 10; x <= 22; x++) put(x, 22, 13, 9);
+        for (let y = 23; y < 29; y++) put(16, y, 4, 7);
+      }
+    } else if (kind === 'armour') {
+      for (let y = 5; y < 27; y++) {
+        const ww = 10 - Math.abs(y - 14) / 3;
+        for (let x = -ww; x <= ww; x++) put(16 + x, y, it.skill === 'plate' ? 14 : it.skill === 'chain' ? 1 : 4,
+          clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+      }
+    } else if (kind === 'potion') {
+      for (let y = 10; y < 27; y++) {
+        const ww = 7 - Math.abs(y - 20) / 4;
+        for (let x = -ww; x <= ww; x++) put(16 + x, y, it.mana ? 12 : it.cure ? 6 : 11, 10);
+      }
+      for (let y = 5; y < 11; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 0, 9);
+    } else if (kind === 'ring' || kind === 'amulet') {
+      for (let a = 0; a < 64; a++) {
+        const t = a / 64 * Math.PI * 2;
+        put(16 + Math.round(Math.cos(t) * 9), 16 + Math.round(Math.sin(t) * 9), 13, 12);
+      }
+      put(16, 7, 12, 14);
+    } else if (kind === 'quest') {
+      for (let y = 8; y < 25; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 13, clamp(12 - ((x + y) & 3), 8, 15));
+    } else {
+      for (let y = 9; y < 24; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 4, 8);
+    }
+
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (d[y * w + x]) continue;
+      if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+          (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+    }
+    return { w, h, data: out };
+  }
+
+  function icon(id) {
+    const k = 'i:' + id;
+    if (!cache[k]) cache[k] = paintIcon(id);
+    return cache[k];
+  }
+
+  return {
+    installBaked, prepareBaked, BAKED,
+    creature, decor, DECOR_HEIGHT, portrait, icon,
+    paintCreature, paintDecor, paintPortrait, paintIcon,
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = Sprites;
+
+
+/* ==================== 08_ui.js ==================== */
+// 08_ui.js — the HUD and every screen.
+// Owner: ui. Calls Core, Rules, Spellcraft, Items, Art, Sprites.
+//
+// GLUE CALLS RULES. Nothing here computes a price, a hit chance or a max HP; it asks Rules. If a
+// formula appears in this file it is a bug by definition.
+//
+// Sized for touch. The framebuffer is 640x480 letterboxed to 520x390 on an iPhone 14 Pro Max in
+// landscape, so a 44pt finger target is roughly 54 framebuffer pixels. Every tappable thing below
+// is at least that, and text is drawn at scale 2 by default because scale 1 is unreadable on glass.
+
+const UI = (() => {
+  'use strict';
+
+  const { clamp } = Core;
+  const E = () => Engine;
+
+  // Hit regions rebuilt every frame; the tap handler walks them newest-first.
+  let regions = [];
+  const reg = (id, x, y, w, h, data) => { regions.push({ id, x, y, w, h, data }); };
+  const clearRegions = () => { regions = []; };
+  function hit(x, y) {
+    for (let i = regions.length - 1; i >= 0; i--) {
+      const r = regions[i];
+      if (x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return r;
+    }
+    return null;
+  }
+
+  const HUD = { x: 0, y: 352, w: 640, h: 128 };
+  const PORTRAIT = { w: 72, h: 88, y: 358, pitch: 78, x0: 6 };
+
+  // ---------------------------------------------------------------- hud
+  function drawHUD(g) {
+    const En = E();
+    Art.panel(En, HUD.x, HUD.y, HUD.w, HUD.h, 13, true);
+    En.hline(0, HUD.y, 640, Core.idx(13, 11));
+
+    // ---- party portraits
+    g.party.members.forEach((ch, i) => {
+      const x = PORTRAIT.x0 + i * PORTRAIT.pitch;
+      const y = PORTRAIT.y;
+      const active = g.active === i;
+      const dead = Rules.isDead(ch);
+
+      Art.panel(En, x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, active ? 13 : 4, !active);
+      const p = Sprites.portrait(ch.portrait, ch.cls, ch.sex);
+      En.clip(x, y, PORTRAIT.w, 56);
+      En.blitScaled(p, x, y, PORTRAIT.w, 62, dead ? -5 : 0);
+      En.clipReset();
+
+      // Name, then HP and SP bars. The bars are the only thing a player actually reads mid-fight,
+      // so they get the width.
+      Art.text(En, x + 2, y + 58, ch.name.slice(0, 8), Core.idx(0, dead ? 6 : 14), 1);
+      Art.bar(En, x + 2, y + 68, PORTRAIT.w - 4, 8, ch.hp / Math.max(1, Rules.maxHP(ch)), 11);
+      const spMax = Rules.maxSP(ch);
+      if (spMax > 0) Art.bar(En, x + 2, y + 78, PORTRAIT.w - 4, 8, ch.sp / spMax, 12);
+
+      const cond = Rules.worstCondition(ch);
+      if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
+
+      reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
+    });
+
+    // ---- message log
+    const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
+    const lw = 636 - lx - 118;
+    Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
+    const lines = Core.Log.tail(4);
+    lines.forEach((l, i) => {
+      const c = l.kind === 'hit' ? Core.idx(11, 12) : l.kind === 'good' ? Core.idx(6, 12)
+        : l.kind === 'sys' ? Core.idx(9, 11) : Core.idx(0, 13);
+      Art.text(En, lx + 5, HUD.y + 11 + i * 17, l.text.slice(0, Math.floor((lw - 10) / (Art.CH_W * 2))), c, 2);
+    });
+
+    // ---- gold, time, place
+    Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
+    Art.text(En, lx + 90, HUD.y + 86, Core.Clock.hhmm(), Core.idx(9, 12), 2);
+    Art.text(En, lx + 5, HUD.y + 106, (g.map.town ? g.map.town.name + ', ' : '') + g.map.name, Core.idx(2, 12), 1);
+
+    // ---- buttons, two rows of three, each a comfortable finger target
+    const BX = 640 - 114, BW = 54, BH = 36;
+    const btns = [
+      ['CHR', 'sheet'], ['INV', 'inv'], ['SPL', 'book'],
+      ['MAP', 'map'], ['RST', 'rest'], ['MNU', 'menu'],
+    ];
+    btns.forEach((b, i) => {
+      const bx = BX + (i % 2) * (BW + 4);
+      const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
+      Art.button(En, bx, by, BW, BH, b[0], g.pressed === b[1], 2);
+      reg('btn', bx, by, BW, BH, b[1]);
+    });
+  }
+
+  // ---------------------------------------------------------------- touch controls
+  // Drawn INSIDE the 3D viewport, translucent-by-dither so they never hide the world entirely.
+  function drawTouchControls(g) {
+    const En = E(), V = En.VIEW;
+    const S = 62, pad = 8;
+    const bx = V.x + pad, by = V.y + V.h - S * 2 - pad * 2;
+
+    const pad4 = [
+      ['fwd', bx + S, by, '^'],
+      ['back', bx + S, by + S + 4, 'v'],
+      ['turnL', bx, by + S / 2 + 2, '<'],
+      ['turnR', bx + S * 2, by + S / 2 + 2, '>'],
+    ];
+    for (const [id, x, y, label] of pad4) {
+      ghostButton(x, y, S, S, label, g.keys[id]);
+      reg('move', x, y, S, S, id);
+    }
+
+    // Attack / interact on the right, where a thumb actually is.
+    const ax = V.x + V.w - S - pad, ay = V.y + V.h - S - pad;
+    ghostButton(ax, ay, S, S, g.combat.active ? 'ATK' : 'USE', g.pressed === 'act');
+    reg('act', ax, ay, S, S, 'act');
+
+    if (g.combat.active) {
+      ghostButton(ax - S - 6, ay, S, S, 'CAST', g.pressed === 'cast');
+      reg('cast', ax - S - 6, ay, S, S, 'cast');
+      ghostButton(ax, ay - S - 6, S, S, 'WAIT', g.pressed === 'wait');
+      reg('wait', ax, ay - S - 6, S, S, 'wait');
+    }
+  }
+
+  // A button that lets the world show through on a checker, which is how a 1998 game faked alpha.
+  function ghostButton(x, y, w, h, label, down) {
+    const En = E();
+    for (let yy = y; yy < y + h; yy++) {
+      for (let xx = x; xx < x + w; xx++) {
+        if ((xx + yy) & 1) continue;
+        En.px(xx, yy, Core.idx(0, down ? 5 : 2));
+      }
+    }
+    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 9));
+    Art.textCentred(En, x + w / 2, y + (h >> 1) - 7, label, Core.idx(0, 15), 2);
+  }
+
+  // ---------------------------------------------------------------- screens
+  function screenFrame(title, w, h) {
+    const En = E();
+    const x = (640 - w) >> 1, y = (480 - h) >> 1;
+    Art.panel(En, x, y, w, h, 13, false);
+    Art.panel(En, x + 6, y + 6, w - 12, h - 12, 4, true);
+    Art.textCentred(En, 320, y + 14, title, Core.idx(13, 14), 2);
+    En.hline(x + 14, y + 34, w - 28, Core.idx(13, 9));
+    // Close button, large enough to hit without aiming.
+    Art.button(En, x + w - 52, y + 8, 44, 26, 'X', false, 2);
+    reg('close', x + w - 52, y + 8, 44, 26, 1);
+    return { x, y, w, h, inner: y + 42 };
+  }
+
+  function charSheet(g) {
+    const En = E();
+    const f = screenFrame('CHARACTER', 600, 430);
+    const ch = g.party.members[g.active];
+    const p = Sprites.portrait(ch.portrait, ch.cls, ch.sex);
+    En.blitScaled(p, f.x + 20, f.inner, 96, 108, 0);
+
+    let y = f.inner;
+    Art.text(En, f.x + 130, y, ch.name, Core.idx(13, 14), 2); y += 22;
+    Art.text(En, f.x + 130, y, Rules.CLASSES[ch.cls].name + '  Level ' + ch.level, Core.idx(0, 13), 2); y += 20;
+    Art.text(En, f.x + 130, y, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(2, 12), 2); y += 20;
+    Art.text(En, f.x + 130, y, 'HP ' + ch.hp + '/' + Rules.maxHP(ch) +
+      '   SP ' + ch.sp + '/' + Rules.maxSP(ch), Core.idx(0, 13), 2); y += 20;
+    Art.text(En, f.x + 130, y, 'AC ' + g.acOf(ch) + '   Skill pts ' + ch.skillPts, Core.idx(0, 13), 2);
+
+    // Stats in two columns.
+    y = f.inner + 124;
+    Rules.STATS.forEach((s, i) => {
+      const cx = f.x + 24 + (i % 2) * 200;
+      const cy = y + Math.floor(i / 2) * 22;
+      const v = Rules.effStat(ch, s);
+      const b = Rules.statBonus(v);
+      Art.text(En, cx, cy, Rules.STAT_NAME[s], Core.idx(0, 11), 2);
+      Art.text(En, cx + 130, cy, String(v), Core.idx(13, 14), 2);
+      Art.text(En, cx + 160, cy, (b >= 0 ? '+' : '') + b, Core.idx(b >= 0 ? 6 : 11, 12), 2);
+    });
+
+    // Skills, scrollable-free: only trained ones are listed, which is always few enough to fit.
+    y = f.inner + 124 + 96;
+    Art.text(En, f.x + 24, y, 'SKILLS', Core.idx(13, 13), 2); y += 20;
+    const trained = Object.keys(ch.skills).filter((k) => ch.skills[k].mastery > 0);
+    trained.slice(0, 12).forEach((k, i) => {
+      const cx = f.x + 24 + (i % 3) * 190;
+      const cy = y + Math.floor(i / 3) * 18;
+      Art.text(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl +
+        ' ' + Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 12), 1);
+    });
+  }
+
+  function inventory(g) {
+    const En = E();
+    const f = screenFrame('INVENTORY', 600, 430);
+    const ch = g.party.members[g.active];
+
+    // Paperdoll on the left: slots as boxes, equipped items as icons.
+    const SLOTS = [
+      ['helm', 60, 0], ['amulet', 120, 0],
+      ['armour', 60, 46], ['cloak', 0, 46], ['gaunt', 120, 46],
+      ['weapon', 0, 92], ['offhand', 120, 92], ['belt', 60, 92],
+      ['bow', 0, 138], ['boots', 60, 138], ['ring1', 120, 138],
+    ];
+    const px0 = f.x + 24, py0 = f.inner;
+    for (const [slot, ox, oy] of SLOTS) {
+      const x = px0 + ox, y = py0 + oy;
+      Art.panel(En, x, y, 42, 42, 4, true);
+      const it = ch.equip[slot];
+      if (it) En.blitScaled(Sprites.icon(it.id), x + 5, y + 5, 32, 32, 0);
+      else Art.text(En, x + 3, y + 17, slot.slice(0, 5), Core.idx(0, 6), 1);
+      reg('equip', x, y, 42, 42, slot);
+    }
+
+    // Pack grid on the right.
+    const gx = f.x + 220, gy = f.inner;
+    Art.text(En, gx, gy - 16, 'PACK  ' + ch.pack.length + '/30', Core.idx(13, 13), 2);
+    for (let i = 0; i < 30; i++) {
+      const x = gx + (i % 6) * 58, y = gy + Math.floor(i / 6) * 52;
+      Art.panel(En, x, y, 54, 48, 4, true);
+      const st = ch.pack[i];
+      if (st) {
+        En.blitScaled(Sprites.icon(st.id), x + 11, y + 8, 32, 32, 0);
+        if ((st.qty || 1) > 1) Art.text(En, x + 3, y + 36, String(st.qty), Core.idx(13, 14), 1);
+        if (Items.isQuest(st)) En.frameRect(x, y, 54, 48, Core.idx(13, 13));
+        reg('item', x, y, 54, 48, i);
+      }
+    }
+
+    const sel = g.selectedItem;
+    if (sel !== null && ch.pack[sel]) {
+      const st = ch.pack[sel];
+      Art.panel(En, f.x + 14, f.y + f.h - 62, f.w - 28, 48, 4, true);
+      Art.text(En, f.x + 22, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
+      const it = Items.def(st);
+      const line = (it.dmg ? 'Dmg ' + it.dmg.n + 'd' + it.dmg.sides + (it.dmg.plus ? '+' + it.dmg.plus : '') + '  ' : '') +
+        (it.ac ? 'AC ' + it.ac + '  ' : '') + 'Value ' + Items.value(st) + 'g';
+      Art.text(En, f.x + 22, f.y + f.h - 36, line, Core.idx(0, 12), 2);
+      Art.button(En, f.x + f.w - 200, f.y + f.h - 56, 84, 38, 'EQUIP', false, 2);
+      reg('doequip', f.x + f.w - 200, f.y + f.h - 56, 84, 38, sel);
+      Art.button(En, f.x + f.w - 108, f.y + f.h - 56, 84, 38, 'DROP', false, 2);
+      reg('drop', f.x + f.w - 108, f.y + f.h - 56, 84, 38, sel);
+    }
+  }
+
+  function spellbook(g) {
+    const En = E();
+    const f = screenFrame('SPELLBOOK', 600, 430);
+    const ch = g.party.members[g.active];
+
+    // School tabs down the left.
+    Spellcraft.SCHOOL_IDS.forEach((s, i) => {
+      const x = f.x + 16, y = f.inner + i * 40;
+      const cap = Rules.classCap(ch.cls, s);
+      const on = g.bookSchool === s;
+      Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
+      if (cap === 0) {
+        for (let yy = y; yy < y + 34; yy += 2) En.hline(x, yy, 96, Core.idx(0, 2));
+      }
+      reg('school', x, y, 96, 34, s);
+    });
+
+    const school = g.bookSchool || 'fire';
+    const ids = Spellcraft.bySchool(school);
+    ids.forEach((id, i) => {
+      const sp = Spellcraft.SPELLS[id];
+      const x = f.x + 130, y = f.inner + i * 76;
+      const known = ch.spells && ch.spells[id];
+      const can = Spellcraft.canCast(ch, id, { underground: g.map.kind === 'dungeon' });
+      Art.panel(En, x, y, f.w - 160, 68, can.ok ? 13 : 4, !can.ok);
+      Art.text(En, x + 10, y + 8, sp.name, Core.idx(13, can.ok ? 14 : 9), 2);
+      Art.text(En, x + 10, y + 30, 'Tier ' + sp.tier + '   ' + Spellcraft.spCost(ch, id) + ' SP', Core.idx(0, 12), 2);
+      const note = !known ? 'not learned' : can.ok ? 'ready' : can.why;
+      Art.text(En, x + 10, y + 50, note.slice(0, 48), Core.idx(can.ok ? 6 : 11, 11), 1);
+      if (can.ok) reg('cast', x, y, f.w - 160, 68, id);
+    });
+  }
+
+  function automap(g) {
+    const En = E();
+    const f = screenFrame('MAP — ' + g.map.name.toUpperCase(), 600, 430);
+    const m = g.map;
+    const scale = Math.min((f.w - 40) / m.w, (f.h - 70) / m.h);
+    const ox = f.x + ((f.w - m.w * scale) >> 1), oy = f.inner;
+
+    for (let y = 0; y < m.h; y++) {
+      for (let x = 0; x < m.w; x++) {
+        if (!g.seen(m.id, x, y)) continue;
+        const c = m.cells[y * m.w + x];
+        const mat = World.matOf(c);
+        let pi;
+        if (World.isSolid(c)) pi = Core.idx(1, 9);
+        else if (mat === World.MAT.water) pi = Core.idx(8, 8);
+        else if (mat === World.MAT.road || mat === World.MAT.plaza) pi = Core.idx(5, 11);
+        else pi = Core.idx(World.MAT_RAMP[mat] === undefined ? 6 : World.MAT_RAMP[mat], 6);
+        En.rect(Math.round(ox + x * scale), Math.round(oy + y * scale),
+          Math.ceil(scale), Math.ceil(scale), pi);
+      }
+    }
+    // Portals and the party.
+    for (const p of m.portals) {
+      En.rect(Math.round(ox + p.x * scale) - 1, Math.round(oy + p.y * scale) - 1, 4, 4, Core.idx(13, 14));
+    }
+    const pxp = Math.round(ox + g.party.x * scale), pyp = Math.round(oy + g.party.y * scale);
+    En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 14));
+    En.px(pxp + Math.round(Math.cos(g.party.ang) * 5), pyp + Math.round(Math.sin(g.party.ang) * 5), Core.idx(0, 15));
+
+    Art.text(En, f.x + 20, f.y + f.h - 26, 'Region ' + (World.REGIONS[m.region] ? World.REGIONS[m.region].name : m.name), Core.idx(0, 12), 2);
+  }
+
+  function shop(g) {
+    const En = E();
+    const kind = g.shopKind;
+    const f = screenFrame(kind.toUpperCase(), 600, 430);
+    const ch = g.party.members[g.active];
+    const stock = g.shopStock || [];
+
+    Art.text(En, f.x + 20, f.inner - 14, 'Your gold: ' + g.party.gold, Core.idx(13, 13), 2);
+
+    if (kind === 'temple') {
+      const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
+      Art.text(En, f.x + 24, f.inner + 30, 'Heal and cure the whole party', Core.idx(0, 13), 2);
+      Art.text(En, f.x + 24, f.inner + 56, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
+      Art.button(En, f.x + 24, f.inner + 90, 200, 46, 'PAY ' + cost, false, 2);
+      reg('templeheal', f.x + 24, f.inner + 90, 200, 46, cost);
+      return;
+    }
+    if (kind === 'tavern') {
+      Art.text(En, f.x + 24, f.inner + 20, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, f.inner + 50, 200, 46, 'SLEEP', false, 2);
+      reg('tavernrest', f.x + 24, f.inner + 50, 200, 46, 10);
+      Art.text(En, f.x + 24, f.inner + 116, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, f.inner + 146, 200, 46, 'BUY FOOD', false, 2);
+      reg('buyfood', f.x + 24, f.inner + 146, 200, 46, 12);
+      Art.text(En, f.x + 24, f.inner + 210, 'Food: ' + g.party.food, Core.idx(2, 12), 2);
+      return;
+    }
+    if (kind === 'trainer' || kind === 'guild') {
+      const pending = Rules.levelForXP(ch.xp) - ch.level;
+      const cost = Rules.trainCost(ch.level);
+      Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
+      Art.text(En, f.x + 24, f.inner + 46, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      if (pending > 0) {
+        Art.button(En, f.x + 24, f.inner + 80, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
+        reg('train', f.x + 24, f.inner + 80, 260, 46, cost);
+      }
+      // Skill spending.
+      Art.text(En, f.x + 24, f.inner + 140, 'Skill points: ' + ch.skillPts, Core.idx(13, 13), 2);
+      const learnable = Object.keys(Rules.SKILLS).filter((k) => Rules.classCap(ch.cls, k) > 0).slice(0, 12);
+      learnable.forEach((k, i) => {
+        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 170 + Math.floor(i / 3) * 40;
+        const cur = ch.skills[k];
+        Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 9) + ' ' + (cur ? cur.lvl : 0), false, 1);
+        reg('skillup', x, y, 172, 34, k);
+      });
+      return;
+    }
+
+    // Goods shops.
+    stock.forEach((st, i) => {
+      const x = f.x + 20 + (i % 2) * 280, y = f.inner + Math.floor(i / 2) * 54;
+      if (y > f.y + f.h - 80) return;
+      const price = Rules.buyPrice(Items.value(st), ch);
+      const afford = g.party.gold >= price;
+      Art.panel(En, x, y, 272, 48, afford ? 4 : 4, true);
+      En.blitScaled(Sprites.icon(st.id), x + 6, y + 8, 32, 32, 0);
+      Art.text(En, x + 46, y + 8, Items.ITEMS[st.id].name.slice(0, 16), Core.idx(0, afford ? 13 : 7), 2);
+      Art.text(En, x + 46, y + 28, price + 'g', Core.idx(13, afford ? 13 : 7), 2);
+      if (afford) reg('buy', x, y, 272, 48, i);
+    });
+  }
+
+  function dialogue(g) {
+    const En = E();
+    const npc = g.talkingTo;
+    const q = npc && World.QUESTS[npc.quest];
+    const f = screenFrame(npc ? npc.role.toUpperCase() : 'SOMEONE', 560, 300);
+    if (!q) return;
+
+    const state = g.party.quests[npc.quest] ? g.party.quests[npc.quest].state : 0;
+    Art.text(En, f.x + 24, f.inner, q.name, Core.idx(13, 14), 2);
+
+    // Word-wrap the quest text at the panel width.
+    const words = q.text.split(' ');
+    let line = '', y = f.inner + 28;
+    for (const w of words) {
+      if ((line + ' ' + w).length > 44) { Art.text(En, f.x + 24, y, line, Core.idx(0, 13), 2); y += 20; line = w; }
+      else line = line ? line + ' ' + w : w;
+    }
+    if (line) Art.text(En, f.x + 24, y, line, Core.idx(0, 13), 2);
+
+    y += 34;
+    if (state === 0) {
+      Art.button(En, f.x + 24, y, 200, 46, 'ACCEPT', false, 2);
+      reg('acceptquest', f.x + 24, y, 200, 46, npc.quest);
+    } else if (state === 1) {
+      const done = g.questComplete(npc.quest);
+      Art.text(En, f.x + 24, y, done ? 'You have what was asked.' : 'Not yet done.', Core.idx(done ? 6 : 11, 12), 2);
+      if (done) {
+        Art.button(En, f.x + 24, y + 26, 220, 46, 'TURN IN', false, 2);
+        reg('turnin', f.x + 24, y + 26, 220, 46, npc.quest);
+      }
+    } else {
+      Art.text(En, f.x + 24, y, 'Thank you again.', Core.idx(6, 12), 2);
+    }
+  }
+
+  function restScreen(g) {
+    const En = E();
+    const f = screenFrame('MAKE CAMP', 460, 260);
+    const can = Rules.canRest(g.party, g.safeToRest());
+    if (!can.ok) {
+      Art.text(En, f.x + 24, f.inner + 20, can.why, Core.idx(11, 12), 2);
+      return;
+    }
+    Art.text(En, f.x + 24, f.inner + 10, 'Rest 8 hours', Core.idx(0, 13), 2);
+    Art.text(En, f.x + 24, f.inner + 34, 'Uses 2 rations (you have ' + g.party.food + ')', Core.idx(2, 12), 2);
+    Art.button(En, f.x + 24, f.inner + 70, 220, 50, 'SLEEP', false, 2);
+    reg('dorest', f.x + 24, f.inner + 70, 220, 50, 1);
+  }
+
+  // ---------------------------------------------------------------- title & creation
+  function title(g) {
+    const En = E();
+    // Vista: sky gradient, a ridge line and the logotype. First impression is a real shot (s22).
+    for (let y = 0; y < 480; y++) {
+      En.hline(0, y, 640, Core.shade(9 << 4, clamp(Math.round(3 + y / 480 * 9), 0, 15)));
+    }
+    for (let x = 0; x < 640; x++) {
+      const h = 300 + Math.round(Math.sin(x / 61) * 26 + Math.sin(x / 23) * 12 + World.vnoise(x / 40, 0, 99) * 40);
+      for (let y = h; y < 480; y++) {
+        En.px(x, y, Core.shade(1 << 4, clamp(6 - Math.round((y - h) / 26), 1, 12)));
+      }
+    }
+    for (let x = 0; x < 640; x++) {
+      const h = 372 + Math.round(Math.sin(x / 37 + 2) * 14 + World.vnoise(x / 26, 7, 31) * 22);
+      for (let y = h; y < 480; y++) En.px(x, y, Core.shade(7 << 4, clamp(8 - Math.round((y - h) / 30), 1, 12)));
+    }
+
+    Art.panel(En, 120, 60, 400, 96, 13, false);
+    Art.textCentred(En, 320, 78, 'THORNMARCH', Core.idx(13, 15), 4);
+    Art.textCentred(En, 320, 122, 'THE ASHEN CROWN', Core.idx(13, 12), 2);
+
+    Art.button(En, 200, 250, 240, 56, 'NEW GAME', false, 3);
+    reg('newgame', 200, 250, 240, 56, 1);
+    Art.button(En, 200, 316, 240, 56, 'CONTINUE', false, 3);
+    reg('continue', 200, 316, 240, 56, 1);
+    Art.textCentred(En, 320, 452, 'nine regions  ·  thirteen dungeons', Core.idx(0, 11), 1);
+  }
+
+  function creation(g) {
+    const En = E();
+    const f = screenFrame('CREATE YOUR PARTY', 620, 452);
+    const slot = g.createSlot;
+    const spec = g.createSpec[slot];
+
+    // Four member tabs.
+    for (let i = 0; i < 4; i++) {
+      const x = f.x + 16 + i * 96, y = f.inner - 6;
+      Art.button(En, x, y, 90, 34, 'PC ' + (i + 1), i === slot, 2);
+      reg('cslot', x, y, 90, 34, i);
+    }
+
+    let y = f.inner + 40;
+    Art.text(En, f.x + 16, y, 'CLASS', Core.idx(13, 13), 2);
+    Rules.CLASS_IDS.forEach((cid, i) => {
+      const x = f.x + 16 + (i % 3) * 130, yy = y + 22 + Math.floor(i / 3) * 40;
+      Art.button(En, x, yy, 124, 34, Rules.CLASSES[cid].name.toUpperCase(), spec.cls === cid, 2);
+      reg('cclass', x, yy, 124, 34, cid);
+    });
+
+    y += 110;
+    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(0, 74), Core.idx(0, 11), 1);
+    y += 18;
+    Art.text(En, f.x + 16, y, Rules.CLASSES[spec.cls].blurb.slice(74, 148), Core.idx(0, 11), 1);
+
+    // Point buy.
+    y += 26;
+    const spent = Rules.creationCost(spec.base);
+    Art.text(En, f.x + 16, y, 'POINTS  ' + spent + ' / ' + Rules.CREATE_POINTS,
+      Core.idx(spent > Rules.CREATE_POINTS ? 11 : 6, 13), 2);
+    y += 24;
+    Rules.STATS.forEach((s, i) => {
+      const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;
+      Art.text(En, cx, cy + 8, Rules.STAT_NAME[s], Core.idx(0, 12), 2);
+      Art.button(En, cx + 130, cy, 34, 30, '-', false, 2);
+      reg('statdn', cx + 130, cy, 34, 30, s);
+      Art.text(En, cx + 176, cy + 8, String(spec.base[s]), Core.idx(13, 14), 2);
+      Art.button(En, cx + 210, cy, 34, 30, '+', false, 2);
+      reg('statup', cx + 210, cy, 34, 30, s);
+    });
+
+    const errs = Rules.validateCreation({ members: g.createSpec });
+    Art.button(En, f.x + f.w - 200, f.y + f.h - 56, 180, 44, errs.length ? 'FIX ERRORS' : 'BEGIN', false, 2);
+    if (!errs.length) reg('startgame', f.x + f.w - 200, f.y + f.h - 56, 180, 44, 1);
+    if (errs.length) Art.text(En, f.x + 16, f.y + f.h - 44, errs[0].slice(0, 52), Core.idx(11, 12), 1);
+  }
+
+  // ---------------------------------------------------------------- dispatch
+  const SCREENS = {
+    sheet: charSheet, inv: inventory, book: spellbook, map: automap,
+    shop, dialogue, rest: restScreen, title, creation,
+  };
+
+  function draw(g) {
+    clearRegions();
+    if (g.screen === 'title') { title(g); return; }
+    if (g.screen === 'creation') { creation(g); return; }
+
+    Art.gameFrame(E());
+    drawHUD(g);
+    if (!g.screen) drawTouchControls(g);
+    else if (SCREENS[g.screen]) SCREENS[g.screen](g);
+  }
+
+  return { draw, hit, regions: () => regions, HUD, PORTRAIT, screenFrame, ghostButton };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = UI;
+
+
+/* ==================== 09_game.js ==================== */
+// 09_game.js — the loop, input, movement, combat, interaction, save/load.
+// Owner: game. Calls everything below it.
+//
+// GLUE CALLS RULES. Every number here comes from Rules, Spellcraft or Items. If a formula appears
+// in this file it is the mistake ARCHITECTURE.md §3 exists to prevent.
+
+const Game = (() => {
+  'use strict';
+
+  const { clamp, RNG, Clock, Log, Bus } = Core;
+
+  const AGGRO = 11;
+  const MELEE = 1.9;
+  const RECOVER_MS = 16;              // one fixed timestep of recovery per frame
+
+  const state = {
+    booted: false,
+    screen: 'title',
+    party: null,
+    world: null,
+    map: null,
+    active: 0,
+    keys: Object.create(null),
+    pressed: null,
+    selectedItem: null,
+    bookSchool: 'fire',
+    shopKind: null,
+    shopStock: null,
+    talkingTo: null,
+    createSlot: 0,
+    createSpec: null,
+    combat: { active: false, turn: 0, order: [] },
+    seenMaps: Object.create(null),
+    pendingCast: null,
+    lastError: null,
+  };
+
+  // ---------------------------------------------------------------- helpers
+  const M = () => state.map;
+  const P = () => state.party;
+
+  function acOf(ch) {
+    let ac = 0, wornSkill = null;
+    for (const slot of Object.keys(ch.equip)) {
+      const st = ch.equip[slot];
+      if (!st) continue;
+      const it = Items.def(st);
+      if (it && it.ac) ac += it.ac + (st.bonus || 0);
+      if (slot === 'armour' && it && it.skill) wornSkill = it.skill;
+    }
+    return Rules.armourClass(ch, wornSkill, ac);
+  }
+
+  // Recompute equipment bonuses. Derived, never saved — saving it is how two sources of truth start.
+  function recompute(ch) {
+    for (const k of Rules.STATS) ch.bonus[k] = 0;
+    for (const slot of Object.keys(ch.equip)) {
+      const st = ch.equip[slot];
+      if (!st) continue;
+      const it = Items.def(st);
+      if (it && it.stat) ch.bonus[it.stat] += it.amount || 0;
+      if (st.ench !== undefined && Items.ENCHANTS[st.ench] && Items.ENCHANTS[st.ench].stat) {
+        ch.bonus[Items.ENCHANTS[st.ench].stat] += Items.ENCHANTS[st.ench].bonus;
+      }
+    }
+    ch.hp = Math.min(ch.hp, Rules.maxHP(ch));
+    ch.sp = Math.min(ch.sp, Rules.maxSP(ch));
+  }
+
+  const seenKey = (mapId) => state.seenMaps[mapId] || (state.seenMaps[mapId] = new Set());
+  function markSeen(mapId, x, y, r) {
+    const s = seenKey(mapId), m = state.world.maps[mapId];
+    const rr = r || 9;
+    for (let dy = -rr; dy <= rr; dy++) {
+      for (let dx = -rr; dx <= rr; dx++) {
+        const cx = (x | 0) + dx, cy = (y | 0) + dy;
+        if (cx < 0 || cy < 0 || cx >= m.w || cy >= m.h) continue;
+        if (dx * dx + dy * dy > rr * rr) continue;
+        s.add(cy * 4096 + cx);
+      }
+    }
+  }
+  const seen = (mapId, x, y) => seenKey(mapId).has(y * 4096 + x);
+
+  // ---------------------------------------------------------------- party
+  function defaultSpec() {
+    const base = () => ({ mig: 10, int: 10, per: 10, end: 10, acc: 10, spd: 10, lck: 10 });
+    return [
+      { name: 'Alder', cls: 'knight', sex: 'm', base: Object.assign(base(), { mig: 16, end: 14 }) },
+      { name: 'Bree', cls: 'priest', sex: 'f', base: Object.assign(base(), { per: 16, int: 12 }) },
+      { name: 'Cass', cls: 'mage', sex: 'f', base: Object.assign(base(), { int: 16, spd: 12 }) },
+      { name: 'Dorn', cls: 'ranger', sex: 'm', base: Object.assign(base(), { acc: 16, spd: 12 }) },
+    ];
+  }
+
+  function newParty(spec) {
+    const s = spec || state.createSpec || defaultSpec();
+    const errs = Rules.validateCreation({ members: s });
+    if (errs.length) throw new Error('invalid party: ' + errs[0]);
+
+    const members = s.map((m, i) => {
+      const ch = Rules.makeCharacter(m, i);
+      ch.spells = {};
+      // Starting spells: tier 1 of every school the class can actually use.
+      for (const id of Spellcraft.SPELL_IDS) {
+        const sp = Spellcraft.SPELLS[id];
+        if (sp.tier === 1 && Rules.classCap(ch.cls, sp.school) > 0 && ch.skills[sp.school]) ch.spells[id] = true;
+      }
+      return ch;
+    });
+
+    state.party = {
+      members, gold: 250, food: 12,
+      x: 0, y: 0, z: 0, ang: 0, pitch: 0, map: 'harrowgate',
+      quests: Object.create(null), flags: Object.create(null), autonotes: [],
+    };
+
+    // Starting kit, so the first fight is winnable.
+    const kit = { knight: ['short_sword', 'padded'], templar: ['short_sword', 'padded'],
+      ranger: ['short_bow', 'padded'], priest: ['club', 'padded'], mage: ['dagger', 'padded'],
+      warden: ['quarterstaff', 'padded'] };
+    members.forEach((ch) => {
+      for (const id of (kit[ch.cls] || ['dagger'])) {
+        const st = { id, qty: 1, ident: true, bonus: 0, charges: 0 };
+        const it = Items.def(st);
+        ch.equip[it.slot] = st;
+      }
+      ch.pack.push({ id: 'potion_heal', qty: 2, ident: true, bonus: 0, charges: 0 });
+      recompute(ch);
+      ch.hp = Rules.maxHP(ch); ch.sp = Rules.maxSP(ch);
+    });
+
+    enterMap('harrowgate');
+    const t = state.map.town;
+    state.party.x = t.x + 0.5; state.party.y = t.y + 3.5;
+    state.party.z = World.walkHeight(state.map, state.party.x, state.party.y);
+    state.party.ang = -Math.PI / 2;
+    Log.push('Your party arrives in ' + t.name + '.', 'sys');
+    return state.party;
+  }
+
+  // ---------------------------------------------------------------- maps
+  function enterMap(id) {
+    const m = state.world.maps[id];
+    if (!m) throw new Error('no such map: ' + id);
+    state.map = m;
+    state.party.map = id;
+    // Live entity state lives on the map object, created lazily from the generated template.
+    if (!m.live) {
+      m.live = m.entities.map((e) => {
+        const def = Items.MONSTERS[e.kind];
+        return Object.assign({}, e, {
+          hp: def.hp, hpMax: def.hp, recovery: 0, dead: false, alerted: false,
+        });
+      });
+    }
+    return m;
+  }
+
+  function gotoMap(id, x, y, ang) {
+    enterMap(id);
+    const p = state.party;
+    p.x = x + 0.5; p.y = y + 0.5;
+    p.ang = ang === undefined ? p.ang : ang;
+    p.z = World.walkHeight(state.map, p.x, p.y);
+    markSeen(id, p.x, p.y);
+    return { map: id, x: p.x, y: p.y };
+  }
+
+  function teleport(x, y, ang) {
+    const p = state.party;
+    p.x = x; p.y = y;
+    if (ang !== undefined) p.ang = ang;
+    p.z = World.walkHeight(state.map, p.x, p.y);
+    markSeen(p.map, p.x, p.y);
+    return { x: p.x, y: p.y, z: p.z };
+  }
+
+  // ---------------------------------------------------------------- movement
+  function tryMove(nx, ny) {
+    const p = state.party, m = state.map;
+    // Slide along walls: try the full move, then each axis alone. Without this the party sticks on
+    // every corner and the game feels broken long before anything actually is.
+    if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
+    else if (World.passable(m, nx, p.y, p.z)) p.x = nx;
+    else if (World.passable(m, p.x, ny, p.z)) p.y = ny;
+    else return false;
+    p.z = World.walkHeight(m, p.x, p.y, p.z);
+    markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
+    return true;
+  }
+
+  function move(dt) {
+    const p = state.party, k = state.keys;
+    const spd = (k.run ? 5.6 : 3.4) * (dt / 1000);
+    const turn = 2.4 * (dt / 1000);
+
+    if (k.turnL) p.ang -= turn;
+    if (k.turnR) p.ang += turn;
+
+    let dx = 0, dy = 0;
+    if (k.fwd) { dx += Math.cos(p.ang); dy += Math.sin(p.ang); }
+    if (k.back) { dx -= Math.cos(p.ang); dy -= Math.sin(p.ang); }
+    if (k.strafeL) { dx += Math.sin(p.ang); dy -= Math.cos(p.ang); }
+    if (k.strafeR) { dx -= Math.sin(p.ang); dy += Math.cos(p.ang); }
+
+    if (dx || dy) {
+      const l = Math.hypot(dx, dy);
+      tryMove(p.x + (dx / l) * spd, p.y + (dy / l) * spd);
+    }
+  }
+
+  function walkCells(dir, cells) {
+    // Player-legal: the campaign test uses this and nothing else to get around.
+    const p = state.party;
+    const ang = dir === 'fwd' ? p.ang : dir === 'back' ? p.ang + Math.PI
+      : dir === 'left' ? p.ang - Math.PI / 2 : p.ang + Math.PI / 2;
+    let moved = 0;
+    const stepLen = 0.2;
+    for (let i = 0; i < cells / stepLen; i++) {
+      if (!tryMove(p.x + Math.cos(ang) * stepLen, p.y + Math.sin(ang) * stepLen)) break;
+      moved += stepLen;
+    }
+    return moved;
+  }
+
+  // ---------------------------------------------------------------- combat
+  function liveEnemies() {
+    return (state.map.live || []).filter((e) => !e.dead);
+  }
+
+  function nearestEnemy(maxD) {
+    const p = state.party;
+    let best = null, bd = maxD === undefined ? 1e9 : maxD;
+    for (const e of liveEnemies()) {
+      const d = Math.hypot(e.x - p.x, e.y - p.y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  function safeToRest() {
+    return !nearestEnemy(14);
+  }
+
+  function weaponOf(ch) {
+    const st = ch.equip.weapon || ch.equip.bow;
+    if (!st) return { dmg: { n: 1, sides: 3 }, skill: 'unarmed', speed: 70, bonus: 0 };
+    const it = Items.def(st);
+    return { dmg: it.dmg, skill: it.skill, speed: it.speed, bonus: st.bonus || 0 };
+  }
+
+  function partyAttack(idx) {
+    const ch = state.party.members[idx === undefined ? state.active : idx];
+    if (!Rules.canAct(ch)) return { ok: false, why: ch.name + ' cannot act.' };
+    if (ch.recovery > 0) return { ok: false, why: ch.name + ' is recovering.' };
+    const target = nearestEnemy(ch.equip.bow && !ch.equip.weapon ? 18 : MELEE);
+    if (!target) return { ok: false, why: 'Nothing in reach.' };
+
+    const w = weaponOf(ch);
+    const rng = RNG.live('combat');
+    const atk = Rules.attackBonus(ch, w.skill, w.bonus);
+    const def = Items.MONSTERS[target.kind];
+
+    if (!Rules.rollHit(rng, atk, def.ac)) {
+      Log.push(ch.name + ' misses the ' + def.name + '.', 'info');
+    } else {
+      const dmg = Rules.rollDamage(rng, w.dmg, Rules.statBonus(Rules.effStat(ch, 'mig')), w.bonus);
+      const dealt = Rules.applyResist(dmg, (def.resist && def.resist.phys) || 0);
+      target.hp -= dealt;
+      Log.push(ch.name + ' hits the ' + def.name + ' for ' + dealt + '.', 'hit');
+      if (target.hp <= 0) killEntityObj(target);
+    }
+    ch.recovery = Rules.recoveryTime(ch, w.speed, w.skill) * 8;
+    return { ok: true };
+  }
+
+  function killEntityObj(e) {
+    if (e.dead) return;
+    e.dead = true;
+    const def = Items.MONSTERS[e.kind];
+    Log.push('The ' + def.name + ' falls.', 'good');
+
+    // XP split across the living. A dead character earns nothing (Rules enforces it).
+    const alive = state.party.members.filter((c) => !Rules.isDead(c));
+    const share = Math.max(1, Math.round(def.xp / Math.max(1, alive.length)));
+    for (const c of alive) Rules.awardXP(c, share);
+
+    // Loot. Quest items sort first so a full pack never destroys the run.
+    const rng = RNG.live('loot');
+    const lck = Rules.statBonus(Rules.effStat(state.party.members[0], 'lck'));
+    const loot = Items.rollLoot(rng, def.loot, lck);
+    state.party.gold += loot.gold;
+    if (def.drops) loot.items.push({ id: def.drops, qty: 1, ident: true, bonus: 0, charges: 0 });
+    for (const st of Items.sortForPickup(loot.items)) giveStack(st);
+    if (loot.gold) Log.push('Found ' + loot.gold + ' gold.', 'good');
+
+    // Quest kill credit.
+    for (const qid of Object.keys(state.party.quests)) {
+      const q = World.QUESTS[qid];
+      if (!q || !q.kill || state.party.quests[qid].state !== 1) continue;
+      if (q.kill !== e.kind) continue;
+      if (q.killIn && state.map.id !== q.killIn) continue;
+      state.party.quests[qid].killed = (state.party.quests[qid].killed || 0) + 1;
+    }
+  }
+
+  function monsterTurn(e, dt) {
+    const p = state.party;
+    const def = Items.MONSTERS[e.kind];
+    const d = Math.hypot(e.x - p.x, e.y - p.y);
+
+    if (d < AGGRO) e.alerted = true;
+    if (!e.alerted) return;
+
+    e.recovery = Math.max(0, e.recovery - dt);
+
+    if (d > MELEE) {
+      // Approach. Ground-snapped, and blocked by the same rules the party obeys.
+      const sp = (dt / 1000) * (def.ai === 'brute' ? 1.6 : 2.4);
+      const nx = e.x + ((p.x - e.x) / d) * sp, ny = e.y + ((p.y - e.y) / d) * sp;
+      if (World.passable(state.map, nx, ny, e.z)) {
+        e.x = nx; e.y = ny;
+        e.z = World.walkHeight(state.map, nx, ny, e.z);
+      }
+      e.ang = Math.atan2(p.y - e.y, p.x - e.x);
+      return;
+    }
+
+    if (e.recovery > 0) return;
+
+    // Attack a random living party member.
+    const alive = p.members.filter((c) => !Rules.isDead(c) && !(c.cond && c.cond.unconscious));
+    if (!alive.length) return;
+    const rng = RNG.live('combat');
+    const victim = rng.pick(alive);
+    if (Rules.rollHit(rng, def.atk, acOf(victim))) {
+      const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
+      const r = Rules.applyDamage(victim, dmg);
+      Log.push('The ' + def.name + ' hits ' + victim.name + ' for ' + r.dmg + '.', 'hit');
+      if (r.died) Log.push(victim.name + ' has died!', 'hit');
+      else if (r.knocked) Log.push(victim.name + ' is knocked out.', 'hit');
+      if (def.inflict && victim.cond && rng.chance(0.25)) victim.cond[def.inflict] = true;
+    } else {
+      Log.push('The ' + def.name + ' misses ' + victim.name + '.', 'info');
+    }
+    e.recovery = def.speed * 8;
+  }
+
+  // ---------------------------------------------------------------- interaction
+  function giveStack(st) {
+    const p = state.party;
+    const cap = Items.maxStack(st.id);
+    // Stack first, then find a slot on whoever has room.
+    for (const ch of p.members) {
+      if (cap > 1) {
+        const ex = ch.pack.find((s) => s.id === st.id && (s.qty || 1) < cap);
+        if (ex) { ex.qty = (ex.qty || 1) + (st.qty || 1); return true; }
+      }
+    }
+    for (const ch of p.members) {
+      if (ch.pack.length < 30) { ch.pack.push(st); return true; }
+    }
+    Log.push('No room for ' + Items.displayName(st) + '!', 'hit');
+    return false;
+  }
+
+  function grantItem(id, n) {
+    const st = { id, qty: n || 1, ident: true, bonus: 0, charges: 0 };
+    giveStack(st);
+    return st;
+  }
+
+  function grantXP(n) {
+    for (const c of state.party.members) Rules.awardXP(c, n);
+    return n;
+  }
+
+  function healParty() {
+    for (const c of state.party.members) {
+      c.cond.dead = false; c.cond.unconscious = false; c.cond.poison = false;
+      c.cond.disease = false; c.cond.curse = false; c.cond.asleep = false;
+      c.cond.afraid = false; c.cond.weak = false;
+      c.hp = Rules.maxHP(c); c.sp = Rules.maxSP(c);
+    }
+    return true;
+  }
+
+  function countItem(id) {
+    let n = 0;
+    for (const ch of state.party.members) {
+      for (const st of ch.pack) if (st.id === id) n += st.qty || 1;
+      for (const slot of Object.keys(ch.equip)) {
+        const s = ch.equip[slot];
+        if (s && s.id === id) n += s.qty || 1;
+      }
+    }
+    return n;
+  }
+
+  function consumeItem(id, n) {
+    let need = n || 1;
+    for (const ch of state.party.members) {
+      for (let i = ch.pack.length - 1; i >= 0 && need > 0; i--) {
+        if (ch.pack[i].id !== id) continue;
+        const have = ch.pack[i].qty || 1;
+        const take = Math.min(have, need);
+        need -= take;
+        if (have - take <= 0) ch.pack.splice(i, 1); else ch.pack[i].qty = have - take;
+      }
+    }
+    return need === 0;
+  }
+
+  function questComplete(qid) {
+    const q = World.QUESTS[qid], st = state.party.quests[qid];
+    if (!q || !st || st.state !== 1) return false;
+    if (q.need) return countItem(q.need) >= (q.count || 1);
+    if (q.kill) return (st.killed || 0) >= (q.count || 1);
+    return false;
+  }
+
+  function turnInQuest(qid) {
+    const q = World.QUESTS[qid];
+    if (!questComplete(qid)) return false;
+    if (q.need) consumeItem(q.need, q.count || 1);
+    state.party.quests[qid].state = 2;
+    state.party.gold += q.gold;
+    grantXP(q.xp);
+    Log.push('Quest complete: ' + q.name + '  (+' + q.xp + ' xp, +' + q.gold + 'g)', 'good');
+    state.party.autonotes.push(q.name + ' — completed');
+    if (q.final) { state.party.flags.won = true; Log.push('THE ASHEN CROWN IS BROKEN. You have won.', 'good'); }
+    return true;
+  }
+
+  // What is in front of the party right now?
+  function interactTarget() {
+    const p = state.party, m = state.map;
+    const fx = p.x + Math.cos(p.ang) * 1.4, fy = p.y + Math.sin(p.ang) * 1.4;
+
+    for (const n of m.npcs || []) {
+      if (Math.hypot(n.x - p.x, n.y - p.y) < 2.6) return { kind: 'npc', npc: n };
+    }
+    for (const d of m.decor) {
+      if (d.kind !== 'chest' && d.kind !== 'questitem') continue;
+      if (Math.hypot(d.x - p.x, d.y - p.y) < 2.0) return { kind: d.kind, decor: d };
+    }
+    for (const portal of m.portals) {
+      if (Math.hypot(portal.x + 0.5 - fx, portal.y + 0.5 - fy) < 1.6 ||
+          Math.hypot(portal.x + 0.5 - p.x, portal.y + 0.5 - p.y) < 1.3) return { kind: 'portal', portal };
+    }
+    return null;
+  }
+
+  function interact() {
+    const t = interactTarget();
+    if (!t) { Log.push('Nothing here.', 'info'); return false; }
+
+    if (t.kind === 'npc') {
+      state.talkingTo = t.npc;
+      state.screen = 'dialogue';
+      return true;
+    }
+    if (t.kind === 'chest') {
+      if (t.decor.opened) { Log.push('Already looted.', 'info'); return false; }
+      t.decor.opened = true;
+      const rng = RNG.live('loot');
+      const loot = Items.rollLoot(rng, t.decor.tier, 0);
+      state.party.gold += loot.gold;
+      for (const st of Items.sortForPickup(loot.items)) giveStack(st);
+      Log.push('The chest holds ' + loot.gold + ' gold' + (loot.items.length ? ' and something else.' : '.'), 'good');
+      return true;
+    }
+    if (t.kind === 'questitem') {
+      if (t.decor.taken) return false;
+      t.decor.taken = true;
+      grantItem(t.decor.item, 1);
+      Log.push('Taken: ' + Items.ITEMS[t.decor.item].name, 'good');
+      return true;
+    }
+    if (t.kind === 'portal') {
+      return usePortal(t.portal);
+    }
+    return false;
+  }
+
+  function usePortal(portal) {
+    if (portal.shop) {
+      state.shopKind = portal.shop;
+      const day = Clock.day;
+      state.shopStock = Items.shopStock(
+        RNG.world('shop:' + state.map.id + ':' + portal.shop + ':' + day),
+        portal.shop, clamp(1 + Math.round((state.map.level || 1) / 3), 1, 4));
+      state.screen = 'shop';
+      return true;
+    }
+    if (portal.locked && !countItem(portal.locked)) {
+      Log.push('The way is barred. Something is missing.', 'info');
+      return false;
+    }
+    // Landing coordinates are mandatory and validated at build time; trust but verify.
+    if (portal.tx === undefined || portal.ty === undefined) {
+      state.lastError = 'portal to ' + portal.to + ' has no landing coordinates';
+      Log.push('The way leads nowhere. (bug)', 'hit');
+      return false;
+    }
+    gotoMap(portal.to, portal.tx, portal.ty, portal.tang);
+    Log.push('You enter ' + state.map.name + '.', 'sys');
+    return true;
+  }
+
+  function doRest() {
+    const can = Rules.canRest(state.party, safeToRest());
+    if (!can.ok) { Log.push(can.why, 'info'); return false; }
+    const res = Rules.restResult(state.party);
+    state.party.food += res.food;
+    Clock.skip(res.minutes);
+    for (const d of res.members) {
+      const ch = state.party.members.find((c) => c.id === d.id);
+      ch.hp = Math.min(Rules.maxHP(ch), ch.hp + d.hp);
+      ch.sp = Math.min(Rules.maxSP(ch), ch.sp + d.sp);
+      for (const c of d.clears) ch.cond[c] = false;
+    }
+    Log.push('You make camp and sleep.', 'good');
+    state.screen = null;
+    return true;
+  }
+
+  function castSpell(id) {
+    const ch = state.party.members[state.active];
+    const can = Spellcraft.canCast(ch, id, { underground: state.map.kind === 'dungeon' });
+    if (!can.ok) { Log.push(can.why, 'info'); return false; }
+
+    const sp = Spellcraft.SPELLS[id];
+    const rng = RNG.live('magic');
+    let targets = [];
+    if (sp.target === 'enemy') { const t = nearestEnemy(20); targets = t ? [wrapEnemy(t)] : []; }
+    else if (sp.target === 'enemies') targets = liveEnemies().filter((e) =>
+      Math.hypot(e.x - state.party.x, e.y - state.party.y) < 20).slice(0, 6).map(wrapEnemy);
+    else if (sp.target === 'ally') targets = [ch];
+    else if (sp.target === 'party' || sp.target === 'self') targets = state.party.members;
+
+    if (!targets.length) { Log.push('No target.', 'info'); return false; }
+
+    const out = Spellcraft.resolve(ch, id, targets, rng, {});
+    ch.sp -= out.cost;
+    ch.recovery = 100 * 8;
+
+    for (const eff of out.effects) applyEffect(eff);
+    Log.push(ch.name + ' casts ' + sp.name + '.', 'good');
+    state.screen = null;
+    return true;
+  }
+
+  // Spells resolve against a uniform target shape; monsters get wrapped so resolve() does not need
+  // to know the difference between a character and an entity.
+  function wrapEnemy(e) {
+    const def = Items.MONSTERS[e.kind];
+    return { __entity: e, name: def.name, hp: e.hp, resist: def.resist || {} };
+  }
+
+  function applyEffect(eff) {
+    const t = eff.target;
+    if (eff.kind === 'damage') {
+      if (t.__entity) {
+        t.__entity.hp -= eff.amount;
+        Log.push('The ' + t.name + ' takes ' + eff.amount + '.', 'hit');
+        if (t.__entity.hp <= 0) killEntityObj(t.__entity);
+      } else if (t.cond) {
+        Rules.applyDamage(t, eff.amount);
+      }
+    } else if (eff.kind === 'heal') {
+      if (t.cond) { const h = Rules.healTo(t, eff.amount); if (h) Log.push(t.name + ' recovers ' + h + '.', 'good'); }
+    } else if (eff.kind === 'cure') {
+      if (t.cond) for (const c of eff.conds) t.cond[c] = false;
+    } else if (eff.kind === 'buff') {
+      // Buffs are stored on the party and read by the systems that care.
+      state.party.flags['buff_' + eff.buff] = Clock.t + eff.dur;
+    } else if (eff.kind === 'status') {
+      if (t.__entity) t.__entity[eff.status] = Clock.t + eff.dur;
+    }
+  }
+
+  // ---------------------------------------------------------------- save / load
+  const SAVE_KEY = 'thornmarch.save.';
+
+  function save(slot) {
+    const d = {
+      v: 3, seed: state.world.seed, t: Clock.t,
+      party: state.party,
+      rng: RNG.dump(),
+      seen: Object.keys(state.seenMaps).reduce((a, k) => { a[k] = Array.from(state.seenMaps[k]); return a; }, {}),
+      maps: {},
+    };
+    // Only the DELTA from the generated world: killed entities, opened chests, taken quest items.
+    for (const id of Object.keys(state.world.maps)) {
+      const m = state.world.maps[id];
+      const dead = (m.live || []).filter((e) => e.dead).map((e) => e.eid);
+      const opened = m.decor.filter((x) => x.opened || x.taken).map((x) => x.id);
+      if (dead.length || opened.length) d.maps[id] = { dead, opened };
+    }
+    try { localStorage.setItem(SAVE_KEY + (slot || 0), JSON.stringify(d)); } catch (e) { return false; }
+    return true;
+  }
+
+  function load(slot) {
+    let raw;
+    try { raw = localStorage.getItem(SAVE_KEY + (slot || 0)); } catch (e) { return false; }
+    if (!raw) return false;
+
+    // SNIFF BEFORE MUTATING, and roll back on failure. A hostile save once produced a 91-error
+    // crash loop because load wrote into live state as it parsed.
+    let d;
+    try { d = JSON.parse(raw); } catch (e) { Log.push('Save is corrupt.', 'hit'); return false; }
+    const bad = [];
+    if (!d || typeof d !== 'object') bad.push('not an object');
+    else {
+      if (d.v !== 3) bad.push('schema v' + d.v + ' (expected 3)');
+      if (typeof d.seed !== 'number') bad.push('no seed');
+      if (!d.party || !Array.isArray(d.party.members) || d.party.members.length !== 4) bad.push('party malformed');
+      if (!d.rng || typeof d.rng.seed !== 'number') bad.push('rng state missing');
+      if (d.party && !state.world.maps[d.party.map]) bad.push('unknown map ' + (d.party && d.party.map));
+    }
+    if (bad.length) { Log.push('Save rejected: ' + bad[0], 'hit'); return false; }
+
+    const backup = { party: state.party, seen: state.seenMaps, mapId: state.party && state.party.map };
+    try {
+      RNG.restore(d.rng);
+      Clock.t = d.t;
+      state.party = d.party;
+      state.seenMaps = Object.create(null);
+      for (const k of Object.keys(d.seen || {})) state.seenMaps[k] = new Set(d.seen[k]);
+      for (const id of Object.keys(state.world.maps)) {
+        const m = state.world.maps[id];
+        if (!m.live) enterMap(id);
+        const delta = (d.maps || {})[id];
+        if (m.live) for (const e of m.live) e.dead = !!(delta && delta.dead.indexOf(e.eid) >= 0);
+        for (const x of m.decor) {
+          const on = !!(delta && delta.opened.indexOf(x.id) >= 0);
+          if (x.kind === 'chest') x.opened = on;
+          if (x.kind === 'questitem') x.taken = on;
+        }
+      }
+      enterMap(state.party.map);
+      for (const ch of state.party.members) recompute(ch);
+      state.screen = null;
+      Log.push('Game loaded.', 'sys');
+      return true;
+    } catch (e) {
+      state.party = backup.party; state.seenMaps = backup.seen;
+      if (backup.mapId) enterMap(backup.mapId);
+      Log.push('Load failed and was rolled back.', 'hit');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------- input
+  function onKey(k, down) {
+    state.keys[k] = down;
+    if (!down) return;
+    if (k === 'act') interact();
+    if (k === 'sheet') openScreen('sheet');
+    if (k === 'inv') openScreen('inv');
+    if (k === 'book') openScreen('book');
+    if (k === 'map') openScreen('map');
+    if (k === 'rest') openScreen('rest');
+    if (k === 'esc') closeScreens();
+    if (k === 'next') state.active = (state.active + 1) % 4;
+    if (k === '1' || k === '2' || k === '3' || k === '4') state.active = parseInt(k, 10) - 1;
+  }
+
+  function openScreen(name) {
+    if (name === 'menu') { save(0); Log.push('Saved.', 'sys'); return null; }
+    state.screen = state.screen === name ? null : name;
+    return state.screen;
+  }
+  function closeScreens() { state.screen = null; state.talkingTo = null; return true; }
+
+  function onTap(x, y, down) {
+    const r = UI.hit(x, y);
+    if (!r) { if (!down) state.pressed = null; return; }
+
+    if (down) {
+      if (r.id === 'move') { state.keys[r.data] = true; state.pressed = r.data; }
+      else state.pressed = r.data;
+      return;
+    }
+
+    // Release: clear held movement, then act.
+    for (const k of ['fwd', 'back', 'turnL', 'turnR']) state.keys[k] = false;
+    state.pressed = null;
+
+    switch (r.id) {
+      case 'pc': state.active = r.data; break;
+      case 'btn': openScreen(r.data); break;
+      case 'act': interact(); break;
+      case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
+      case 'wait': stepTurn(); break;
+      case 'close': closeScreens(); break;
+      case 'item': state.selectedItem = r.data; break;
+      case 'doequip': equipFromPack(r.data); break;
+      case 'drop': dropFromPack(r.data); break;
+      case 'equip': unequip(r.data); break;
+      case 'school': state.bookSchool = r.data; break;
+      case 'buy': buy(r.data); break;
+      case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } break;
+      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } break;
+      case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; } break;
+      case 'train': doTrain(r.data); break;
+      case 'skillup': doSkillUp(r.data); break;
+      case 'acceptquest': acceptQuest(r.data); break;
+      case 'turnin': turnInQuest(r.data); closeScreens(); break;
+      case 'dorest': doRest(); break;
+      case 'newgame': startCreation(); break;
+      case 'continue': if (!load(0)) { startCreation(); } else state.screen = null; break;
+      case 'cslot': state.createSlot = r.data; break;
+      case 'cclass': state.createSpec[state.createSlot].cls = r.data; break;
+      case 'statup': bumpStat(r.data, 1); break;
+      case 'statdn': bumpStat(r.data, -1); break;
+      case 'startgame': newParty(state.createSpec); state.screen = null; break;
+      default: break;
+    }
+  }
+
+  // ---------------------------------------------------------------- actions
+  function equipFromPack(i) {
+    const ch = state.party.members[state.active];
+    const st = ch.pack[i];
+    if (!st) return false;
+    const it = Items.def(st);
+    if (!it || !it.slot) { Log.push('Cannot equip that.', 'info'); return false; }
+    const prev = ch.equip[it.slot];
+    ch.equip[it.slot] = st;
+    ch.pack.splice(i, 1);
+    if (prev) ch.pack.push(prev);
+    recompute(ch);
+    state.selectedItem = null;
+    return true;
+  }
+
+  function unequip(slot) {
+    const ch = state.party.members[state.active];
+    const st = ch.equip[slot];
+    if (!st) return false;
+    if (ch.pack.length >= 30) { Log.push('Pack is full.', 'info'); return false; }
+    ch.equip[slot] = null;
+    ch.pack.push(st);
+    recompute(ch);
+    return true;
+  }
+
+  function dropFromPack(i) {
+    const ch = state.party.members[state.active];
+    const st = ch.pack[i];
+    if (!st) return false;
+    if (Items.isQuest(st)) { Log.push('You should keep that.', 'info'); return false; }
+    ch.pack.splice(i, 1);
+    state.selectedItem = null;
+    return true;
+  }
+
+  function buy(i) {
+    const ch = state.party.members[state.active];
+    const st = state.shopStock[i];
+    if (!st) return false;
+    const price = Rules.buyPrice(Items.value(st), ch);
+    if (state.party.gold < price) { Log.push('Not enough gold.', 'info'); return false; }
+    state.party.gold -= price;
+    giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
+    Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
+    return true;
+  }
+
+  function doTrain(cost) {
+    const ch = state.party.members[state.active];
+    if (state.party.gold < cost) { Log.push('Not enough gold.', 'info'); return false; }
+    const gained = Rules.promote(ch);
+    if (!gained) { Log.push('Not enough experience.', 'info'); return false; }
+    state.party.gold -= cost;
+    Log.push(ch.name + ' reaches level ' + ch.level + '.', 'good');
+    return true;
+  }
+
+  function doSkillUp(skill) {
+    const ch = state.party.members[state.active];
+    if (Rules.classCap(ch.cls, skill) === 0) { Log.push('That class cannot learn it.', 'info'); return false; }
+    const cur = ch.skills[skill];
+    const cost = Rules.skillUpCost(cur ? cur.lvl : 0);
+    if (ch.skillPts < cost) { Log.push('Not enough skill points.', 'info'); return false; }
+    ch.skillPts -= cost;
+    if (!cur) ch.skills[skill] = { lvl: 1, mastery: Rules.MASTERY.NOVICE };
+    else {
+      cur.lvl++;
+      // Mastery advances when the level threshold is met and the class allows it.
+      const cap = Rules.classCap(ch.cls, skill);
+      if (cur.lvl >= Rules.masteryReq(Rules.MASTERY.MASTER).lvl && cap >= 3) cur.mastery = Rules.MASTERY.MASTER;
+      else if (cur.lvl >= Rules.masteryReq(Rules.MASTERY.EXPERT).lvl && cap >= 2) cur.mastery = Rules.MASTERY.EXPERT;
+    }
+    // Learning a magic school grants its tier-1 spell, or the skill is inert.
+    for (const id of Spellcraft.SPELL_IDS) {
+      const sp = Spellcraft.SPELLS[id];
+      if (sp.school === skill && sp.tier <= 2 && Spellcraft.learnable(ch, id)) ch.spells[id] = true;
+    }
+    recompute(ch);
+    return true;
+  }
+
+  function acceptQuest(qid) {
+    if (!state.party.quests[qid]) state.party.quests[qid] = { state: 1, killed: 0 };
+    else state.party.quests[qid].state = 1;
+    Log.push('Quest accepted: ' + World.QUESTS[qid].name, 'sys');
+    state.party.autonotes.push(World.QUESTS[qid].name);
+    closeScreens();
+    return true;
+  }
+
+  function startCreation() {
+    state.createSpec = defaultSpec();
+    state.createSlot = 0;
+    state.screen = 'creation';
+  }
+
+  function bumpStat(s, d) {
+    const spec = state.createSpec[state.createSlot];
+    const v = spec.base[s] + d;
+    if (v < Rules.STAT_MIN || v > Rules.STAT_MAX) return false;
+    const trial = Object.assign({}, spec.base); trial[s] = v;
+    if (Rules.creationCost(trial) > Rules.CREATE_POINTS) return false;
+    spec.base[s] = v;
+    return true;
+  }
+
+  // Advance one combat "round": everyone gets recovery time, which is what stops the deadlock where
+  // the budget drains and nothing ever becomes ready again.
+  function stepTurn() {
+    const quantum = 120;
+    for (const ch of state.party.members) ch.recovery = Math.max(0, ch.recovery - quantum);
+    for (const e of liveEnemies()) monsterTurn(e, quantum);
+    Clock.advance(quantum);
+    return true;
+  }
+
+  // ---------------------------------------------------------------- loop
+  function boot() {
+    if (state.booted) return;
+    state.booted = true;
+
+    // UI is handed `state`, so the few queries it needs live on it. UI must never compute these
+    // itself — that is how a second implementation of a rule gets born.
+    state.acOf = acOf;
+    state.seen = seen;
+    state.safeToRest = safeToRest;
+    state.questComplete = questComplete;
+
+    state.world = World.build(7);
+    state.createSpec = defaultSpec();
+    // A party exists from boot so the harness can drive the sim before anyone presses New Game.
+    if (!state.party) {
+      try { newParty(defaultSpec()); } catch (e) { state.lastError = e.message; }
+    }
+    state.screen = 'title';
+    if (typeof Sprites !== 'undefined' && typeof window !== 'undefined' && window.__BAKED__) {
+      Sprites.installBaked(window.__BAKED__);
+      Sprites.prepareBaked().then((r) => { Sprites.BAKED.__ready = r; }).catch(() => {});
+    }
+  }
+
+  function update(dt) {
+    Clock.advance(dt);
+    Art.step();
+    if (state.screen === 'title' || state.screen === 'creation' || !state.party) return;
+
+    if (!state.screen) move(dt);
+
+    for (const ch of state.party.members) {
+      ch.recovery = Math.max(0, ch.recovery - dt);
+      // Regeneration buff.
+      if (state.party.flags.buff_regen > Clock.t && (Clock.t & 7) === 0) Rules.healTo(ch, 1);
+    }
+
+    const enemies = liveEnemies();
+    let anyAlerted = false;
+    for (const e of enemies) {
+      if (Math.hypot(e.x - state.party.x, e.y - state.party.y) < 26) monsterTurn(e, dt);
+      if (e.alerted) anyAlerted = true;
+    }
+    state.combat.active = anyAlerted && !!nearestEnemy(AGGRO);
+  }
+
+  function render() {
+    const En = Engine;
+    if (state.screen === 'title' || state.screen === 'creation') {
+      En.clear(Core.idx(0, 1));
+      UI.draw(state);
+      return;
+    }
+
+    const p = state.party;
+    const cam = {
+      x: p.x, y: p.y, z: p.z, ang: p.ang, map: state.map,
+      horizon: Math.round((p.pitch || 0) * 140),
+      torch: state.map.kind === 'dungeon' ? 8.5 : 99,
+    };
+    En.clear(Core.idx(0, 1));
+    En.render3D(cam, state.world);
+    drawEntities(cam);
+    UI.draw(state);
+  }
+
+  // Sprites, sorted far to near so nearer ones overwrite.
+  function drawEntities(cam) {
+    const m = state.map;
+    const list = [];
+
+    for (const d of m.decor) {
+      if (d.kind === 'chest' && d.opened) continue;
+      if (d.kind === 'questitem' && d.taken) continue;
+      const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
+      if (dist > m.fogEnd) continue;
+      list.push({ dist, spr: Sprites.decor(d.kind), x: d.x, y: d.y,
+        z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
+        h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
+    }
+    for (const n of m.npcs || []) {
+      const dist = Math.hypot(n.x - cam.x, n.y - cam.y);
+      if (dist > m.fogEnd) continue;
+      list.push({ dist, spr: Sprites.creature('npc_' + n.role), x: n.x, y: n.y,
+        z: World.H(m, n.x, n.y), h: 1.8 });
+    }
+    for (const e of (m.live || [])) {
+      if (e.dead) continue;
+      const dist = Math.hypot(e.x - cam.x, e.y - cam.y);
+      if (dist > m.fogEnd) continue;
+      const f = Engine.facingFor(e.ang, cam.x, cam.y, e.x, e.y, 5);
+      const def = Items.MONSTERS[e.kind];
+      list.push({ dist, spr: Sprites.creature(e.kind, f.index), mirror: f.mirror,
+        x: e.x, y: e.y, z: World.walkHeight(m, e.x, e.y, e.z),
+        h: /ogre|troll|elemental|crown|knight/.test(e.kind) ? 2.9 : /rat|spider/.test(e.kind) ? 0.9 : 1.9 });
+    }
+
+    list.sort((a, b) => b.dist - a.dist);
+    const lit = m.kind === 'dungeon' ? 0 : Art.sunShade(1);
+    for (const s of list) {
+      Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
+        { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0), mirror: s.mirror });
+    }
+  }
+
+  // ---------------------------------------------------------------- introspection
+  function dumpState() {
+    const p = state.party;
+    if (!p) return null;
+    return {
+      map: p.map,
+      pos: [Number(p.x.toFixed(4)), Number(p.y.toFixed(4)), Number(p.z.toFixed(4))],
+      ang: Number(p.ang.toFixed(4)),
+      gold: p.gold, food: p.food,
+      quests: p.quests,
+      members: p.members.map((c) => ({
+        name: c.name, cls: c.cls, level: c.level, xp: c.xp, hp: c.hp, sp: c.sp,
+        cond: c.cond, skillPts: c.skillPts,
+        pack: c.pack.map((s) => s.id + 'x' + (s.qty || 1)),
+        equip: Object.keys(c.equip).sort().map((k) => k + ':' + (c.equip[k] ? c.equip[k].id : '-')),
+      })),
+      dead: Object.keys(state.world.maps).sort().map((id) =>
+        id + ':' + ((state.world.maps[id].live || []).filter((e) => e.dead).length)),
+    };
+  }
+
+  function brief() {
+    const p = state.party;
+    return p ? { map: p.map, gold: p.gold, hp: p.members.map((c) => c.hp), screen: state.screen,
+      won: !!p.flags.won, level: p.members[0].level } : { none: true };
+  }
+
+  function invariants() {
+    const bad = [];
+    const p = state.party;
+    if (!p) return bad;
+    for (const ch of p.members) {
+      if (ch.hp > Rules.maxHP(ch)) bad.push(ch.name + ' hp above max');
+      if (ch.hp < -10) bad.push(ch.name + ' hp below floor');
+      if (ch.sp > Rules.maxSP(ch)) bad.push(ch.name + ' sp above max');
+      if (ch.pack.length > 30) bad.push(ch.name + ' pack overflow');
+      if (ch.cond.dead && ch.hp > 0) bad.push(ch.name + ' dead but positive hp');
+    }
+    if (p.gold < 0) bad.push('negative gold');
+    if (!state.world.maps[p.map]) bad.push('party on unknown map');
+    // Every portal must have landing coordinates. This is the v1 softlock, asserted at runtime.
+    for (const id of Object.keys(state.world.maps)) {
+      for (const portal of state.world.maps[id].portals) {
+        if (portal.shop) continue;
+        if (portal.tx === undefined || portal.ty === undefined) bad.push(id + ' portal to ' + portal.to + ' has no landing');
+      }
+    }
+    return bad;
+  }
+
+  // Count every item everywhere. The conservation probe: how to refuse to chase a duplication ghost.
+  function census() {
+    const byId = Object.create(null);
+    let total = 0;
+    for (const ch of state.party.members) {
+      for (const st of ch.pack) { byId[st.id] = (byId[st.id] || 0) + (st.qty || 1); total += st.qty || 1; }
+      for (const slot of Object.keys(ch.equip)) {
+        const s = ch.equip[slot];
+        if (s) { byId[s.id] = (byId[s.id] || 0) + 1; total += 1; }
+      }
+    }
+    return { total, byId, gold: state.party.gold };
+  }
+
+  function debugLines() {
+    const p = state.party;
+    if (!p) return ['no party'];
+    return [
+      'map ' + p.map + ' ' + state.map.w + 'x' + state.map.h,
+      'pos ' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ' z' + p.z.toFixed(2) + ' a' + p.ang.toFixed(2),
+      'enemies ' + liveEnemies().length + '  combat ' + state.combat.active,
+      state.lastError ? 'ERR ' + state.lastError : '',
+    ].filter(Boolean);
+  }
+
+  return {
+    state, boot, update, render, onKey, onTap,
+    newParty, gotoMap, teleport, walkCells, openScreen, closeScreens,
+    grantItem, grantXP, healParty, save, load,
+    interact, castSpell, doRest, stepTurn, acceptQuest, turnInQuest, questComplete,
+    killEntity: (eid) => { const e = (state.map.live || []).find((x) => x.eid === eid); if (e) killEntityObj(e); return !!e; },
+    spawnEntity: (kind, x, y) => {
+      const def = Items.MONSTERS[kind];
+      const e = { eid: 'spawn' + Math.round(Clock.t) + '_' + (state.map.live || []).length, kind, x, y,
+        z: World.walkHeight(state.map, x, y), ang: 0, hp: def.hp, hpMax: def.hp, recovery: 0, dead: false, alerted: true };
+      (state.map.live || (state.map.live = [])).push(e);
+      return e;
+    },
+    acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
+    get party() { return state.party; },
+    get map() { return state.map; },
+    get screen() { return state.screen; },
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = Game;
 
 
 /* ==================== 10_debug.js ==================== */

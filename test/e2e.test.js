@@ -18,7 +18,8 @@ const T = require('./_harness.js');
   const layers = await page.evaluate('window.__game.layers()');
   T.ok(layers.core, 'Core loaded');
   T.ok(layers.engine, 'Engine loaded');
-  T.eq(layers.game, false, 'game layer is honestly reported as absent at R0');
+  T.ok(layers.game, 'game layer is present');
+  T.ok(layers.world && layers.ui && layers.art, 'world, ui and art layers are present');
 
   T.suite('canvas');
   const canvas = await page.evaluate(`(() => {
@@ -118,11 +119,15 @@ const T = require('./_harness.js');
 
   // Harness methods that need the game layer must throw a CLEAR error, not fail obscurely and
   // not silently no-op. A no-op here would let a later test "pass" against nothing.
-  const honest = await page.evaluate(`(() => {
-    try { window.__game.teleport(1,1,0); return 'did not throw'; }
-    catch (e) { return e.message.includes('not built yet') ? 'clear throw' : 'unclear: ' + e.message; }
+  const moved = await page.evaluate(`(() => {
+    window.__game.gotoMap('harrowgate', 64, 64, 0);
+    const a = window.__session.brief();
+    const r = window.__game.teleport(70.5, 60.5, 1.0);
+    return { map: a.map, x: r.x, y: r.y, z: typeof r.z };
   })()`);
-  T.eq(honest, 'clear throw', 'unbuilt harness methods throw an explicit, honest error');
+  T.eq(moved.map, 'harrowgate', 'gotoMap moves the party to the named region');
+  T.eq(moved.x, 70.5, 'teleport sets x exactly');
+  T.eq(moved.z, 'number', 'teleport snaps the party to a terrain height');
 
   T.suite('session dump');
   const dump = await page.evaluate(`(() => {
@@ -133,23 +138,84 @@ const T = require('./_harness.js');
   T.ok(dump.stable, 'dump() is side-effect free and stable across consecutive calls');
   T.ok(dump.hasClock && dump.hasRng, 'dump() carries clock and rng state');
 
+  await page.evaluate('window.__game.settle(2)');
   const inv = await page.evaluate('window.__session.invariants()');
   T.eq(inv, [], 'no invariant violations at boot');
 
   T.suite('rendering');
-  const render = await page.evaluate(`(() => {
+  // The title screen is what a player sees first, and it must not be a flat plate.
+  const titleShot = await page.evaluate(`(() => {
+    Game.state.screen = 'title';
     window.__game.redraw();
-    const c = document.getElementById('fb');
-    const ctx = c.getContext('2d');
-    const d = ctx.getImageData(0, 0, 640, 480).data;
-    // Count distinct colours actually presented: the test card must exercise the whole palette.
+    const d = document.getElementById('fb').getContext('2d').getImageData(0, 0, 640, 480).data;
     const seen = new Set();
     for (let i = 0; i < d.length; i += 4) seen.add((d[i]<<16)|(d[i+1]<<8)|d[i+2]);
-    // The viewport corner markers must be present at their exact pixel positions.
-    const at = (x,y) => { const p=(y*640+x)*4; return (d[p]<<16)|(d[p+1]<<8)|d[p+2]; };
-    return { distinct: seen.size, corner: at(9, 9), farCorner: at(629, 350) };
+    return seen.size;
   })()`);
-  T.ok(render.distinct > 200, 'test card presents >200 distinct colours (got ' + render.distinct + ')');
+  T.ok(titleShot > 12, 'title screen renders a real vista (' + titleShot + ' colours)');
+
+  // The 3D pass must produce a varied frame from a real camera. A uniform viewport means the march
+  // bailed on step one, which is exactly the failure a screenshot would hide behind "looks dark".
+  const world3d = await page.evaluate(`(() => {
+    Game.state.screen = null;
+    window.__game.gotoMap('harrowgate', 88.5, 57.5, 0);
+    window.__game.setTime(720);
+    window.__game.settle(3);
+    const d = document.getElementById('fb').getContext('2d').getImageData(0, 0, 640, 480).data;
+    // Sample the WHOLE viewport, not one column: a single column can sit behind a tree trunk and
+    // report "no sky" while the frame is fine.
+    const seen = new Set();
+    let sky = 0, ground = 0;
+    for (let y = 10; y < 350; y += 2) {
+      for (let x = 12; x < 630; x += 2) {
+        const p = (y * 640 + x) * 4;
+        seen.add((d[p]<<16)|(d[p+1]<<8)|d[p+2]);
+        if (d[p+2] > d[p] + 24) sky++; else ground++;
+      }
+    }
+    return { distinct: seen.size, skyRows: sky, groundRows: ground };
+  })()`);
+  T.ok(world3d.distinct > 20, '3D viewport has real depth variety (' + world3d.distinct + ' distinct colours)');
+  T.ok(world3d.skyRows > 400, 'sky is visible above the horizon (' + world3d.skyRows + ' px)');
+  T.ok(world3d.groundRows > 4000, 'terrain fills the frame (' + world3d.groundRows + ' px)');
+
+  // The heightfield must actually vary. A flat plane here is the loudest possible "not MM6" tell.
+  const relief = await page.evaluate(`(() => {
+    const m = Game.state.world.maps.harrowgate;
+    let lo = 1e9, hi = -1e9;
+    for (let i = 0; i < m.terrain.length; i++) { if (m.terrain[i] < lo) lo = m.terrain[i]; if (m.terrain[i] > hi) hi = m.terrain[i]; }
+    return { lo: Math.round(lo), hi: Math.round(hi), spans: m.spans.size };
+  })()`);
+  T.ok(relief.hi - relief.lo > 20, 'terrain has real relief (' + relief.lo + ' to ' + relief.hi + ' units)');
+  T.ok(relief.spans > 0, 'overhead spans exist (' + relief.spans + ' cells)');
+
+  T.suite('world integrity');
+  const integ = await page.evaluate(`(() => {
+    const maps = Game.state.world.maps;
+    const bad = [];
+    let portals = 0, ents = 0;
+    for (const id of Object.keys(maps)) {
+      const m = maps[id];
+      for (const p of m.portals) {
+        if (p.shop) continue;
+        portals++;
+        if (p.tx === undefined || p.ty === undefined) bad.push(id + '->' + p.to + ' no landing');
+        if (!maps[p.to]) bad.push(id + '->' + p.to + ' unknown destination');
+        // A landing must not sit ON the reciprocal portal, or the player bounces straight back.
+        const dest = maps[p.to];
+        if (dest) for (const q of dest.portals) {
+          if (q.shop) continue;
+          if (q.x === p.tx && q.y === p.ty) bad.push(id + '->' + p.to + ' lands on a return trigger');
+        }
+      }
+      ents += m.entities.length;
+    }
+    return { bad, portals, ents, maps: Object.keys(maps).length };
+  })()`);
+  T.eq(integ.bad, [], 'every portal has a landing that is not a return trigger');
+  T.eq(integ.maps, 22, '22 maps: nine regions plus thirteen dungeons');
+  T.ok(integ.portals > 40, 'portals wire the world together (' + integ.portals + ')');
+  T.ok(integ.ents > 400, 'the world is populated (' + integ.ents + ' entities)');
 
   T.eq(errors, [], 'still no page errors after exercising the harness');
 

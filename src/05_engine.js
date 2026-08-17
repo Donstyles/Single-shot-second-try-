@@ -155,24 +155,260 @@ const Engine = (() => {
   const FOV_V = 2 * Math.atan(Math.tan(FOV_H / 2) * (VIEW.h / VIEW.w));
   const PROJ = VIEW.h / (2 * Math.tan(FOV_V / 2));
 
-  // ---------------------------------------------------------------- 3D
-  // R2 replaces this body with the per-column heightfield march described in ARCHITECTURE.md §7.
-  // It is deliberately a visible placeholder rather than a silent no-op: a blank viewport in a
-  // capture must be unmistakably "not implemented", not "maybe the world failed to load".
-  function render3D(cam) {
+  // ================================================================ the 3D pass
+  // A per-column heightfield march. This REPLACES the floor caster rather than sitting beside it:
+  // one loop produces terrain, buildings, roofs and spans, because they are all the same thing —
+  // an interval of solid matter over a cell.
+  //
+  // A flat grid of full-height walls reads as Wolfenstein, not MM6, and no texture quality repairs
+  // that. Everything below exists to make the ground itself have shape.
+
+  const STOREY = 3.20;
+  const EYE = 1.30;
+  const MAX_STEPS = 150;
+
+  // Ordered-dither fog. Palette indices cannot be blended arithmetically across ramps, so distance
+  // fade is a dithered REPLACEMENT with the sky index — which is exactly what 1998 did, and why
+  // fog dissolves geometry into the sky instead of into black.
+  const FOG_BAYER = [
+    0.0078, 0.5078, 0.1328, 0.6328, 0.0391, 0.5391, 0.1641, 0.6641,
+    0.7578, 0.2578, 0.8828, 0.3828, 0.7891, 0.2891, 0.9141, 0.4141,
+    0.1953, 0.6953, 0.0703, 0.5703, 0.2266, 0.7266, 0.1016, 0.6016,
+    0.9453, 0.4453, 0.8203, 0.3203, 0.9766, 0.4766, 0.8516, 0.3516,
+    0.0547, 0.5547, 0.1797, 0.6797, 0.0234, 0.5234, 0.1484, 0.6484,
+    0.8047, 0.3047, 0.9297, 0.4297, 0.7734, 0.2734, 0.8984, 0.3984,
+    0.2422, 0.7422, 0.1172, 0.6172, 0.2109, 0.7109, 0.0859, 0.5859,
+    0.9922, 0.4922, 0.8672, 0.3672, 0.9609, 0.4609, 0.8359, 0.3359,
+  ];
+
+  // Per-column span bands already drawn, so a bridge deck can occupy rows ABOVE ground that is
+  // already filled. Front-to-back with a single "filled to y" marker breaks exactly here; this is
+  // the one place the cheap trick does not survive contact.
+  const bandY0 = new Int16Array(16);
+  const bandY1 = new Int16Array(16);
+
+  function render3D(cam, world) {
+    const map = cam.map;
+    if (!map) { testCard(); return; }
+
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
-    for (let y = 0; y < VIEW.h; y++) {
-      const t = y / VIEW.h;
-      hline(VIEW.x, VIEW.y + y, VIEW.w, Core.idx(9, 3 + ((t * 9) | 0)));
+
+    const dungeon = map.kind === 'dungeon';
+    const horizon = VIEW.y + (VIEW.h >> 1) + (cam.horizon || 0);
+    const eyeZ = cam.z + EYE;
+    const cosA = Math.cos(cam.ang), sinA = Math.sin(cam.ang);
+    const halfFov = Math.tan(FOV_H / 2);
+
+    const skyBand = Art.skyBand ? Art.skyBand() : null;
+    const light = map.light === undefined ? 1 : map.light;
+    const sun = Art.sunShade ? Art.sunShade(light) : 0;
+    const fogStart = map.fogStart, fogEnd = map.fogEnd;
+
+    for (let sx = 0; sx < VIEW.w; sx++) {
+      const px = VIEW.x + sx;
+
+      // Sky first: everything the march does not cover stays sky, so a column that reaches the
+      // horizon needs no separate pass.
+      if (skyBand) {
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y];
+      } else {
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
+      }
+
+      const camX = ((sx + 0.5) / VIEW.w) * 2 - 1;
+      const rdx = cosA - sinA * camX * halfFov;
+      const rdy = sinA + cosA * camX * halfFov;
+      const rl = Math.hypot(rdx, rdy);
+      const dx = rdx / rl, dy = rdy / rl;
+
+      let ybuf = VIEW.y + VIEW.h;       // filled upward from the bottom of the viewport
+      let nBands = 0;
+      let dist = 0.30;
+      let step = dungeon ? 0.035 : 0.055;
+      zb[px] = 1e9;
+
+      for (let s = 0; s < MAX_STEPS && ybuf > VIEW.y; s++) {
+        // Step size grows with distance: ~150 steps then reach ~200 cells, and far detail collapses
+        // into haze exactly where we want it anyway.
+        dist += step;
+        step *= dungeon ? 1.020 : 1.028;
+        if (dist > fogEnd + 12) break;
+
+        const wx = cam.x + dx * dist, wy = cam.y + dy * dist;
+        const cx = Math.floor(wx), cy = Math.floor(wy);
+        if (cx < 0 || cy < 0 || cx >= map.w || cy >= map.h) break;
+
+        const ci = cy * map.w + cx;
+        const cell = map.cells[ci];
+        const solid = (cell & 128) !== 0;
+        const mat = cell & 0x7f;
+
+        const gh = dungeon ? 0 : World.H(map, wx, wy);
+        const invD = PROJ / dist;
+
+        // Fog: how much of this sample is eaten by distance.
+        const fog = clamp((dist - fogStart) / Math.max(1, fogEnd - fogStart), 0, 1);
+        const fogRow = (sx & 7) * 8;
+        // Break the Bayer lattice: without this the threshold is periodic in screen space and a
+        // large evenly-fogged face reads as a visible grid rather than as haze.
+        const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512 - 0.03;
+
+        // ---- ground / water surface
+        const yG = (horizon + (eyeZ - gh) * invD) | 0;
+        if (!solid && yG < ybuf) {
+          const isWater = mat === World.MAT.water;
+          const surfH = isWater ? map.sea : gh;
+          const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
+          const top = yS < VIEW.y ? VIEW.y : yS;
+          if (top < ybuf) {
+            const texel = Art.groundTexel(mat, wx, wy, map);
+            // Slope shading: the dot of the surface normal with the key direction. This is what
+            // makes hills read as hills rather than as a painted gradient.
+            const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
+            const base = (texel & 0x0f) + sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const ramp = texel & 0xf0;
+            for (let y = top; y < ybuf; y++) {
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+            }
+            ybuf = top;
+          }
+        }
+
+        // ---- solid cell: extrude a prism from the terrain. Buildings, cliffs, dungeon walls and
+        // variable storey heights all come out of this one branch.
+        if (solid) {
+          const storeys = map.storeys[ci] || 1;
+          const topH = gh + storeys * STOREY;
+          const yT = (horizon + (eyeZ - topH) * invD) | 0;
+          const top = yT < VIEW.y ? VIEW.y : yT;
+          if (top < ybuf) {
+            // Wall u from whichever axis this face is more aligned to.
+            const u = Math.abs(dx) > Math.abs(dy) ? (wy - cy) : (wx - cx);
+            const face = Math.abs(dx) > Math.abs(dy) ? 1 : 0;
+            const texel = Art.wallTexel(mat, u, 0, face);
+            const ramp = texel & 0xf0;
+            const baseShade = (texel & 0x0f) + sun - (face ? 1 : 0) +
+              (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            const span = topH - gh;
+            for (let y = top; y < ybuf; y++) {
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
+              // v from the screen row back to world height, so texture does not swim with distance.
+              const wh = eyeZ - (y - horizon) / invD;
+              const v = clamp((topH - wh) / span, 0, 0.999);
+              const tx = Art.wallTexel(mat, u, v, face);
+              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + baseShade - (texel & 0x0f));
+            }
+            ybuf = top;
+          }
+          if (zb[px] > dist) zb[px] = dist;
+          // A solid prism occludes everything lower behind it; keep marching only for taller
+          // terrain and spans above.
+        }
+
+        // ---- overhead spans: bridges, gate arches, aqueducts, cave mouths. ONE primitive.
+        const sp = map.spans.get(cy * 4096 + cx);
+        if (sp) {
+          const yHi = (horizon + (eyeZ - sp.hi) * invD) | 0;
+          const yLo = (horizon + (eyeZ - sp.lo) * invD) | 0;
+          let a = yHi < VIEW.y ? VIEW.y : yHi;
+          let b = yLo > ybuf ? ybuf : yLo;
+          if (b > a) {
+            const texel = Art.wallTexel(sp.tex, (wx - cx), 0, 0);
+            const ramp = texel & 0xf0;
+            const base = (texel & 0x0f) + sun - 1 + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
+            for (let y = a; y < b; y++) {
+              // Skip rows an earlier, nearer band already claimed.
+              let taken = false;
+              for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
+              if (taken) continue;
+              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
+              buf[y * W + px] = (fog > t && skyBand) ? skyBand[y - VIEW.y] : Core.shade(ramp, base);
+            }
+            if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
+            if (zb[px] > dist) zb[px] = dist;
+          }
+        }
+      }
+    }
+
+    clipReset();
+  }
+
+  // Torch radius indoors. A dungeon lit by a global ambient reads as a lit room with the lights
+  // off; the falloff around the party is most of what makes a corridor feel like a corridor.
+  function dungeonLight(cam, wx, wy, map) {
+    const d = Math.hypot(wx - cam.x, wy - cam.y);
+    const radius = cam.torch || 7.5;
+    return Math.round(clamp(1 - d / radius, 0, 1) * 9) - 2;
+  }
+
+  // ---------------------------------------------------------------- sprites
+  // Billboards composited against zb. Feet sit at the WALK SURFACE — terrain height, or a span's
+  // deck when the entity is on one — never a constant ground plane.
+  function drawSprite(cam, spr, wx, wy, wz, hWorld, opts) {
+    const dxw = wx - cam.x, dyw = wy - cam.y;
+    const cosA = Math.cos(-cam.ang), sinA = Math.sin(-cam.ang);
+    const tx = dxw * cosA - dyw * sinA;
+    const ty = dxw * sinA + dyw * cosA;
+    if (tx < 0.25) return null;                         // behind the camera
+
+    const halfFov = Math.tan(FOV_H / 2);
+    const sx = VIEW.x + (VIEW.w / 2) * (1 + (ty / tx) / halfFov);
+    const invD = PROJ / tx;
+    const horizon = VIEW.y + (VIEW.h >> 1) + (cam.horizon || 0);
+    const eyeZ = cam.z + EYE;
+
+    const hPix = hWorld * invD;
+    const wPix = hPix * (spr.w / spr.h);
+    const yFeet = horizon + (eyeZ - wz) * invD;
+    const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
+
+    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return null;
+
+    // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
+    clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
+    const lit = opts && opts.lit !== undefined ? opts.lit : 0;
+    const mirror = opts && opts.mirror;
+    const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
+    const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
+    const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
+
+    for (let x = xa; x < xb; x++) {
+      if (zb[x] < tx) continue;                          // occluded by geometry in this column
+      let sxi = ((x - x0) * xs) | 0;
+      if (mirror) sxi = spr.w - 1 - sxi;
+      if (sxi < 0 || sxi >= spr.w) continue;
+      for (let y = ya; y < yb; y++) {
+        const syi = ((y - y0) * ys) | 0;
+        if (syi < 0 || syi >= spr.h) continue;
+        const pi = spr.data[syi * spr.w + sxi];
+        if (pi === 0) continue;
+        buf[y * W + x] = Core.shade(pi & 0xf0, (pi & 0x0f) + lit);
+      }
     }
     clipReset();
+    return { x: x0, y: y0, w: wPix, h: hPix, dist: tx };
+  }
+
+  // Which of the 8 facings to draw, and whether to mirror. Sprites are baked for 0..180 only;
+  // the other three eighths are the same frames flipped, exactly as 1998 sprite sheets did.
+  function facingFor(entAng, camX, camY, entX, entY, nFacings) {
+    const toCam = Math.atan2(camY - entY, camX - entX);
+    let rel = toCam - entAng;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    const mirror = rel < 0;
+    const a = Math.abs(rel) / Math.PI;
+    return { index: clamp(Math.round(a * (nFacings - 1)), 0, nFacings - 1), mirror };
   }
 
   return {
     W, H, buf, zb,
     clip, clipReset, clear, px, pxFast, hline, vline, rect, frameRect, blit, blitScaled,
-    present, testCard, render3D,
-    VIEW, HUD, FOV_H, FOV_V, PROJ,
+    present, testCard, render3D, drawSprite, facingFor, dungeonLight,
+    VIEW, HUD, FOV_H, FOV_V, PROJ, STOREY, EYE,
   };
 })();
 

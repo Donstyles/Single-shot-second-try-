@@ -1,0 +1,390 @@
+// 06b_sprites.js — sprite, portrait, paperdoll and icon painters.
+// Owner: sprites. Calls Core, Art.
+//
+// Two sources, one interface. Baked foundry frames (assets/sprites/*.json, embedded by build.js)
+// are used when present; otherwise a procedural painter stands in. The engine never knows which it
+// got, which is what lets the art pass upgrade the game without touching the renderer.
+
+const Sprites = (() => {
+  'use strict';
+
+  const { clamp, RNG } = Core;
+
+  const cache = Object.create(null);
+  const BAKED = Object.create(null);
+
+  // ---------------------------------------------------------------- baked
+  // Decode indexed PNGs the build embedded. The browser decodes them for free, which is why the
+  // payload is PNG rather than raw index arrays.
+  function installBaked(manifest) {
+    if (!manifest) return 0;
+    let n = 0;
+    for (const id of Object.keys(manifest)) {
+      BAKED[id] = manifest[id];
+      n++;
+    }
+    return n;
+  }
+
+  // Decode a base64 indexed PNG into {w,h,data} using a canvas. Index recovery works because the
+  // build writes the game palette into the PNG's PLTE, so a decoded RGB maps back 1:1.
+  function decodePNG(b64, pal) {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + b64;
+    return img;   // callers await decode; see prepareBaked
+  }
+
+  async function prepareBaked() {
+    const out = {};
+    for (const id of Object.keys(BAKED)) {
+      const m = BAKED[id];
+      const facings = [];
+      for (const f of m.facings) {
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + f.png; });
+        const c = document.createElement('canvas');
+        c.width = f.w; c.height = f.h;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, f.w, f.h).data;
+        const data = new Uint8Array(f.w * f.h);
+        for (let i = 0, p = 0; i < data.length; i++, p += 4) {
+          data[i] = d[p + 3] < 128 ? 0 : Core.palIdx(d[p], d[p + 1], d[p + 2]);
+        }
+        facings.push({ w: f.w, h: f.h, data });
+      }
+      out[id] = { facings, h: m.h, aspect: m.aspect };
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- procedural
+  // Stand-in creature painter. Deliberately silhouette-first: a blob that reads at 40px beats a
+  // detailed thing that does not, and the silhouette is the best predictor of "reads as MM6".
+  function paintCreature(kind, w, h) {
+    const d = new Uint8Array(w * h);
+    const r = RNG.world('spr:' + kind);
+    const M = Items.MONSTERS[kind] || { level: 1 };
+
+    // Body plan varies by rough archetype so a skeleton does not look like an ogre.
+    const heavy = /ogre|troll|zombie|knight|elemental|crown/.test(kind);
+    const thin = /skeleton|wraith|lich|harpy|spider|rat/.test(kind);
+    const ramp = /skeleton|lich|wraith/.test(kind) ? 0
+      : /goblin|troll|harpy/.test(kind) ? 6
+      : /elemental|crown/.test(kind) ? 15
+      : /knight|steel/.test(kind) ? 14
+      : /zombie|ghoul/.test(kind) ? 7
+      : 10;
+
+    const cx = w >> 1;
+    const bodyW = Math.round(w * (heavy ? 0.52 : thin ? 0.26 : 0.38));
+    const headR = Math.round(w * (heavy ? 0.15 : 0.13));
+    const shoulderY = Math.round(h * 0.30);
+    const hipY = Math.round(h * 0.66);
+
+    const put = (x, y, sh) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      d[y * w + x] = Core.shade(ramp << 4, sh);
+    };
+
+    // Legs
+    for (let y = hipY; y < h; y++) {
+      const spread = Math.round((y - hipY) * 0.22) + 2;
+      const lw = Math.max(2, Math.round(bodyW * 0.22));
+      for (let k = 0; k < lw; k++) {
+        put(cx - spread - k, y, 7 - (k >> 1));
+        put(cx + spread + k, y, 6 - (k >> 1));
+      }
+    }
+    // Torso: a tapered barrel, lit from upper-left to match the foundry rig.
+    for (let y = shoulderY; y < hipY; y++) {
+      const t = (y - shoulderY) / Math.max(1, hipY - shoulderY);
+      const ww = Math.round(bodyW * (1 - t * 0.18));
+      for (let x = -ww; x <= ww; x++) {
+        const lit = 10 - Math.round(Math.abs(x + ww * 0.35) / ww * 5);
+        put(cx + x, y, clamp(lit, 3, 13));
+      }
+    }
+    // Arms
+    for (let y = shoulderY + 1; y < hipY - 1; y++) {
+      const t = (y - shoulderY) / Math.max(1, hipY - shoulderY);
+      const off = bodyW + 1 + Math.round(Math.sin(t * 2.4) * 2);
+      for (let k = 0; k < Math.max(2, Math.round(bodyW * 0.28)); k++) {
+        put(cx - off - k, y, 9 - (k >> 1));
+        put(cx + off + k, y, 6 - (k >> 1));
+      }
+    }
+    // Head
+    for (let y = -headR; y <= headR; y++) {
+      for (let x = -headR; x <= headR; x++) {
+        if (x * x + y * y > headR * headR) continue;
+        const lit = 11 - Math.round((x + headR) / (headR * 2) * 5) - Math.round((y + headR) / (headR * 2) * 2);
+        put(cx + x, shoulderY - headR + y, clamp(lit, 4, 14));
+      }
+    }
+    // Eyes: two dark pips. At 40px this is the only facial feature that survives, and it is the
+    // one that makes a shape read as a creature rather than a rock.
+    put(cx - Math.max(1, headR >> 1), shoulderY - headR, 1);
+    put(cx + Math.max(1, headR >> 1), shoulderY - headR, 1);
+    if (/goblin|troll|ogre/.test(kind)) {
+      // Horns, because the silhouette test is what matters most.
+      for (let k = 0; k < headR; k++) {
+        put(cx - headR - k + 1, shoulderY - headR - k - 1, 5);
+        put(cx + headR + k - 1, shoulderY - headR - k - 1, 5);
+      }
+    }
+
+    // 1px dark outline outside the silhouette — what separates 1998 pre-rendered from a modern
+    // render pasted on a background.
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[y * w + x]) continue;
+        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) {
+          out[y * w + x] = Core.idx(0, 2);
+        }
+      }
+    }
+    return { w, h, data: out };
+  }
+
+  function creature(kind, facing) {
+    const baked = BAKED.__ready && BAKED.__ready[kind];
+    if (baked) return baked.facings[clamp(facing || 0, 0, baked.facings.length - 1)];
+    const k = 'c:' + kind;
+    if (!cache[k]) cache[k] = paintCreature(kind, 48, 64);
+    return cache[k];
+  }
+
+  // ---------------------------------------------------------------- decor
+  function paintDecor(kind) {
+    const w = 40, h = 56;
+    const clamp = Core.clamp;
+    const d = new Uint8Array(w * h);
+    const put = (x, y, ramp, sh) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      d[y * w + x] = Core.shade(ramp << 4, sh);
+    };
+    const cx = w >> 1;
+
+    if (kind === 'oak' || kind === 'pine' || kind === 'deadtree' || kind === 'ashstump') {
+      // Trunk and canopy MUST overlap. The first version started the trunk below where the canopy
+      // ended, which drew a floating crown and a detached post — the defect reads instantly as
+      // "sprites are not grounded" and no amount of texture work hides it.
+      const canopyBottom = kind === 'pine' ? Math.round(h * 0.72) : Math.round(h * 0.58);
+      const trunkTop = kind === 'ashstump' ? Math.round(h * 0.78) : Math.round(canopyBottom * 0.72);
+      const trunkW = kind === 'ashstump' ? 4 : 2;
+      for (let y = trunkTop; y < h; y++) {
+        const taper = trunkW + Math.round((y - trunkTop) / Math.max(1, h - trunkTop) * 1.6);
+        for (let x = -taper; x <= taper; x++) put(cx + x, y, 4, clamp(8 - Math.abs(x + 1), 3, 12));
+      }
+      if (kind !== 'ashstump') {
+        const leafRamp = kind === 'deadtree' ? 4 : 7;
+        if (kind === 'pine') {
+          for (let t = 0; t < 4; t++) {
+            const cyy = Math.round(h * (0.10 + t * 0.16));
+            const rr = 5 + t * 4;
+            for (let y = -rr; y <= rr + 2; y++) {
+              for (let x = -rr; x <= rr; x++) {
+                if (Math.abs(x) + Math.abs(y) * 1.3 > rr) continue;
+                put(cx + x, cyy + y, leafRamp,
+                  clamp(11 - Math.round((x + rr) / (rr * 2 + 1) * 5) - Math.round((y + rr) / (rr * 2 + 1) * 2), 3, 13));
+              }
+            }
+          }
+        } else {
+          const cyy = Math.round(h * 0.30), rr = 15;
+          for (let y = -rr; y <= rr; y++) {
+            for (let x = -rr; x <= rr; x++) {
+              const dd = Math.hypot(x, y * 1.15);
+              if (dd > rr) continue;
+              if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;   // bare branches
+              put(cx + x, cyy + y, leafRamp,
+                clamp(11 - Math.round((x + rr) / (rr * 2) * 5) - Math.round((y + rr) / (rr * 2) * 2), 3, 13));
+            }
+          }
+        }
+      }
+    } else if (kind === 'rock' || kind === 'standingstone') {
+      const rh = kind === 'standingstone' ? Math.round(h * 0.8) : Math.round(h * 0.35);
+      const rw = kind === 'standingstone' ? 5 : 11;
+      for (let y = h - rh; y < h; y++) {
+        const t = (y - (h - rh)) / rh;
+        const ww = Math.round(rw * (kind === 'standingstone' ? 1 : 0.5 + t * 0.5));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 1, clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+      }
+    } else if (kind === 'reed' || kind === 'bush') {
+      for (let i = 0; i < 26; i++) {
+        const bx = cx - 9 + ((i * 7) % 19);
+        const bh = 14 + ((i * 11) % 18);
+        for (let y = h - bh; y < h; y++) put(bx, y, kind === 'reed' ? 6 : 7, 6 + ((i + y) & 3));
+      }
+    } else if (kind === 'brazier') {
+      for (let y = h - 18; y < h; y++) for (let x = -3; x <= 3; x++) put(cx + x, y, 14, 6);
+      for (let y = h - 30; y < h - 16; y++) {
+        const ww = 7 - Math.abs(y - (h - 23));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 15, clamp(9 + ((x + y) & 3), 6, 15));
+      }
+    } else if (kind === 'fountain') {
+      for (let y = h - 16; y < h; y++) for (let x = -14; x <= 14; x++) put(cx + x, y, 1, 8 - (Math.abs(x) >> 2));
+      for (let y = h - 30; y < h - 14; y++) for (let x = -3; x <= 3; x++) put(cx + x, y, 8, 10);
+    } else if (kind === 'chest') {
+      for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
+      for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
+      put(cx, h - 12, 13, 13);
+    } else if (kind === 'sign') {
+      for (let y = h - 26; y < h; y++) put(cx, y, 4, 6);
+      for (let y = h - 40; y < h - 24; y++) for (let x = -10; x <= 10; x++) put(cx + x, y, 4, 9 - (Math.abs(x) >> 3));
+    } else if (kind === 'stump') {
+      for (let y = h - 12; y < h; y++) for (let x = -6; x <= 6; x++) put(cx + x, y, 4, 7);
+    } else if (kind === 'questitem') {
+      for (let y = h - 22; y < h - 6; y++) {
+        const ww = 8 - Math.abs(y - (h - 14));
+        for (let x = -ww; x <= ww; x++) put(cx + x, y, 13, clamp(11 + ((x + y) & 1) * 2, 8, 15));
+      }
+    }
+
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[y * w + x]) continue;
+        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+      }
+    }
+    return { w, h, data: out };
+  }
+
+  function decor(kind) {
+    const k = 'd:' + kind;
+    if (!cache[k]) cache[k] = paintDecor(kind);
+    return cache[k];
+  }
+
+  const DECOR_HEIGHT = {
+    oak: 6.5, pine: 8.0, deadtree: 5.5, ashstump: 2.4, reed: 1.6, bush: 1.2,
+    rock: 1.8, standingstone: 4.2, brazier: 2.0, fountain: 2.4, chest: 1.1,
+    sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6,
+  };
+
+  // ---------------------------------------------------------------- portraits
+  // 64x72 character portraits. Class and sex drive the palette and the silhouette; the point is
+  // that four party members are instantly distinguishable at a glance in the HUD.
+  function paintPortrait(seed, cls, sex) {
+    const w = 64, h = 72;
+    const d = new Uint8Array(w * h);
+    const r = RNG.world('portrait:' + seed + cls + sex);
+    const skin = 10, hairRamp = r.pick([4, 5, 13, 0]);
+    const clothRamp = { knight: 14, templar: 13, ranger: 7, priest: 0, mage: 12, warden: 6 }[cls] || 11;
+    const put = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h) d[y * w + x] = Core.shade(ramp << 4, sh); };
+
+    // Background plate so a portrait never sits on the raw HUD.
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) put(x, y, 1, 3 + ((x + y) & 1));
+
+    const cx = w >> 1;
+    // Shoulders
+    for (let y = h - 20; y < h; y++) {
+      const ww = 20 + (y - (h - 20));
+      for (let x = -ww; x <= ww; x++) put(cx + x, y, clothRamp, clamp(9 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+    }
+    // Head
+    const hr = 17;
+    for (let y = -hr; y <= hr + 3; y++) {
+      for (let x = -hr + 2; x <= hr - 2; x++) {
+        if ((x * x) / ((hr - 2) * (hr - 2)) + (y * y) / ((hr + 2) * (hr + 2)) > 1) continue;
+        put(cx + x, h - 30 + y, skin, clamp(12 - Math.round((x + hr) / (hr * 2) * 5) - Math.round((y + hr) / (hr * 2) * 2), 4, 14));
+      }
+    }
+    // Hair
+    const hairY = h - 30 - hr;
+    for (let y = 0; y < (sex === 'f' ? 26 : 14); y++) {
+      const ww = Math.round((hr - 1) * Math.sin(Math.min(1, (y + 3) / 16) * Math.PI * 0.62));
+      for (let x = -ww - (sex === 'f' ? 2 : 0); x <= ww + (sex === 'f' ? 2 : 0); x++) {
+        if (y > 8 && Math.abs(x) < ww - 4) continue;      // leave the face clear
+        put(cx + x, hairY + y, hairRamp, clamp(9 - ((x + y) & 3), 3, 13));
+      }
+    }
+    // Eyes and mouth
+    put(cx - 6, h - 32, 0, 2); put(cx - 5, h - 32, 0, 2);
+    put(cx + 5, h - 32, 0, 2); put(cx + 6, h - 32, 0, 2);
+    for (let x = -3; x <= 3; x++) put(cx + x, h - 22, 10, 6);
+
+    Core.shade(0, 0);
+    return { w, h, data: d };
+  }
+
+  function portrait(idx, cls, sex) {
+    const k = 'p:' + idx + cls + sex;
+    if (!cache[k]) cache[k] = paintPortrait(idx, cls, sex);
+    return cache[k];
+  }
+
+  // ---------------------------------------------------------------- item icons
+  function paintIcon(id) {
+    const w = 32, h = 32;
+    const d = new Uint8Array(w * h);
+    const it = Items.ITEMS[id] || {};
+    const put = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h) d[y * w + x] = Core.shade(ramp << 4, sh); };
+
+    const kind = it.kind || 'misc';
+    if (kind === 'weapon') {
+      const bow = it.slot === 'bow';
+      if (bow) {
+        for (let a = -14; a <= 14; a++) {
+          const x = 10 + Math.round(Math.cos(a / 18) * 7);
+          put(x, 16 + a, 4, 8);
+        }
+        for (let y = 2; y < 30; y++) put(18, y, 0, 10);
+      } else {
+        for (let y = 3; y < 22; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
+        for (let x = 10; x <= 22; x++) put(x, 22, 13, 9);
+        for (let y = 23; y < 29; y++) put(16, y, 4, 7);
+      }
+    } else if (kind === 'armour') {
+      for (let y = 5; y < 27; y++) {
+        const ww = 10 - Math.abs(y - 14) / 3;
+        for (let x = -ww; x <= ww; x++) put(16 + x, y, it.skill === 'plate' ? 14 : it.skill === 'chain' ? 1 : 4,
+          clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
+      }
+    } else if (kind === 'potion') {
+      for (let y = 10; y < 27; y++) {
+        const ww = 7 - Math.abs(y - 20) / 4;
+        for (let x = -ww; x <= ww; x++) put(16 + x, y, it.mana ? 12 : it.cure ? 6 : 11, 10);
+      }
+      for (let y = 5; y < 11; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 0, 9);
+    } else if (kind === 'ring' || kind === 'amulet') {
+      for (let a = 0; a < 64; a++) {
+        const t = a / 64 * Math.PI * 2;
+        put(16 + Math.round(Math.cos(t) * 9), 16 + Math.round(Math.sin(t) * 9), 13, 12);
+      }
+      put(16, 7, 12, 14);
+    } else if (kind === 'quest') {
+      for (let y = 8; y < 25; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 13, clamp(12 - ((x + y) & 3), 8, 15));
+    } else {
+      for (let y = 9; y < 24; y++) for (let x = -8; x <= 8; x++) put(16 + x, y, 4, 8);
+    }
+
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (d[y * w + x]) continue;
+      if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+          (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+    }
+    return { w, h, data: out };
+  }
+
+  function icon(id) {
+    const k = 'i:' + id;
+    if (!cache[k]) cache[k] = paintIcon(id);
+    return cache[k];
+  }
+
+  return {
+    installBaked, prepareBaked, BAKED,
+    creature, decor, DECOR_HEIGHT, portrait, icon,
+    paintCreature, paintDecor, paintPortrait, paintIcon,
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = Sprites;

@@ -14,7 +14,7 @@ const SRC = path.join(ROOT, 'src');
 
 // Modules that need a DOM. The pure-rules suite stops before them; asking for one is an error
 // rather than a silent skip, so a test cannot quietly assert nothing.
-const BROWSER_ONLY = new Set(['06_art.js', '06b_sprites.js', '07_audio.js', '08_ui.js', '09_game.js', '10_debug.js']);
+const BROWSER_ONLY = new Set(['06b_sprites.js', '07_audio.js', '08_ui.js', '09_game.js', '10_debug.js']);
 
 // The single global each module declares. A module declares its global with `const`, which lives in
 // the context's lexical scope and is NOT a property of the context object — so after loading we
@@ -27,6 +27,7 @@ const EXPORTS = {
   '03_items.js': 'Items',
   '04_world.js': 'World',
   '05_engine.js': 'Engine',
+  '06_art.js': 'Art',
 };
 
 function loadUpTo(lastPrefix) {
