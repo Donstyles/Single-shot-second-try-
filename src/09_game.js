@@ -31,6 +31,12 @@ const Game = (() => {
     createSlot: 0,
     createSpec: null,
     combat: { active: false, turn: 0, order: [] },
+    // MM6's defining trick: a key freezes the world and lets you spend everyone's turn deliberately.
+    // Without it this was "a click race you lose" — a goblin swinging three times a second against
+    // a level-1 party with 33 HP, no enemy health, and a log printing six lines a second.
+    turnBased: false,
+    acted: [false, false, false, false],
+    tbRound: 0,
     seenMaps: Object.create(null),
     pendingCast: null,
     lastError: null,
@@ -274,6 +280,20 @@ const Game = (() => {
     }
   }
 
+  // One deliberate step, in turn-based. Turning is free — you are looking around, not moving —
+  // but a step spends the whole party's round, which is the cost MM6 charges too.
+  function stepInTurn() {
+    const p = state.party;
+    if (keyDown('turnL')) { p.ang -= 0.30; state.keys.turnL = false; state.keyLatch.turnL = 0; return; }
+    if (keyDown('turnR')) { p.ang += 0.30; state.keys.turnR = false; state.keyLatch.turnR = 0; return; }
+    const back = keyDown('back');
+    const d = back ? -1 : 1;
+    const moved = tryMove(p.x + Math.cos(p.ang) * 0.9 * d, p.y + Math.sin(p.ang) * 0.9 * d);
+    state.keys.fwd = false; state.keys.back = false;
+    state.keyLatch.fwd = 0; state.keyLatch.back = 0;
+    if (moved) endTurnRound();
+  }
+
   function walkCells(dir, cells) {
     // Player-legal: the campaign test uses this and nothing else to get around.
     const p = state.party;
@@ -410,6 +430,69 @@ const Game = (() => {
     e.recovery = def.speed * 8;
   }
 
+  // ---------------------------------------------------------------- turn-based mode
+  // While it is on, NOTHING moves on its own: not the clock, not a monster, not a recovery timer.
+  // The party acts one character at a time; when everyone who can act has acted, the monsters take
+  // exactly one action each and the round ends.
+  const TB_MINUTES = 1;                  // a round of combat is a minute of game time
+
+  function toggleTurnBased(on) {
+    const want = on === undefined ? !state.turnBased : !!on;
+    if (want === state.turnBased) return state.turnBased;
+    state.turnBased = want;
+    if (want) {
+      // Drop any movement latch left over from real time. A latch exists so a fast tap survives to
+      // the next frame; carried into turn-based it spends a round the player never asked for.
+      for (const k of ['fwd', 'back', 'turnL', 'turnR', 'strafeL', 'strafeR']) {
+        state.keys[k] = false; state.keyLatch[k] = 0;
+      }
+      state.acted = state.party.members.map(() => false);
+      state.tbRound = 1;
+      state.active = nextToAct();
+      Log.push('Turn-based. The world holds its breath.', 'sys');
+    } else {
+      Log.push('Real time resumes.', 'sys');
+    }
+    return state.turnBased;
+  }
+
+  function canActNow(i) {
+    const c = state.party.members[i];
+    return Rules.canAct(c) && !state.acted[i];
+  }
+
+  function nextToAct() {
+    for (let k = 0; k < state.party.members.length; k++) {
+      const i = (state.active + k) % state.party.members.length;
+      if (canActNow(i)) return i;
+    }
+    return state.active;
+  }
+
+  // Called after any action a character spends their turn on.
+  function spendTurn() {
+    if (!state.turnBased) return;
+    state.acted[state.active] = true;
+    const anyLeft = state.party.members.some((c, i) => canActNow(i));
+    if (anyLeft) { state.active = nextToAct(); return; }
+    endTurnRound();
+  }
+
+  function endTurnRound() {
+    // One action per monster, then the round rolls over.
+    for (const e of liveEnemies()) {
+      if (e.hp <= 0) continue;
+      monsterAction(e);
+    }
+    Clock.skip(TB_MINUTES);
+    expireBuffs();
+    for (const c of state.party.members) c.recovery = 0;
+    state.acted = state.party.members.map(() => false);
+    state.tbRound++;
+    state.active = nextToAct();
+    checkDefeat();
+  }
+
   function monsterTurn(e, dt) {
     const p = state.party;
     const def = Items.MONSTERS[e.kind];
@@ -451,8 +534,17 @@ const Game = (() => {
     }
 
     if (e.recovery > 0) return;
+    monsterAttack(e, def);
+    // A goblin was landing roughly three swings a second against a level-1 party with 33 HP, which
+    // is a wipe in two seconds with nothing on screen a player could read. One swing a second.
+    e.recovery = def.speed * ATTACK_CADENCE;
+  }
 
-    // Attack a random living party member.
+  const ATTACK_CADENCE = 16;
+
+  // ONE swing. Shared by real-time (gated on recovery) and turn-based (called once per round).
+  function monsterAttack(e, def) {
+    const p = state.party;
     const alive = p.members.filter((c) => !Rules.isDead(c) && !(c.cond && c.cond.unconscious));
     if (!alive.length) return;
     const rng = RNG.live('combat');
@@ -477,7 +569,28 @@ const Game = (() => {
     } else {
       Log.push('The ' + def.name + ' misses ' + victim.name + '.', 'info');
     }
-    e.recovery = def.speed * 8;
+  }
+
+  // Exactly one discrete action, for a turn-based round: close the distance, or swing.
+  function monsterAction(e) {
+    const p = state.party, def = Items.MONSTERS[e.kind];
+    if (!def || e.hp <= 0) return;
+    if (e.paralysed > Clock.t || e.stunned > Clock.t) return;
+    if (e.charmed > Clock.t || e.enslaved > Clock.t || e.ally) return;
+    const d = Math.hypot(e.x - p.x, e.y - p.y);
+    if (d > AGGRO) return;
+    if (e.afraid > Clock.t) return;
+    e.alerted = true;
+    if (d > MELEE) {
+      const stride = (e.slowed > Clock.t ? 0.7 : 1.5);
+      const nx = e.x + ((p.x - e.x) / d) * stride, ny = e.y + ((p.y - e.y) / d) * stride;
+      if (World.passable(state.map, nx, ny, e.z)) {
+        e.x = nx; e.y = ny; e.z = World.walkHeight(state.map, nx, ny, e.z);
+      }
+      e.ang = Math.atan2(p.y - e.y, p.x - e.x);
+      return;
+    }
+    monsterAttack(e, def);
   }
 
   // Defeat is a terminal event with a cost, the way MM6 handled it: you wake at the temple,
@@ -492,7 +605,13 @@ const Game = (() => {
   function checkDefeat() {
     if (!state.party) return false;
     const anyUp = state.party.members.some((c) => Rules.canAct(c));
-    if (anyUp) { state.defeated = false; return false; }
+    if (anyUp) {
+      state.defeated = false;
+      // And take the modal down. It only ever got RAISED; anything that revived the party while it
+      // was up (a temple, a spell, a load) left an un-dismissable screen over a playable game.
+      if (state.screen === 'defeat') state.screen = null;
+      return false;
+    }
     state.defeated = true;
     state.screen = 'defeat';
     return true;
@@ -795,6 +914,7 @@ const Game = (() => {
     for (const eff of out.effects) applyEffect(eff);
     Log.push(ch.name + ' casts ' + sp.name + '.', 'good');
     state.screen = null;
+    spendTurn();
     return true;
   }
 
@@ -1177,7 +1297,7 @@ const Game = (() => {
     if (down && (k === 'fwd' || k === 'back' || k === 'turnL' || k === 'turnR'
       || k === 'strafeL' || k === 'strafeR')) state.keyLatch[k] = TAP_LATCH_MS;
     if (!down) return;
-    if (k === 'act') interact();
+    if (k === 'act') doAct();
     if (k === 'sheet') openScreen('sheet');
     if (k === 'inv') openScreen('inv');
     if (k === 'book') openScreen('book');
@@ -1185,6 +1305,7 @@ const Game = (() => {
     if (k === 'rest') openScreen('rest');
     if (k === 'esc') closeScreens();
     if (k === 'next') state.active = (state.active + 1) % 4;
+    if (k === 'turnbased') toggleTurnBased();
     if (k === '1' || k === '2' || k === '3' || k === '4') state.active = parseInt(k, 10) - 1;
   }
 
@@ -1230,22 +1351,10 @@ const Game = (() => {
         }
         openScreen(r.data);
         break;
-      case 'act': {
-        // One button, two verbs, exactly as the label says: ATK in combat, USE otherwise.
-        if (state.combat.active && nearestEnemy(18)) {
-          // Commit the WHOLE party, the way MM6's Attack did. Swinging one character at a time
-          // while the other three stand idle is not a combat system.
-          let any = false, why = null;
-          for (let i = 0; i < state.party.members.length; i++) {
-            const r = partyAttack(i);
-            if (r.ok) any = true; else if (!why) why = r.why;
-          }
-          if (!any && why) Log.push(why, 'info');
-        } else interact();
-        break;
-      }
+      case 'act': doAct(); break;
       case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
-      case 'wait': stepTurn(); break;
+      case 'wait': if (state.turnBased) spendTurn(); else stepTurn(); break;
+      case 'turnbased': toggleTurnBased(); break;
       case 'close': closeScreens(); break;
       case 'item': state.selectedItem = r.data; break;
       case 'doequip': equipFromPack(r.data); break;
@@ -1284,6 +1393,31 @@ const Game = (() => {
   }
 
   // ---------------------------------------------------------------- actions
+  // One button, two verbs, exactly as the label says: ATK when something is in reach, USE
+  // otherwise. Shared by the on-screen button and the keyboard, which used to disagree.
+  function doAct() {
+    if (state.turnBased && nearestEnemy(18)) {
+      // ONE character swings, then the turn passes. That is the entire value of turn-based: the
+      // player decides who does what, in order, with the world stopped.
+      const r = partyAttack(state.active);
+      if (!r.ok && r.why) Log.push(r.why, 'info');
+      else spendTurn();
+      return true;
+    }
+    if (state.combat.active && nearestEnemy(18)) {
+      // Real time commits the WHOLE party, the way MM6's Attack did. Swinging one character at a
+      // time while the other three stand idle is not a combat system.
+      let any = false, why = null;
+      for (let i = 0; i < state.party.members.length; i++) {
+        const r = partyAttack(i);
+        if (r.ok) any = true; else if (!why) why = r.why;
+      }
+      if (!any && why) Log.push(why, 'info');
+      return any;
+    }
+    return interact();
+  }
+
   function equipFromPack(i) {
     const ch = state.party.members[state.active];
     const st = ch.pack[i];
@@ -1296,6 +1430,13 @@ const Game = (() => {
     if (prev) ch.pack.push(prev);
     recompute(ch);
     state.selectedItem = null;
+    // SAY SO. The swap always worked, but one item left the pack and the displaced one came back,
+    // so the slot count did not move and nothing was printed — a veteran concluded "equipping over
+    // an occupied slot silently no-ops" and wrote off the entire loot-and-upgrade loop. A silent
+    // success is indistinguishable from a silent failure.
+    Log.push(prev
+      ? ch.name + ' equips ' + Items.displayName(st) + ', stowing ' + Items.displayName(prev) + '.'
+      : ch.name + ' equips ' + Items.displayName(st) + '.', 'good');
     return true;
   }
 
@@ -1307,6 +1448,7 @@ const Game = (() => {
     ch.equip[slot] = null;
     ch.pack.push(st);
     recompute(ch);
+    Log.push(ch.name + ' stows ' + Items.displayName(st) + '.', 'info');
     return true;
   }
 
@@ -1359,7 +1501,13 @@ const Game = (() => {
     const ch = state.party.members[state.active];
     const st = state.shopStock[i];
     if (!st) return false;
-    const price = Rules.buyPrice(Items.value(st), ch);
+    // unitValue, NOT value. You buy ONE. `value()` is the worth of the whole stack, and shop stock
+    // carries six to nine of a consumable, so the shop displayed "Healing Potion 75g" and charged
+    // 675 — the same conflation that priced a 100g potion at 1050g in v1, resurfacing in the one
+    // place that takes the player's money. A veteran reviewer: "the gear economy is sane and the
+    // consumable economy is a lie." The UI already prices with unitValue; these must agree, and a
+    // systems check now asserts that they do.
+    const price = Rules.buyPrice(Items.unitValue(st), ch);
     if (state.party.gold < price) {
       Log.push('Not enough gold — ' + Items.ITEMS[st.id].name + ' costs ' + price + ', you have ' + state.party.gold + '.', 'info');
       return false;
@@ -1518,6 +1666,15 @@ const Game = (() => {
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
     state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
+    // The nearest hostile the party is actually facing, shaped for a nameplate. UI must never walk
+    // the entity list itself; that is how a second implementation of "what counts as a foe" is born.
+    state.nearestFoe = (r) => {
+      const e = nearestEnemy(r === undefined ? 14 : r);
+      if (!e) return null;
+      const def = Items.MONSTERS[e.kind];
+      if (!def) return null;
+      return { name: def.name, hp: Math.max(0, Math.round(e.hp)), maxHp: def.hp, kind: e.kind };
+    };
 
     state.world = World.build(7);
     state.createSpec = defaultSpec();
@@ -1550,10 +1707,24 @@ const Game = (() => {
     // a new game could begin at 21:47 in the dark, and it ran behind every open menu, so reading
     // an inventory cost six game hours.
     if (state.screen === 'title' || state.screen === 'creation' || !state.party) return;
-    if (!state.screen) Clock.advance(dt);
-    else return;
+    // The defeat check runs BEFORE the open-screen early return. It used to sit at the bottom of
+    // update(), which never executes while any panel is open — including the defeat panel itself.
+    // That is why the modal could neither re-arm nor stand down once it was up.
+    checkDefeat();
+    if (state.screen) return;
 
-    if (!state.screen) move(dt);
+    // TURN-BASED FREEZES EVERYTHING. Not the clock, not a monster, not a recovery timer. This is
+    // the whole point: a player gets to think. Movement is still allowed and costs the round, the
+    // way MM6 charges you for stepping while the world is stopped.
+    if (state.turnBased) {
+      decayLatches(dt);
+      if (keyDown('fwd') || keyDown('back') || keyDown('turnL') || keyDown('turnR')) stepInTurn();
+      checkDefeat();
+      return;
+    }
+
+    Clock.advance(dt);
+    move(dt);
     decayLatches(dt);
 
     expireBuffs();

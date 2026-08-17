@@ -282,7 +282,10 @@ const Engine = (() => {
 
     const skyBand = dungeon ? voidBand() : (Art.skyBand ? Art.skyBand() : null);
     const light = map.light === undefined ? 1 : map.light;
-    const sun = Art.sunShade ? Art.sunShade(light) : 0;
+    // NO SUN UNDERGROUND. A sealed barrow was being tinted by the outdoor clock, so at 05:08 the
+    // inside of a burial mound glowed sunrise orange: "MM6 dungeons have their own lighting; that's
+    // what makes inside feel like inside." Indoors the torch pool is the only light there is.
+    const sun = dungeon ? 0 : (Art.sunShade ? Art.sunShade(light) : 0);
     const fogStart = map.fogStart, fogEnd = map.fogEnd;
 
     for (let sx = 0; sx < VIEW.w; sx++) {

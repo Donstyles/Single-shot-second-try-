@@ -102,6 +102,9 @@ const Debug = (() => {
     w: 'fwd', s: 'back', a: 'strafeL', d: 'strafeR', q: 'turnL', e: 'turnR',
     Enter: 'act', ' ': 'act', Escape: 'esc', Tab: 'next',
     c: 'sheet', i: 'inv', m: 'map', r: 'rest', b: 'book', x: 'quick',
+    // MM6 bound turn-based to Enter. Enter is already the interact verb here (a phone has no
+    // keyboard, so the on-screen ATK/USE button is the primary), so turn-based takes T and Return.
+    t: 'turnbased', Return: 'turnbased',
   };
 
   function bindInput(canvas) {

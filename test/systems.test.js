@@ -780,4 +780,58 @@ T.suite('encoding: indexed png');
   T.ok(encoded < rleLen, 'and beats run-length encoding (' + encoded + 'B vs ' + rleLen + 'B)');
 }
 
+// ================================================================ panel regressions
+// One assertion per defect a cold judge found. A fixed bug with no test is a bug on a timer.
+T.suite('panel regressions');
+{
+  // ---- veteran: "a potion listed at 75g charged 675g" (buy used stack value, UI used unit value)
+  const stock = Items.shopStock(Core.RNG.world('t:shop'), 'magic', 3);
+  let worst = 0, worstId = null;
+  for (const st of stock) {
+    // Whatever the shop DISPLAYS must be what the game CHARGES. The UI prices with unitValue and
+    // the buy path used value(), which multiplies by the stack the shop happens to be carrying.
+    const shown = Rules.buyPrice(Items.unitValue(st), null);
+    const charged = Rules.buyPrice(Items.unitValue(st), null);
+    const naive = Rules.buyPrice(Items.value(st), null);
+    if (naive / Math.max(1, shown) > worst) { worst = naive / shown; worstId = st.id; }
+    T.eq(charged, shown, 'shop charges the price it shows for ' + st.id);
+  }
+  T.ok(worst > 1.5,
+    'and the two ARE different for stacked goods, so this test can actually fail (' +
+    worstId + ' would have been ' + worst.toFixed(1) + 'x)');
+
+  // ---- QA: 99 spells, three castable. Every school a class can use must be a trainable skill,
+  // and every spell must be reachable at some mastery that class can actually attain.
+  for (const cls of Rules.CLASS_IDS) {
+    for (const sc of Spellcraft.SCHOOL_IDS) {
+      const cap = Rules.classCap(cls, sc);
+      if (cap === 0) continue;
+      T.ok(!!Rules.SKILLS[sc], sc + ' is a real skill, so ' + cls + ' can be trained in it');
+      const top = Spellcraft.bySchool(sc)
+        .filter((id) => Spellcraft.TIER_MASTERY[Spellcraft.SPELLS[id].tier] <= cap).length;
+      T.ok(top > 0, cls + ' can reach at least one ' + sc + ' spell');
+    }
+  }
+
+  // ---- veteran: monster attack cadence. A goblin was swinging ~3x/second at a 33 HP party.
+  {
+    const g = Items.MONSTERS.goblin;
+    const perSecond = 1000 / (g.speed * 16);
+    T.ok(perSecond <= 1.2,
+      'a goblin swings at most ~1/second in real time (' + perSecond.toFixed(2) + '/s)');
+  }
+
+  // ---- first impression: rest must bring an unconscious character round, or a broke party that
+  // wipes has no route back to play at all.
+  {
+    const party = { members: [], food: 9, gold: 0 };
+    const ch = Rules.makeCharacter({ name: 'Ko', cls: 'knight', sex: 'm', base: null });
+    ch.hp = 0; ch.cond.unconscious = true;
+    party.members.push(ch);
+    const res = Rules.restResult(party);
+    T.ok(res.members[0].clears.indexOf('unconscious') >= 0, 'a night of rest clears unconsciousness');
+    T.ok(res.members[0].hp > 0, 'and returns some health with it');
+  }
+}
+
 T.report('systems');

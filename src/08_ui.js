@@ -160,11 +160,43 @@ const UI = (() => {
       reg(id, vx, vy, bw, bh, id);
       vy -= bh + gap;
     };
-    verb('act', g.combat.active ? 'ATK' : 'USE');
-    if (g.combat.active) { verb('cast', 'CAST'); verb('wait', 'WAIT'); }
+    verb('act', g.combat.active || g.turnBased ? 'ATK' : 'USE');
+    if (g.combat.active || g.turnBased) { verb('cast', 'CAST'); verb('wait', 'WAIT'); }
+    // The MM6 key. It is always available, always visible, and says which mode you are in.
+    Art.button(En, vx, vy, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
+    reg('turnbased', vx, vy, bw, bh, 1);
+    vy -= bh + gap;
     Art.textCentred(En, R.x + R.w / 2, vy + bh - 6, 'ACT', Core.idx(13, 10), 1);
   }
 
+
+  // Who is up, and what is in front of you. A veteran played forty minutes and wrote: "no enemy
+  // health, no enemy name on screen, no target indicator, no indication of which of your four is
+  // swinging... a 1998 player cannot make a single tactical decision here."
+  function combatReadout(g) {
+    const En = E(), V = En.VIEW;
+    const foe = g.nearestFoe ? g.nearestFoe(14) : null;
+    if (foe) {
+      const name = foe.name || 'Enemy';
+      const w = Math.max(150, Art.textWidth(name, 2) + 24);
+      const x = V.x + ((V.w - w) >> 1), y = V.y + 6;
+      Art.panel(En, x, y, w, 34, 13, true);
+      Art.textCentred(En, x + w / 2, y + 3, name, Core.idx(0, 15), 2);
+      Art.bar(En, x + 8, y + 22, w - 16, 8, foe.hp / Math.max(1, foe.maxHp), 11);
+      Art.textCentredShadow(En, x + w / 2, y + 22, foe.hp + '/' + foe.maxHp, Core.idx(0, 15), 1);
+    }
+    if (!g.turnBased) return;
+    // Turn banner: whose turn, which round, and who is still to act.
+    const bw2 = 200, bx = V.x + V.w - bw2 - 6, by = V.y + 6;
+    Art.panel(En, bx, by, bw2, 40, 13, true);
+    const who = g.party.members[g.active];
+    Art.text(En, bx + 8, by + 3, 'ROUND ' + (g.tbRound || 1), Core.idx(13, 13), 1);
+    Art.text(En, bx + 8, by + 15, who ? who.name.toUpperCase() + "'S TURN" : '', Core.idx(0, 15), 2);
+    g.party.members.forEach((c, i) => {
+      const px2 = bx + bw2 - 12 - (3 - i) * 12;
+      En.rect(px2, by + 6, 8, 8, Core.idx(g.acted && g.acted[i] ? 0 : 6, g.acted && g.acted[i] ? 5 : 12));
+    });
+  }
 
   // ---------------------------------------------------------------- screens
   // Panels cover the HUD portraits, and several screens are per-character. Give them their own
@@ -787,6 +819,7 @@ const UI = (() => {
     if (g.screen === 'defeat') { defeat(g); return; }
 
     Art.gameFrame(E());
+    if (!g.screen) combatReadout(g);
     // HUD is drawn NON-INTERACTIVE behind a modal: it used to render on top of every panel and
     // stay clickable through it, so pressing where RST sits opened Make Camp through the sheet.
     drawHUD(g, !g.screen);

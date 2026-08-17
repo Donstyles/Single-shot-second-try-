@@ -358,6 +358,42 @@ const RUNNER = `(() => {
 
   T.eq(errors, [], 'no page errors during the run');
 
+
+  // ============================================================ winnability
+  // A QA pass cleared all thirteen dungeons, opened every chest and turned in every reachable
+  // quest, and `won` never flipped. Two independent causes: one quest asked for an item that
+  // existed nowhere in the world, and the FINAL quest's giver had been placed inside a building.
+  // Both are structural, so both get a structural check.
+  T.suite('winnability');
+  {
+    const audit = await page.evaluate(`(() => {
+      const w = Game.state.world;
+      const drops = {};
+      for (const k of Object.keys(Items.MONSTERS)) if (Items.MONSTERS[k].drops) drops[Items.MONSTERS[k].drops] = k;
+      const inWorld = {};
+      for (const id of Object.keys(w.maps)) for (const d of w.maps[id].decor) if (d.item) inWorld[d.item] = id;
+      const out = { needs: [], givers: [] };
+      for (const qid of World.QUEST_IDS) {
+        const q = World.QUESTS[qid];
+        if (q.need) out.needs.push({ qid, item: q.need, from: drops[q.need] || inWorld[q.need] || null });
+        let placed = null;
+        for (const id of Object.keys(w.maps)) {
+          const n = (w.maps[id].npcs || []).find((x) => x.quest === qid);
+          if (n) { placed = { map: id, ok: World.passable(w.maps[id], n.x, n.y, n.z) }; break; }
+        }
+        out.givers.push({ qid, placed });
+      }
+      return out;
+    })()`);
+    for (const n of audit.needs) {
+      T.ok(!!n.from, n.qid + ' asks for ' + n.item + ' and something in the world provides it');
+    }
+    for (const g of audit.givers) {
+      T.ok(!!g.placed, g.qid + ' has a giver placed in the world');
+      if (g.placed) T.ok(g.placed.ok, g.qid + "'s giver stands on walkable ground (" + g.placed.map + ')');
+    }
+  }
+
   await browser.close();
   T.report('campaign');
 })().catch((e) => {

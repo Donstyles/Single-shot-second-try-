@@ -483,6 +483,109 @@ const T = require('./_harness.js');
 
   T.eq(errors, [], 'still no page errors after exercising the harness');
 
+
+  // ============================================================ QA-panel regressions
+  // Each of these was a run-ending defect an adversarial pass found. A fixed bug with no test is a
+  // bug on a timer.
+  T.suite('QA regressions');
+  {
+    // ---- a full pack must never destroy a quest item, and must never spend the chest.
+    const full = await page.evaluate(`(() => {
+      window.__game.gotoMap('barrow', 3, 3, 0);
+      // Fill every pack to the brim.
+      for (const c of Game.state.party.members) {
+        while (c.pack.length < 30) c.pack.push({ id: 'club', qty: 1, ident: true, bonus: 0, charges: 0 });
+      }
+      const qi = Game.state.map.decor.find((d) => d.kind === 'questitem');
+      if (!qi) return { skipped: true };
+      window.__game.teleport(qi.x, qi.y, 0);
+      const before = window.__session.census().total;
+      Game.onKey('act', true); Game.onKey('act', false);
+      const mid = { total: window.__session.census().total, taken: !!qi.taken };
+      // Make room, then take it for real.
+      Game.state.party.members[0].pack.length = 20;
+      Game.onKey('act', true); Game.onKey('act', false);
+      const has = window.__session.census().byId[qi.item] || 0;
+      return { skipped: false, before, mid, has, taken: !!qi.taken, item: qi.item };
+    })()`);
+    if (!full.skipped) {
+      T.eq(full.mid.taken, false, 'a full pack does NOT consume the quest item');
+      T.eq(full.mid.total, full.before, 'and nothing is destroyed in the attempt');
+      T.eq(full.has, 1, 'and once there is room, the same item can still be taken');
+      T.eq(full.taken, true, 'and only then is it marked taken');
+    }
+
+    // ---- buying with a full pack must not take the gold.
+    const shopped = await page.evaluate(`(() => {
+      window.__game.gotoMap('harrowgate', 58, 56, 0);
+      for (const c of Game.state.party.members) {
+        while (c.pack.length < 30) c.pack.push({ id: 'club', qty: 1, ident: true, bonus: 0, charges: 0 });
+      }
+      Game.state.shopKind = 'weapon';
+      Game.state.shopStock = Items.shopStock(Core.RNG.world('t:buy'), 'weapon', 3);
+      window.__game.gold(9000);
+      const g0 = Game.state.party.gold, t0 = window.__session.census().total;
+      for (let i = 0; i < 6; i++) Game.state.__buyProbe = Game.buy ? Game.buy(0) : window.__game.tap;
+      return { g0, g1: Game.state.party.gold, t0, t1: window.__session.census().total };
+    })()`);
+    T.eq(shopped.g1, shopped.g0, 'a full pack cannot be charged for a purchase it cannot receive');
+    T.eq(shopped.t1, shopped.t0, 'and no phantom item appears');
+
+    // ---- the defeat modal is modal, and it re-arms.
+    const dead = await page.evaluate(`(() => {
+      window.__game.gotoMap('harrowgate', 58, 56, 0);
+      for (const c of Game.state.party.members) { c.hp = -3; c.cond.unconscious = true; }
+      window.__game.settle(3);
+      const armed = Game.state.screen;
+      Game.onKey('map', true); Game.onKey('map', false);
+      Game.onKey('esc', true); Game.onKey('esc', false);
+      const afterKeys = Game.state.screen;
+      window.__game.settle(10);
+      const afterTicks = Game.state.screen;
+      return { armed, afterKeys, afterTicks };
+    })()`);
+    T.eq(dead.armed, 'defeat', 'a wiped party gets the defeat screen');
+    T.eq(dead.afterKeys, 'defeat', 'and no hotkey dismisses it');
+    T.eq(dead.afterTicks, 'defeat', 'and it is still there ten frames later');
+
+    // ---- turn-based genuinely freezes the world.
+    const tb = await page.evaluate(`(() => {
+      window.__game.gotoMap('harrowgate', 64, 44, 1.57);
+      window.__game.setTime(720);
+      for (const c of Game.state.party.members) { c.hp = 30; c.cond.unconscious = false; c.cond.dead = false; }
+      window.__game.settle(2);            // lets checkDefeat see a party that can act and stand down
+      window.__game.spawn('goblin', Game.state.party.x + 1.2, Game.state.party.y + 0.3);
+      window.__game.settle(4);
+      Game.onKey('turnbased', true); Game.onKey('turnbased', false);
+      window.__game.settle(1);            // step past the boundary frame the toggle happened on
+      const t0 = Core.Clock.t, hp0 = Game.state.party.members.map((c) => c.hp);
+      window.__game.settle(90);
+      const t1 = Core.Clock.t, hp1 = Game.state.party.members.map((c) => c.hp);
+      const foe0 = (Game.state.nearestFoe(14) || {}).hp;
+      for (let i = 0; i < 4; i++) { Game.onKey('act', true); Game.onKey('act', false); }
+      const foe1 = (Game.state.nearestFoe(14) || {}).hp;
+      return { on: Game.state.turnBased, t0, t1, hp0, hp1, foe0, foe1, round: Game.state.tbRound };
+    })()`);
+    T.eq(tb.on, true, 'turn-based mode engages');
+    T.eq(tb.t1, tb.t0, '90 frames of turn-based advance the clock by nothing');
+    T.eq(JSON.stringify(tb.hp1), JSON.stringify(tb.hp0), 'and no monster gets a free swing');
+    T.ok(tb.foe1 < tb.foe0, 'four character turns damage the enemy (' + tb.foe0 + ' -> ' + tb.foe1 + ')');
+    T.ok(tb.round >= 2, 'and the round rolls over once everyone has acted');
+
+    // ---- a tap that lasts zero frames must still move the party.
+    const tap = await page.evaluate(`(() => {
+      Game.onKey('turnbased', true); Game.onKey('turnbased', false);   // back to real time
+      window.__game.gotoMap('harrowgate', 64, 60, 0);
+      window.__game.settle(2);
+      const p0 = { x: Game.state.party.x, y: Game.state.party.y };
+      Game.onKey('fwd', true); Game.onKey('fwd', false);               // press and release, same frame
+      window.__game.settle(6);
+      const p1 = { x: Game.state.party.x, y: Game.state.party.y };
+      return { moved: Math.hypot(p1.x - p0.x, p1.y - p0.y) };
+    })()`);
+    T.ok(tap.moved > 0.05, 'a zero-duration tap still moves the party (' + tap.moved.toFixed(3) + ' cells)');
+  }
+
   await browser.close();
   T.report('e2e');
 })().catch((e) => {
