@@ -479,7 +479,31 @@
       "op": "mesh:preview",
       "credits": 5,
       "note": "An old archivist in dark scholarly robes"
+    },
+    {
+      "n": 81,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A hunched goblin warrior, green-grey ski"
+    },
+    {
+      "n": 82,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f59-4d64-79d2-baf3-d133385c123c"
+    },
+    {
+      "n": 83,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "An animated skeleton warrior, bare yello"
+    },
+    {
+      "n": 84,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f5e-204a-7ef1-aebc-b51c83aa65b7"
     }
   ],
-  "spent": 632
+  "spent": 662
 }

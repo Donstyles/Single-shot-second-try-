@@ -21,9 +21,16 @@ const TEX = path.join(ROOT, 'assets', 'tex');
 
 // One fixed clause per class, appended to the shared style preamble. Consistency across hundreds
 // of assets comes from these being IDENTICAL every time, never re-described per asset.
+// An IDLE COMBAT STANCE, not a T-pose. Coherence across hundreds of assets comes from this clause
+// being byte-identical every time and from the fixed light rig — NOT from freezing every creature
+// in the same rigging pose. A veteran reviewer, cold: "every humanoid — guards, the captain,
+// goblins — is a hard T-pose billboard with arms straight out; at distance the arms read as pipes."
+// A T-pose is what an asset looks like before it is finished, and it is in every frame.
 const BIPED_STYLE =
-  ' Low-poly game character, clean readable silhouette, standing upright in a T-pose with arms out ' +
-  'to the sides, no base, no ground plane, no scenery, single character only.';
+  ' Low-poly game character, clean readable silhouette, standing in a wary idle combat stance: ' +
+  'feet apart, knees slightly bent, arms down and bent at the elbows close to the body, weapon ' +
+  'held low, head facing forward. Not a T-pose, arms not outstretched. ' +
+  'No base, no ground plane, no scenery, single character only.';
 
 // Quadrupeds and vermin must NOT be T-posed. Applying one pose clause to everything produced a
 // wolf shaped like a woman with her arms out, which no amount of rendering fixes.
@@ -134,7 +141,8 @@ async function doCreature(id, prompt) {
 
   const quad = QUADRUPEDS.has(id);
   const opts = { target_polycount: 6000 };
-  if (!quad) opts.pose_mode = 't-pose';   // a t-pose request is what turned the wolf bipedal
+  // pose_mode 't-pose' is gone. It overrode the prompt and produced the single most-reported
+  // presentation defect in the project. The textual stance clause is what carries consistency now.
   const pid = await meshy.createPreview(prompt + styleFor(id), opts);
   await meshy.waitFor(pid);
   const rid = await meshy.createRefine(pid);
@@ -171,6 +179,20 @@ async function main() {
       try { await doTexture(id, TEXTURES[id]); }
       catch (e) { log('  FAIL tex ' + id + ': ' + e.message.split('\n')[0]); if (/SPEND CAP/.test(e.message)) return; }
     }
+  }
+
+  // `batch one <id> [<id>...]` regenerates named creatures only. Re-running the whole set to fix
+  // a pose clause would spend three hundred credits to change eight sprites.
+  if (what === 'one') {
+    const ids = process.argv.slice(3);
+    log('-- creatures (' + ids.join(', ') + ') --');
+    for (const id of ids) {
+      if (!CREATURES[id]) { log('  no such creature: ' + id); continue; }
+      try { await doCreature(id, CREATURES[id]); }
+      catch (e) { log('  FAIL mesh ' + id + ': ' + e.message.split('\n')[0]); if (/SPEND CAP/.test(e.message)) return; }
+    }
+    log('=== batch done — spent ' + spend.spent() + ' of ' + spend.cap() + ' ===');
+    return;
   }
 
   if (what === 'creatures' || what === 'all') {

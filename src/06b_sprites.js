@@ -467,46 +467,206 @@ const Sprites = (() => {
   // ---------------------------------------------------------------- portraits
   // 64x72 character portraits. Class and sex drive the palette and the silhouette; the point is
   // that four party members are instantly distinguishable at a glance in the HUD.
+  // A portrait must be a PERSON, not a template with a different hair colour. An art critic
+  // magnified the party strip: "Alder and Dorn are pixel-identical faces with different hair grey;
+  // Bree and Cass are pixel-identical with different robe colour. Same nose polygon, same two-dot
+  // eyes, no mouths, no whites of eyes, one skin ramp. Four bodies wearing one head." This strip is
+  // in every 3D shot, so one asset was doing eighteen frames' worth of damage.
+  //
+  // Everything below is drawn from the seeded stream, so a character's face is stable forever, and
+  // every axis that makes a face recognisable at 64px is varied: skull width, jaw, brow, nose
+  // length and bridge, eye spacing and colour, mouth, skin tone, hair style, beard, and the
+  // headgear the class actually wears.
   function paintPortrait(seed, cls, sex) {
     const w = 64, h = 72;
     const d = new Uint8Array(w * h);
-    const r = RNG.world('portrait:' + seed + cls + sex);
-    const skin = 10, hairRamp = r.pick([4, 5, 13, 0]);
-    const clothRamp = { knight: 14, templar: 13, ranger: 7, priest: 0, mage: 12, warden: 6 }[cls] || 11;
+    const r = RNG.world('portrait:' + seed + ':' + cls + ':' + sex);
     const put = (x, y, ramp, sh) => { if (x >= 0 && y >= 0 && x < w && y < h) d[y * w + x] = Core.shade(ramp << 4, sh); };
-
-    // Background plate so a portrait never sits on the raw HUD.
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) put(x, y, 1, 3 + ((x + y) & 1));
-
     const cx = w >> 1;
-    // Shoulders
-    for (let y = h - 20; y < h; y++) {
-      const ww = 20 + (y - (h - 20));
-      for (let x = -ww; x <= ww; x++) put(cx + x, y, clothRamp, clamp(9 - Math.round((x + ww) / (ww * 2 + 1) * 5), 3, 13));
-    }
-    // Head
-    const hr = 17;
-    for (let y = -hr; y <= hr + 3; y++) {
-      for (let x = -hr + 2; x <= hr - 2; x++) {
-        if ((x * x) / ((hr - 2) * (hr - 2)) + (y * y) / ((hr + 2) * (hr + 2)) > 1) continue;
-        put(cx + x, h - 30 + y, skin, clamp(12 - Math.round((x + hr) / (hr * 2) * 5) - Math.round((y + hr) / (hr * 2) * 2), 4, 14));
-      }
-    }
-    // Hair
-    const hairY = h - 30 - hr;
-    for (let y = 0; y < (sex === 'f' ? 26 : 14); y++) {
-      const ww = Math.round((hr - 1) * Math.sin(Math.min(1, (y + 3) / 16) * Math.PI * 0.62));
-      for (let x = -ww - (sex === 'f' ? 2 : 0); x <= ww + (sex === 'f' ? 2 : 0); x++) {
-        if (y > 8 && Math.abs(x) < ww - 4) continue;      // leave the face clear
-        put(cx + x, hairY + y, hairRamp, clamp(9 - ((x + y) & 3), 3, 13));
-      }
-    }
-    // Eyes and mouth
-    put(cx - 6, h - 32, 0, 2); put(cx - 5, h - 32, 0, 2);
-    put(cx + 5, h - 32, 0, 2); put(cx + 6, h - 32, 0, 2);
-    for (let x = -3; x <= 3; x++) put(cx + x, h - 22, 10, 6);
 
-    Core.shade(0, 0);
+    // ---- palette choices
+    const skinBase = r.int(4);                       // 0 pale .. 3 dark
+    const skinLo = [10, 9, 8, 6][0] === 0 ? 10 : 10; // flesh ramp; tone comes from the shade offset
+    const skinShift = [3, 1, -1, -3][skinBase];
+    const hairRamp = r.pick([4, 5, 13, 0, 3]);
+    const hairDark = r.int(5) + 2;
+    const eyeRamp = r.pick([1, 6, 4, 8]);
+    const clothRamp = { knight: 14, templar: 13, ranger: 7, priest: 0, mage: 12, warden: 6 }[cls] || 11;
+
+    // ---- skull geometry
+    const wide = r.float(-2.2, 2.6);                 // cheek width
+    const longFace = r.float(-2.0, 3.0);             // skull height
+    const jaw = r.float(-2.0, 2.4);                  // jaw squareness
+    const browY = r.int(3) - 1;
+    const eyeGap = 5 + r.int(3);
+    const noseLen = 4 + r.int(4);
+    const noseW = r.int(2);
+    const mouthW = 2 + r.int(3);
+    const beard = sex === 'm' && r.chance(0.45) ? 1 + r.int(3) : 0;
+
+    // The head must leave room ABOVE it for hair and headgear and BELOW it for shoulders. The
+    // first pass sized the skull to nearly the whole 64x72 plate, so the hair was a six-pixel arc
+    // at the crown and the helms had nowhere to sit.
+    const HR = 13, faceCY = h - 38;
+    const rx = HR - 2 + wide, ry = HR + 1 + longFace;
+    const inHead = (x, y) => {
+      // Ellipse for the cranium, widened toward a square jaw at the bottom.
+      const jw = y > 4 ? (1 + (jaw / 14) * (y / ry)) : 1;
+      return (x * x) / (rx * rx * jw * jw) + (y * y) / (ry * ry) <= 1;
+    };
+
+    // ---- background: a vignetted plate, no checkerboard
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = (x - cx) / cx, dy = (y - h / 2) / (h / 2);
+        const v = 1 - Math.min(1, dx * dx + dy * dy * 0.7);
+        put(x, y, 1, 2 + Math.round(v * 3));
+      }
+    }
+
+    // ---- shoulders and collar
+    for (let y = h - 22; y < h; y++) {
+      const ww = 16 + (y - (h - 22)) * 1.3;
+      for (let x = -ww; x <= ww; x++) {
+        const lit = clamp(10 - Math.round((x + ww) / (ww * 2 + 1) * 6), 3, 13);
+        put(cx + x, y, clothRamp, lit);
+      }
+    }
+    // Neck.
+    for (let y = h - 28; y < h - 19; y++) {
+      for (let x = -5; x <= 5; x++) put(cx + x, y, 10, clamp(6 + skinShift, 2, 14));
+    }
+
+    // ---- head
+    for (let y = -Math.ceil(ry); y <= Math.ceil(ry); y++) {
+      for (let x = -Math.ceil(rx) - 2; x <= Math.ceil(rx) + 2; x++) {
+        if (!inHead(x, y)) continue;
+        // Key light from upper left, matching the sprite foundry's rig so faces and bodies agree.
+        const lit = 12 - Math.round((x + rx) / (rx * 2) * 5) - Math.round((y + ry) / (ry * 2) * 3);
+        put(cx + x, faceCY + y, 10, clamp(lit + skinShift, 2, 15));
+      }
+    }
+    // Cheekbone and jaw shading, which is most of what makes a face read as a face.
+    for (let y = 1; y < ry; y++) {
+      for (const sgn of [-1, 1]) {
+        const x = Math.round(sgn * (rx - 2 - y * 0.15));
+        if (inHead(x, y)) put(cx + x, faceCY + y, 10, clamp(5 + skinShift, 2, 14));
+      }
+    }
+
+    // ---- brow ridge
+    for (let x = -eyeGap - 4; x <= eyeGap + 4; x++) {
+      if (Math.abs(x) < 2) continue;
+      if (!inHead(x, browY - 3)) continue;
+      put(cx + x, faceCY + browY - 3, 10, clamp(4 + skinShift, 2, 12));
+      put(cx + x, faceCY + browY - 4, hairRamp, hairDark);
+    }
+
+    // ---- eyes: white, iris, pupil. Two dark pips is the single strongest "unfinished" tell.
+    for (const sgn of [-1, 1]) {
+      const ex = sgn * eyeGap;
+      for (let x = -2; x <= 2; x++) for (let y = -1; y <= 1; y++) {
+        put(cx + ex + x, faceCY + browY + y, 0, 14);
+      }
+      put(cx + ex - 1, faceCY + browY, eyeRamp, 8);
+      put(cx + ex, faceCY + browY, eyeRamp, 10);
+      put(cx + ex, faceCY + browY, 0, 1);
+      put(cx + ex + 1, faceCY + browY - 1, 0, 13);          // catchlight
+      // Lower lid.
+      put(cx + ex - 1, faceCY + browY + 2, 10, clamp(5 + skinShift, 2, 12));
+      put(cx + ex, faceCY + browY + 2, 10, clamp(5 + skinShift, 2, 12));
+    }
+
+    // ---- nose
+    for (let y = 0; y < noseLen; y++) {
+      put(cx - 1 - noseW, faceCY + browY + 1 + y, 10, clamp(6 + skinShift, 2, 13));
+      put(cx + 1, faceCY + browY + 1 + y, 10, clamp(11 + skinShift, 2, 15));
+    }
+    for (let x = -1 - noseW; x <= 1 + noseW; x++) {
+      put(cx + x, faceCY + browY + noseLen + 1, 10, clamp(4 + skinShift, 2, 12));
+    }
+
+    // ---- mouth
+    const my = faceCY + browY + noseLen + 5;
+    for (let x = -mouthW; x <= mouthW; x++) {
+      put(cx + x, my, 11, 5);
+      put(cx + x, my - 1, 10, clamp(9 + skinShift, 2, 14));
+      put(cx + x, my + 1, 10, clamp(7 + skinShift, 2, 13));
+    }
+
+    // ---- beard
+    if (beard) {
+      for (let y = my - 2; y < faceCY + ry; y++) {
+        for (let x = -rx; x <= rx; x++) {
+          if (!inHead(x, y - faceCY)) continue;
+          if (y < my + 1 && Math.abs(x) < mouthW + 2) continue;      // leave the mouth
+          if (((x * 3 + y * 5) & 7) < beard * 2) put(cx + x, y, hairRamp, hairDark + ((x + y) & 1));
+        }
+      }
+    }
+
+    // ---- hair, then class headgear over it
+    // Hair HUGS THE SKULL: every point inside the head (grown by two) above the brow becomes hair,
+    // plus side falls for the longer styles. Deriving it from a sine curve instead produced a
+    // six-pixel arc floating at the crown that read as a smudge.
+    const style = sex === 'f' ? 2 + r.int(2) : r.int(3);          // 0 short, 1 swept, 2 long, 3 very long
+    const fall = [0, 0, 16, 24][style];
+    const grow = 2;
+    for (let y = -Math.ceil(ry) - grow; y <= browY - 4; y++) {
+      for (let x = -Math.ceil(rx) - grow; x <= Math.ceil(rx) + grow; x++) {
+        const outer = (x * x) / ((rx + grow) * (rx + grow)) + (y * y) / ((ry + grow) * (ry + grow)) <= 1;
+        if (!outer) continue;
+        if (style === 1 && y < -ry + 3 && x > rx - 6) continue;      // a swept parting
+        put(cx + x, faceCY + y, hairRamp, clamp(hairDark + 4 - ((x * 2 + y) & 3), 2, 13));
+      }
+    }
+    // Side falls, outside the face on both edges.
+    for (let y = browY - 4; y < browY - 4 + fall; y++) {
+      const t = (y - (browY - 4)) / Math.max(1, fall);
+      const ww = Math.round(rx + grow - t * 1.5);
+      for (const sgn of [-1, 1]) {
+        for (let k = 0; k < 4; k++) {
+          const x = sgn * (ww - k);
+          if (Math.abs(x) < rx - 3) continue;
+          put(cx + x, faceCY + y, hairRamp, clamp(hairDark + 3 - ((x + y) & 3), 2, 12));
+        }
+      }
+    }
+
+    if (cls === 'knight' || cls === 'templar') {
+      // An open-faced helm with a nasal bar.
+      for (let y = -ry - 1; y < -ry + 12; y++) {
+        for (let x = -rx - 2; x <= rx + 2; x++) {
+          if ((x * x) / ((rx + 2) * (rx + 2)) + (y * y) / ((ry + 2) * (ry + 2)) > 1) continue;
+          put(cx + x, faceCY + y, 14, clamp(11 - Math.round((x + rx) / (rx * 2) * 5), 3, 14));
+        }
+      }
+      for (let y = -ry + 8; y < browY + 2; y++) put(cx, faceCY + y, 14, 12);
+      for (let x = -rx - 2; x <= rx + 2; x++) put(cx + x, faceCY - ry + 12, 14, 4);
+    } else if (cls === 'priest') {
+      for (let y = -ry - 4; y < -ry + 6; y++) {
+        for (let x = -rx; x <= rx; x++) put(cx + x, faceCY + y, 13, clamp(11 - ((x + y) & 3), 4, 14));
+      }
+    } else if (cls === 'mage') {
+      // A brimless cap with a band.
+      for (let y = -ry - 3; y < -ry + 7; y++) {
+        const ww = Math.round(rx * (1 - (y + ry + 3) / 22));
+        for (let x = -ww; x <= ww; x++) put(cx + x, faceCY + y, 12, clamp(10 - ((x + y) & 3), 3, 13));
+      }
+      for (let x = -rx; x <= rx; x++) put(cx + x, faceCY - ry + 7, 13, 11);
+    } else if (cls === 'ranger' || cls === 'warden') {
+      // A hood: falls past the jaw on both sides.
+      for (let y = -ry - 3; y < ry - 2; y++) {
+        for (let x = -rx - 3; x <= rx + 3; x++) {
+          const inner = (x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1;
+          const outer = (x * x) / ((rx + 3) * (rx + 3)) + (y * y) / ((ry + 3) * (ry + 3)) <= 1;
+          if (!outer) continue;
+          if (inner && y > -ry + 6) continue;
+          put(cx + x, faceCY + y, 7, clamp(8 - ((x + y) & 3), 2, 12));
+        }
+      }
+    }
+
     return { w, h, data: d };
   }
 
