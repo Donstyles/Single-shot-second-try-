@@ -421,6 +421,13 @@ const Game = (() => {
       if (q.kill !== e.kind) continue;
       if (q.killIn && state.map.id !== q.killIn) continue;
       state.party.quests[qid].killed = (state.party.quests[qid].killed || 0) + 1;
+      // SAY WHEN IT IS DONE. A quest whose objective is met and whose completion is silent leaves
+      // the player standing over a corpse with no idea the game wants them to walk back. The final
+      // boss is the worst case: killing it changes nothing visible until you return to the captain.
+      if (questComplete(qid)) {
+        const giver = q.giver ? q.giver : 'whoever sent you';
+        Log.push(q.name + ' is done. Return to the ' + giver + ' to claim it.', 'good');
+      }
     }
   }
 
@@ -462,6 +469,12 @@ const Game = (() => {
   function toggleTurnBased(on) {
     const want = on === undefined ? !state.turnBased : !!on;
     if (want === state.turnBased) return state.turnBased;
+    // LEAVING ENDS THE ROUND. Toggling out and back in used to hand the party a fresh set of
+    // action points without the monsters ever acting: twenty rounds of WAIT cost five game-minutes
+    // and five HP, while twenty toggles cost 0.92 minutes and nothing at all. Now stepping out
+    // resolves the monsters' turn first, so a toggle costs exactly what a round costs and the
+    // refund is gone.
+    if (!want && state.acted && state.acted.some(Boolean)) endTurnRound();
     state.turnBased = want;
     if (want) {
       // Drop any movement latch left over from real time. A latch exists so a fast tap survives to
@@ -1325,8 +1338,28 @@ const Game = (() => {
     const backup = { party: state.party, seen: state.seenMaps, mapId: state.party && state.party.map };
     try {
       RNG.restore(d.rng);
-      Clock.t = d.t;
+      // CLAMP, do not merely type-check. A hostile save with gold -999999, level 999999, a clock at
+      // 1e15 or a 5000-slot pack loaded cleanly and left the game in a state no play could produce.
+      // `flags.won` in particular was settable straight from the file, which turns the campaign
+      // into a text editor exercise.
+      const clampNum = (v, lo, hi, dflt) =>
+        (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
+      Clock.t = clampNum(d.t, 0, 60 * 24 * 3650, 0);
       state.party = d.party;
+      state.party.gold = clampNum(state.party.gold, 0, 99999999, 0);
+      state.party.food = clampNum(state.party.food, 0, 999, 0);
+      for (const c of state.party.members) {
+        c.level = clampNum(c.level, 1, 200, 1);
+        c.xp = clampNum(c.xp, 0, 1e12, 0);
+        c.skillPts = clampNum(c.skillPts, 0, 9999, 0);
+        if (Array.isArray(c.pack) && c.pack.length > 30) c.pack.length = 30;
+      }
+      // The win flag is EARNED, never loaded. It is set in exactly one place — turning in the final
+      // quest — and a save is not allowed to assert it.
+      if (state.party.flags && state.party.flags.won && !(d.party.quests && d.party.quests.q_crown
+        && d.party.quests.q_crown.state === 2)) {
+        state.party.flags.won = false;
+      }
       state.seenMaps = Object.create(null);
       for (const k of Object.keys(d.seen || {})) state.seenMaps[k] = new Set(d.seen[k]);
       for (const id of Object.keys(state.world.maps)) {
@@ -1419,7 +1452,19 @@ const Game = (() => {
       case 'act': doAct(); break;
       // USE never attacks. It is the door/chest/NPC verb and it must work with a wolf on your heel.
       case 'use': interact(); break;
-      case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
+      // CAST with nothing bound opens the book. It used to call castSpell(undefined), which came
+      // back "No such spell." to a caster who knew five — a message that describes the button's
+      // internals rather than the player's situation.
+      case 'cast':
+        if (typeof r.data === 'string') castSpell(r.data);
+        else {
+          const who = state.party.members[state.active];
+          if (!who || !who.spells || !Object.keys(who.spells).length) {
+            Log.push(who ? who.name + ' knows no spells. A guild will teach them.' : 'No caster selected.', 'info');
+          }
+          openScreen('book');
+        }
+        break;
       case 'wait': if (state.turnBased) spendTurn(); else stepTurn(); break;
       case 'turnbased': toggleTurnBased(); break;
       case 'close': closeScreens(); break;
@@ -1986,7 +2031,7 @@ const Game = (() => {
     },
     acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
     partyAttack, reachOf, nearestEnemy, liveEnemies,
-    buy, doTrain, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
+    buy, doTrain, doAct, doLearnSpell, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
     checkDefeat, reviveAtTemple, cycleName, cycleSex, cyclePortrait, NAME_POOL,
     buff, setBuff, SPECIALS, isUndead,
     get party() { return state.party; },

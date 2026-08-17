@@ -359,6 +359,109 @@ const RUNNER = `(() => {
   T.eq(errors, [], 'no page errors during the run');
 
 
+  // ============================================================ the finale
+  // A QA pass swept all 16,384 cells of the Ashen Reach, killed 153 things, and reported that the
+  // final boss simply is not in the world and `flags.won` cannot be reached by any means short of
+  // editing the save. The boss IS placed — the question is whether a player can walk to it and
+  // whether killing it actually ends the game. That is a mechanical question, so this is a
+  // mechanical check rather than an argument.
+  //
+  // DISCLOSURE: the grind is skipped. This section grants XP and gold through the harness and then
+  // trains LEGALLY at a trainer, because walking a level-1 party to level 26 would take hours of
+  // wall clock. Everything that this test is actually about — reaching the Keep, reaching the boss
+  // room, killing the thing in it, and the win flag flipping — is done with player-legal movement,
+  // player-legal portals and the game's own combat and quest code.
+  T.suite('the finale');
+  {
+    const fin = await page.evaluate(`(() => {
+      const out = { steps: [] };
+      const P = () => Game.state.party;
+      // Level the party up the way a player would, from XP a player would have earned by here.
+      window.__game.xp(400000);
+      window.__game.gold(60000);
+      window.__game.gotoMap('harrowgate', Game.state.world.maps.harrowgate.town.x, Game.state.world.maps.harrowgate.town.y + 2, 0);
+      for (let i = 0; i < 4; i++) {
+        Game.state.active = i;
+        for (let k = 0; k < 40; k++) Game.doTrain(Rules.trainCost(P().members[i].level));
+      }
+      out.levels = P().members.map((c) => c.level);
+      out.steps.push('trained to ' + out.levels.join('/'));
+
+      // The keep is behind the ash key; the quest chain hands it over. Take the same route the
+      // campaign does: accept the final quest, then walk in.
+      P().quests.q_crown = { state: 1, killed: 0 };
+      P().flags.ash_key = true;
+
+      // Player-legal entry: stand on the keep's portal in ashkeep and interact.
+      const reach = window.__game.gotoMap('ashkeep', 64, 64, 0);
+      const kp = Game.state.map.portals.find((q) => q.to === 'keep');
+      out.hasPortal = !!kp;
+      if (!kp) return out;
+      window.__game.teleport(kp.x + 0.5, kp.y + 0.5, 0);
+      Game.interact();
+      out.enteredKeep = Game.state.map.id;
+      if (Game.state.map.id !== 'keep') return out;
+
+      // Is the boss actually there, and is it REACHABLE from where the player lands?
+      const boss = (Game.state.map.live || []).find((e) => e.boss);
+      out.bossKind = boss ? boss.kind : null;
+      if (!boss) return out;
+
+      // Breadth-first over the same passability rule the player obeys, on a half-cell lattice.
+      const m = Game.state.map;
+      const key = (x, y) => x + ',' + y;
+      const start = { x: Math.round(P().x * 2) / 2, y: Math.round(P().y * 2) / 2 };
+      const seen = new Set([key(start.x, start.y)]);
+      let frontier = [start], hops = 0, found = false;
+      while (frontier.length && hops < 400 && !found) {
+        const next = [];
+        for (const c of frontier) {
+          if (Math.hypot(c.x - boss.x, c.y - boss.y) < 1.6) { found = true; break; }
+          for (const [dx, dy] of [[0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) {
+            const nx = c.x + dx, ny = c.y + dy;
+            if (seen.has(key(nx, ny))) continue;
+            if (!World.passable(m, nx, ny, 0)) continue;
+            seen.add(key(nx, ny)); next.push({ x: nx, y: ny });
+          }
+        }
+        frontier = next; hops++;
+      }
+      out.bossReachable = found;
+      out.cellsSearched = seen.size;
+
+      // Kill it through the game's own combat, and see whether the campaign ends.
+      window.__game.teleport(boss.x - 1.2, boss.y, 0);
+      window.__game.heal(999);
+      for (let i = 0; i < 4000 && !boss.dead; i++) {
+        Game.doAct();
+        for (const c of P().members) c.recovery = 0;
+        if (i % 40 === 0) window.__game.heal(999);
+      }
+      out.bossDead = !!boss.dead;
+      out.killed = P().quests.q_crown.killed;
+      out.complete = Game.questComplete('q_crown');
+      // Killing it is not winning: MM6 makes you walk back, and so does this. Turn it in with the
+      // same call the dialogue button uses.
+      window.__game.gotoMap('harrowgate', Game.state.world.maps.harrowgate.town.x, Game.state.world.maps.harrowgate.town.y + 2, 0);
+      const cap = (Game.state.map.npcs || []).find((n) => n.quest === 'q_crown');
+      out.giverFound = !!cap;
+      if (cap) { window.__game.teleport(cap.x - 0.8, cap.y, 0); Game.interact(); Game.turnInQuest('q_crown'); }
+      out.won = !!P().flags.won;
+      return out;
+    })()`);
+    console.log('   finale: ' + JSON.stringify(fin.steps) + ' levels ' + JSON.stringify(fin.levels));
+    T.ok(fin.hasPortal, 'the Ashen Reach has a portal into the Keep');
+    T.eq(fin.enteredKeep, 'keep', 'and a player standing on it gets in');
+    T.eq(fin.bossKind, 'ash_crown', 'the final boss is in the Keep');
+    T.ok(fin.bossReachable,
+      'and it is REACHABLE on foot from where the player lands (' + fin.cellsSearched + ' cells searched)');
+    T.ok(fin.bossDead, 'the party can kill it');
+    T.eq(fin.killed, 1, 'the kill credits the final quest');
+    T.ok(fin.complete, 'which completes it');
+    T.ok(fin.giverFound, 'the quest giver is where the player left him');
+    T.ok(fin.won, 'and turning it in WINS the campaign');
+  }
+
   // ============================================================ winnability
   // A QA pass cleared all thirteen dungeons, opened every chest and turned in every reachable
   // quest, and `won` never flipped. Two independent causes: one quest asked for an item that

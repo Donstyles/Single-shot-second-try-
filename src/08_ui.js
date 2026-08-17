@@ -112,8 +112,11 @@ const UI = (() => {
     });
 
     // ---- gold, time, place
+    // The clock is RIGHT-ALIGNED in the log panel. Fixed at lx+90 it collided with gold the moment
+    // the party got rich: "493750g09:00".
     Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
-    Art.text(En, lx + 90, HUD.y + 86, Core.Clock.hhmm(), Core.idx(9, 12), 2);
+    const hh = Core.Clock.hhmm();
+    Art.text(En, lx + lw - 8 - Art.textWidth(hh, 2), HUD.y + 86, hh, Core.idx(9, 12), 2);
     Art.text(En, lx + 5, HUD.y + 106, (g.map.town ? g.map.town.name + ', ' : '') + g.map.name, Core.idx(2, 12), 1);
 
     // ---- buttons, two rows of three, each a comfortable finger target
@@ -649,6 +652,8 @@ const UI = (() => {
     // the game, and neither was any spell. A QA pass at level 100 with every skill point spent
     // could cast three spells out of ninety-nine.
     if (kind === 'guild') {
+      // The school rail starts BELOW the character tabs. It was drawn on top of them, so both rows
+      // were unreadable and both were clickable in the overlap — an ambiguous hit region.
       const schools = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
       if (!schools.length) {
         Art.text(En, f.x + 24, f.inner + 30, ch.name + ' has no aptitude for magic.', Core.idx(11, 12), 2);
@@ -659,24 +664,24 @@ const UI = (() => {
       if (schools.indexOf(sch) < 0) sch = schools[0];
       // School tabs.
       schools.forEach((sc, i) => {
-        const bx = f.x + 24 + i * 92, by = f.inner + 16;
+        const bx = f.x + 24 + i * 92, by = f.inner + 44;
         Art.button(En, bx, by, 86, 32, Spellcraft.SCHOOLS[sc].name.toUpperCase().slice(0, 6), sc === sch, 2);
         reg('guildschool', bx, by, 86, 32, sc);
       });
       const skill = ch.skills[sch];
       const lvl = skill ? skill.lvl : 0;
       const mast = skill ? skill.mastery : 0;
-      Art.text(En, f.x + 24, f.inner + 58, Spellcraft.SCHOOLS[sch].name + ' — ' +
+      Art.text(En, f.x + 24, f.inner + 86, Spellcraft.SCHOOLS[sch].name + ' — ' +
         Rules.MASTERY_NAME[mast] + ' ' + lvl, Core.idx(13, 14), 2);
-      Art.button(En, f.x + 330, f.inner + 54, 230, 34,
+      Art.button(En, f.x + 330, f.inner + 82, 230, 34,
         'STUDY (' + Rules.skillUpCost(lvl) + ' PTS, HAVE ' + ch.skillPts + ')', false, 2);
-      reg('skillup', f.x + 330, f.inner + 54, 230, 34, sch);
+      reg('skillup', f.x + 330, f.inner + 82, 230, 34, sch);
 
       // The spells of this school, with what each needs and what it costs.
       const list = Spellcraft.bySchool(sch);
       list.forEach((id, i) => {
         const sp = Spellcraft.SPELLS[id];
-        const x = f.x + 22 + (i % 2) * 278, y = f.inner + 96 + Math.floor(i / 2) * 42;
+        const x = f.x + 22 + (i % 2) * 278, y = f.inner + 124 + Math.floor(i / 2) * 42;
         if (y > f.y + f.h - 60) return;
         const known = !!(ch.spells && ch.spells[id]);
         const need = Spellcraft.TIER_MASTERY[sp.tier];
