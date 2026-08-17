@@ -257,10 +257,19 @@ T.suite('rules: xp and levels');
   const ch = Rules.makeCharacter({ name: 'A', cls: 'knight', base: { mig: 12, int: 10, per: 10, end: 12, acc: 12, spd: 12, lck: 10 } }, 0);
   Rules.awardXP(ch, 5000);
   T.eq(ch.level, 1, 'awarding XP does not promote by itself');
+  // ONE level per visit, each paid for separately. Granting every earned level in a single step let
+  // a QA pass buy level 1 -> 100 for ten gold, which removes the reason a trainer exists. This test
+  // asserted the old behaviour, so it encoded the bug; it now asserts the rule.
   const gained = Rules.promote(ch);
-  T.eq(ch.level, 3, 'training promotes to the earned level');
-  T.eq(gained, 2, 'promote reports how many levels were gained');
-  T.eq(ch.skillPts, 4, 'two skill points per level');
+  T.eq(gained, 1, 'promote grants exactly one level per visit');
+  T.eq(ch.level, 2, 'and the character is one level higher');
+  T.eq(ch.skillPts, 2, 'two skill points for it');
+  const gained2 = Rules.promote(ch);
+  T.eq(gained2, 1, 'a second visit grants the second earned level');
+  T.eq(ch.level, 3, 'reaching the level the XP had already paid for');
+  T.eq(Rules.promote(ch), 0, 'and a third visit grants nothing, because nothing is owed');
+  T.ok(Rules.trainCost(3) > Rules.trainCost(1),
+    'and each level costs more than the last (' + Rules.trainCost(1) + ' -> ' + Rules.trainCost(3) + ')');
 
   // A dead character earns nothing.
   ch.cond.dead = true;

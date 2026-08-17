@@ -503,7 +503,19 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00f5e-204a-7ef1-aebc-b51c83aa65b7"
+    },
+    {
+      "n": 85,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A shambling zombie, grey rotted flesh, t"
+    },
+    {
+      "n": 86,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f60-efc3-7f93-a8f7-790968bb7e48"
     }
   ],
-  "spent": 662
+  "spent": 677
 }

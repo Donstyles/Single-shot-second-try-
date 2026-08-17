@@ -891,6 +891,18 @@ const Game = (() => {
     return true;
   }
 
+  // A cheap fingerprint of everything a spell could plausibly change. Compared before and after a
+  // cast purely to answer "did that do anything?".
+  function worldPulse() {
+    let acc = '';
+    for (const c of state.party.members) {
+      acc += c.hp + ':' + Math.round(c.sp) + ':' + (c.cond ? Object.keys(c.cond).filter((k) => c.cond[k]).join(',') : '') + '|';
+    }
+    for (const e of liveEnemies()) acc += Math.round(e.hp) + ',';
+    acc += '#' + Object.keys(state.party.buffs || {}).sort().join(',');
+    return acc;
+  }
+
   function castSpell(id) {
     const ch = state.party.members[state.active];
     const can = Spellcraft.canCast(ch, id, { underground: state.map.kind === 'dungeon' });
@@ -907,12 +919,19 @@ const Game = (() => {
 
     if (!targets.length) { Log.push('No target.', 'info'); return false; }
 
+    // Snapshot enough of the world to tell whether the spell actually DID anything. A spell with
+    // nothing to do — Torch Light while it is already up, First Aid at full health — used to be a
+    // completely silent no-op: no log line, no SP change, no feedback of any kind. A player cannot
+    // tell that from a broken button.
+    const before = worldPulse();
+
     const out = Spellcraft.resolve(ch, id, targets, rng, {});
     ch.sp -= out.cost;
     ch.recovery = 100 * 8;
 
     for (const eff of out.effects) applyEffect(eff);
     Log.push(ch.name + ' casts ' + sp.name + '.', 'good');
+    if (worldPulse() === before) Log.push('...but nothing happens.', 'info');
     state.screen = null;
     spendTurn();
     return true;
@@ -1255,6 +1274,22 @@ const Game = (() => {
       if (!d.party || !Array.isArray(d.party.members) || d.party.members.length !== 4) bad.push('party malformed');
       if (!d.rng || typeof d.rng.seed !== 'number') bad.push('rng state missing');
       if (d.party && !state.world.maps[d.party.map]) bad.push('unknown map ' + (d.party && d.party.map));
+      // Every NUMBER that arithmetic will be done on must actually be a finite number. A save with
+      // party.gold set to the string "NaN" loaded cleanly, passed invariants(), and then failed
+      // every purchase forever with no message — a save file that is an unplayable game.
+      const num = (v) => typeof v === 'number' && isFinite(v);
+      if (!num(d.t)) bad.push('clock is not a number');
+      if (d.party) {
+        if (!num(d.party.gold)) bad.push('gold is not a number');
+        if (!num(d.party.x) || !num(d.party.y) || !num(d.party.z)) bad.push('party position is not numeric');
+        if (!num(d.party.ang)) bad.push('party facing is not a number');
+        if (d.party.food !== undefined && !num(d.party.food)) bad.push('food is not a number');
+        for (const m of (d.party.members || [])) {
+          if (!m || !num(m.hp) || !num(m.sp) || !num(m.level) || !num(m.xp)) {
+            bad.push('a character has a non-numeric hp/sp/level/xp'); break;
+          }
+        }
+      }
     }
     if (bad.length) { Log.push('Save rejected: ' + bad[0], 'hit'); return false; }
 

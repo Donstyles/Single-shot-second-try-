@@ -52,6 +52,24 @@ const Debug = (() => {
     if (state.ctx) Engine.present(state.ctx);
   }
 
+  // ONE bad frame must not end the session. There was no try/catch around the loop, so any
+  // exception thrown inside draw() killed requestAnimationFrame permanently — the frame counter
+  // froze and nothing, including closing every screen, restarted it. A crash that takes the game
+  // with it is a far worse defect than the crash.
+  let frameFaults = 0;
+  function guard(what, fn) {
+    try { fn(); return true; } catch (e) {
+      frameFaults++;
+      state.lastError = what + ': ' + (e && e.message ? e.message : e);
+      // Report the first few, then fall silent so a per-frame throw cannot flood the console.
+      if (frameFaults <= 3) console.error('frame ' + what + ' failed: ' + state.lastError);
+      // A screen that throws while drawing is the usual cause; drop back to the world view so the
+      // player has something to act on rather than a dead canvas.
+      if (frameFaults === 1 && hasGame() && Game.state) { Game.state.screen = null; Game.state.talkingTo = null; }
+      return false;
+    }
+  }
+
   function frame(now) {
     if (!state.last) state.last = now;
     let dt = now - state.last;
@@ -61,7 +79,7 @@ const Debug = (() => {
 
     let n = 0;
     while (state.acc >= STEP_MS && n < MAX_CATCHUP) {
-      simulate(STEP_MS);
+      guard('simulate', () => simulate(STEP_MS));
       state.acc -= STEP_MS;
       n++;
     }
@@ -73,7 +91,7 @@ const Debug = (() => {
       state.fpsAcc = 0; state.fpsN = 0;
     }
 
-    draw();
+    guard('draw', draw);
     requestAnimationFrame(frame);
   }
 

@@ -505,15 +505,19 @@ const Rules = (() => {
     return { gained: amount, levels: Math.max(0, now - before), pending: now - ch.level };
   }
 
+  // ONE LEVEL PER VISIT, and each one is paid for separately. A QA pass clicked TRAIN once with a
+  // large XP pool and went from level 1 to level 100 — HP 31 to 1120, 198 skill points — for ten
+  // gold, because the cost was a flat number and the promotion granted every level the XP allowed
+  // in a single step. Gold was irrelevant to progression, which removes the entire reason a
+  // trainer exists.
   function promote(ch) {
     const target = levelForXP(ch.xp);
     if (target <= ch.level) return 0;
-    const gained = target - ch.level;
-    ch.level = target;
-    ch.skillPts += gained * 2;
+    ch.level += 1;
+    ch.skillPts += 2;
     ch.hp = maxHP(ch);
     ch.sp = maxSP(ch);
-    return gained;
+    return 1;
   }
 
   return {
