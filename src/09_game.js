@@ -271,8 +271,19 @@ const Game = (() => {
   // minutes, because the clock barely moves while a player is standing still failing to walk.
   function sayBlocked(m, nx, ny) {
     const p = state.party;
+    // THE BUMP IS NOT RATE LIMITED. The message is, because a log filling with one repeated line
+    // is its own kind of broken — but a player who taps forward and receives nothing at all cannot
+    // tell "I did not move" from "the game is frozen". Measured on the build a cold player quit:
+    // twenty blocked taps produced six messages, so seventy per cent of their presses were
+    // answered with silence. Their words: "no bump, no shake, no 'the way is blocked'. I could not
+    // distinguish 'I moved' from 'I did not move', so I could not build a mental map."
+    //
+    // Every blocked press now kicks the view. It costs no text, it cannot be missed, and it is
+    // what a wall feels like.
+    state._bump = 150;                           // ms of view kick
+
     if ((state._blockCool || 0) > 0) return;
-    state._blockCool = 700;                      // ms
+    state._blockCool = 420;                      // ms
     const h = World.H(m, nx, ny);
     Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
       : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
@@ -352,8 +363,46 @@ const Game = (() => {
     return best;
   }
 
+  // Can the party see that point? A DDA walk over the cell grid, stopping at the first solid.
+  // Cheap, and only ever called a handful of times per action.
+  function hasLineOfSight(ax, ay, bx, by) {
+    const m = state.map;
+    const dx = bx - ax, dy = by - ay;
+    const steps = Math.ceil(Math.hypot(dx, dy) * 3);
+    if (steps <= 1) return true;
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const cx = Math.floor(ax + dx * t), cy = Math.floor(ay + dy * t);
+      if (World.isSolid(World.cellAt(m, cx, cy))) return false;
+    }
+    return true;
+  }
+
+  // What is stopping the party resting, or null. Returns the ENEMY, not a boolean, because a
+  // refusal a player cannot verify is indistinguishable from a broken check.
+  //
+  // A cold player pressed CAMP inside a walled town, at full health, having seen no enemy in
+  // twenty minutes, and was told "Enemies are too close to make camp." Twice, in two different
+  // corners. They wrote: "It's the moment the game stopped making sense as a simulation and
+  // started reading like a broken check." It was not broken — 14 units reaches straight through
+  // a row of buildings, and a rat two streets away was blocking the camp.
+  //
+  // Distance alone is not a threat. A monster that cannot see you cannot interrupt your sleep.
+  function restBlocker() {
+    const p = state.party;
+    for (const e of liveEnemies()) {
+      const d = Math.hypot(e.x - p.x, e.y - p.y);
+      if (d >= 10) continue;
+      if (!hasLineOfSight(p.x, p.y, e.x, e.y)) continue;   // a wall between you is safety
+      return e;
+    }
+    return null;
+  }
+
+  // True when safe; otherwise the blocker's NAME, which canRest turns into a checkable refusal.
   function safeToRest() {
-    return !nearestEnemy(14);
+    const e = restBlocker();
+    return e ? (e.name || 'monster') : true;
   }
 
   function weaponOf(ch) {
@@ -835,8 +884,12 @@ const Game = (() => {
     for (const portal of m.portals) {
       const dx = portal.x + 0.5 - p.x, dy = portal.y + 0.5 - p.y;
       const d = Math.hypot(dx, dy);
-      if (d > 3.0) continue;
       const facing = (dx * Math.cos(p.ang) + dy * Math.sin(p.ang)) / (d || 1);
+      // FACING BUYS REACH. A flat 3.0 cells refused a door that filled a quarter of the frame —
+      // which is three to four cells out — and the player was then handed a hint about a different
+      // door somewhere else entirely. If it is squarely in front of you and you can see it is a
+      // door, pressing USE has to be about that door.
+      if (d > (facing > 0.55 ? 4.8 : 3.0)) continue;
       if (facing < 0.2 && d > 1.4) continue;                 // behind you and not underfoot
       const score = d - facing * 1.2;                        // ahead beats merely near
       if (score < bestScore) { bestScore = score; bestPortal = portal; }
@@ -859,25 +912,50 @@ const Game = (() => {
     const t = interactTarget();
     if (!t) {
       // A bare "Nothing here." four times in a row taught a player nothing. Point at the nearest
-      // thing that IS interactive.
-      let best = null, bd = 24;
+      // thing that IS interactive — but point at the one the player is LOOKING AT.
+      //
+      // Two separate failures lived here and a cold player hit both.
+      //
+      // 1. The hint ranked portals by RAW DISTANCE while interactTarget ranks them by facing. So a
+      //    player standing in front of a door that was slightly out of reach was told about a
+      //    different door entirely: "I was looking directly at a door. The game told me the nearest
+      //    door was twelve steps away in another direction. I read that message three times." That
+      //    is trust gone, and with it any hope of navigating.
+      //
+      // 2. A step count to something you are not FACING does not go down when you walk. Follow "5
+      //    steps to your right" by walking five and the answer becomes "6 steps to your right".
+      //    They followed the instruction exactly, got further away, and stopped believing it.
+      //    A distance is only meaningful once you are pointed at the thing; until then the only
+      //    honest instruction is "turn".
+      const pp = state.party;
+      let best = null, bestScore = 1e9, bd = 0;
       for (const q of state.map.portals) {
         if (q.shop === undefined && q.kind !== 'stairs' && q.kind !== 'door' && !q.to) continue;
-        const d = Math.hypot(q.x + 0.5 - state.party.x, q.y + 0.5 - state.party.y);
-        if (d < bd) { bd = d; best = q; }
+        const dx = q.x + 0.5 - pp.x, dy = q.y + 0.5 - pp.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 24) continue;
+        const facing = (dx * Math.cos(pp.ang) + dy * Math.sin(pp.ang)) / (d || 1);
+        // Heavily prefer what is in front. A door you can see beats a nearer one you cannot.
+        const score = d - facing * 8;
+        if (score < bestScore) { bestScore = score; best = q; bd = d; }
       }
       if (best) {
-        const ang = Math.atan2(best.y + 0.5 - state.party.y, best.x + 0.5 - state.party.x) - state.party.ang;
+        const ang = Math.atan2(best.y + 0.5 - pp.y, best.x + 0.5 - pp.x) - pp.ang;
         const rel = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        const dir = Math.abs(rel) < 0.6 ? 'ahead' : Math.abs(rel) > 2.5 ? 'behind you'
-          : rel > 0 ? 'to your right' : 'to your left';
-        // In TAPS, not in cells. "A door is 7 paces ahead" followed by seven forward taps put a
-        // player somewhere the door was now "4 paces to your left", because a pace was a world
-        // cell and a tap is a fraction of one. A hint whose units do not match the button is worse
-        // than no hint: it spends the player's trust as well as their time.
-        const perTap = 3.4 * (TAP_LATCH_MS / 1000);
-        const taps = Math.max(1, Math.round(bd / perTap));
-        Log.push('Nothing here. A door is ' + taps + ' step' + (taps === 1 ? '' : 's') + ' ' + dir + '.', 'info');
+        const ahead = Math.abs(rel) < 0.5;
+        if (!ahead) {
+          const dir = Math.abs(rel) > 2.5 ? 'behind you' : rel > 0 ? 'to your right' : 'to your left';
+          Log.push('Nothing here. There is a door ' + dir + ' — turn to face it.', 'info');
+        } else {
+          // In TAPS, not in cells. "A door is 7 paces ahead" followed by seven forward taps put a
+          // player somewhere the door was now "4 paces to your left", because a pace was a world
+          // cell and a tap is a fraction of one. A hint whose units do not match the button is
+          // worse than no hint: it spends the player's trust as well as their time.
+          const perTap = 3.4 * (TAP_LATCH_MS / 1000);
+          const taps = Math.max(1, Math.round(bd / perTap));
+          Log.push('Nothing here. The door is ' + taps + ' step' + (taps === 1 ? '' : 's')
+            + ' ahead.', 'info');
+        }
       } else Log.push('Nothing here.', 'info');
       return false;
     }
@@ -1941,6 +2019,7 @@ const Game = (() => {
     move(dt);
     decayLatches(dt);
     if (state._blockCool > 0) state._blockCool = Math.max(0, state._blockCool - dt);
+    if (state._bump > 0) state._bump = Math.max(0, state._bump - dt);
 
     expireBuffs();
     const regen = buff('regen');
@@ -1981,7 +2060,10 @@ const Game = (() => {
     const p = state.party;
     const cam = {
       x: p.x, y: p.y, z: p.z, ang: p.ang, map: state.map,
-      horizon: Math.round((p.pitch || 0) * 140),
+      // A blocked step kicks the horizon down and settles. Half a sine over the bump's life, so it
+      // lurches and recovers rather than snapping to an offset and snapping back.
+      horizon: Math.round((p.pitch || 0) * 140
+        + ((state._bump || 0) > 0 ? Math.sin((state._bump / 150) * Math.PI) * 7 : 0)),
       torch: state.map.kind === 'dungeon' ? 8.5 + buff('light') * 1.8 : 99,
     };
     En.clear(Core.idx(0, 1));

@@ -459,11 +459,19 @@ const UI = (() => {
       Art.text(En, f.x + 24, f.inner + 92, 'Pick a caster from the tabs above.', Core.idx(0, 12), 2);
       return;
     }
+    // The pane and the tabs must not be able to disagree. bookSchool is remembered across
+    // characters, so opening the book on a Priest while it still said 'fire' drew tabs reading
+    // SPIRIT / MIND / BODY / LIGHT with the FIRE spell list under them and no tab highlighted.
+    // A cold player reported the Priest's Spirit tab listing Torch Light and Fire Bolt and
+    // concluded a tab was serving the wrong data. Resolving it here means the disagreement cannot
+    // be constructed, whatever state arrives.
+    const shown = usable.indexOf(g.bookSchool) >= 0 ? g.bookSchool : usable[0];
+
     // School tabs down the left.
     usable.forEach((s, i) => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
-      const on = g.bookSchool === s;
+      const on = shown === s;
       // ORDER MATTERS. The hatch used to be drawn AFTER the label, so its 2px-pitch scanlines ran
       // straight through the letterforms at the same pitch as the font stroke: EARTH read "FARTH",
       // MIND read "MINU", BODY read "BUUY". Plate first, then hatch, then a knocked-out solid
@@ -481,7 +489,7 @@ const UI = (() => {
       reg('school', x, y, 96, 34, s);
     });
 
-    const school = g.bookSchool || 'fire';
+    const school = shown;
     const all = Spellcraft.bySchool(school);
     const page = g.bookPage || 0;
     const ids = all.slice(page * 4, page * 4 + 4);

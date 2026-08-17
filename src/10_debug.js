@@ -245,7 +245,10 @@ const Debug = (() => {
     });
 
     if (hasGame() && Game.boot) Game.boot();
-    Log.push('Thornmarch booted.', 'sys');
+    // NOT into the player's message log. This is a debug line and it was the first sentence of
+    // in-fiction text a new player read: "Thornmarch booted." sitting above "Your party arrives in
+    // Harrowgate." The log is the game's voice; a build stamp does not get to speak in it.
+    if (typeof console !== 'undefined') console.info('Thornmarch booted.');
     requestAnimationFrame(frame);
   }
 
@@ -309,6 +312,17 @@ const Debug = (() => {
     save(slot) { if (!hasGame()) need('save'); return Game.save(slot === undefined ? 0 : slot); },
     load(slot) { if (!hasGame()) need('load'); return Game.load(slot === undefined ? 0 : slot); },
     newParty(spec) { if (!hasGame()) need('newParty'); return Game.newParty(spec); },
+    // Begin play. newParty() builds a party but leaves the TITLE SCREEN up, because only the
+    // start button clears it -- and update() early-returns on the title, so every harness-driven
+    // key press was a no-op against a menu. A probe hunting a movement bug recorded 25 forward
+    // taps with zero movement and zero messages and looked exactly like the bug it was hunting.
+    // This runs the same path the button runs, so a test drives the game the player plays.
+    beginGame(spec) {
+      if (!hasGame()) need('beginGame');
+      Game.newParty(spec || Game.state.createSpec);
+      Game.state.screen = null;
+      return Game.state.screen === null && !!Game.state.party;
+    },
 
     // ---- screens
     screen(name) { if (!hasGame()) need('screen'); return Game.openScreen(name); },

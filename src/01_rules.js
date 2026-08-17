@@ -337,7 +337,14 @@ const Rules = (() => {
 
   // Resting is refused, with a REASON, rather than silently failing. A rest button that does
   // nothing and says nothing is the single most common 1998 UI sin.
+  // `isSafe` may be a boolean or the NAME of the thing blocking the camp. A refusal the player
+  // cannot verify reads as a broken check: one reported being refused twice in an empty walled
+  // town at full health, having never seen an enemy. Naming the blocker makes the rule auditable
+  // from the player's chair.
   function canRest(party, isSafe) {
+    if (typeof isSafe === 'string') {
+      return { ok: false, why: 'A ' + isSafe + ' is too close to make camp.' };
+    }
     if (!isSafe) return { ok: false, why: 'Enemies are too close to make camp.' };
     if (party.food < REST_FOOD) return { ok: false, why: 'Not enough food to camp.' };
     return { ok: true };
