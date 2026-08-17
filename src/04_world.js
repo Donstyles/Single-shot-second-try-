@@ -993,6 +993,15 @@ const World = (() => {
     ash_key: ['forge'],
   };
 
+  // What a quest item DEMANDS before it can be taken. The Smith says "the Ember Forge can reforge
+  // the shards into a key", and the whole Shards of the Crown quest exists to gather them — but the
+  // key could be picked up off the forge floor with no shards at all, which made an entire step of
+  // the main chain optional and meaningless.
+  const QUEST_ITEM_REQUIRES = {
+    ash_key: { item: 'crown_shard', count: 3,
+      why: 'The forge is cold. It needs three shards of the Crown to wake.' },
+  };
+
   // ---------------------------------------------------------------- assembly
   function build(seed) {
     RNG.setSeed(seed === undefined ? 7 : seed);
@@ -1137,7 +1146,7 @@ const World = (() => {
 
   return {
     MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB, clearSpot,
-    REGIONS, REGION_IDS, DUNGEONS, DUNGEON_IDS, QUESTS, QUEST_IDS, SHOP_KINDS,
+    REGIONS, REGION_IDS, DUNGEONS, DUNGEON_IDS, QUESTS, QUEST_IDS, SHOP_KINDS, QUEST_ITEM_REQUIRES,
     RW, RH, neighbours,
     hash2, vnoise, fbm, ridged,
     blankMap, cellAt, setCell, H, flatten, road, addSpan, spanAt, bridge, gateArch, caveMouth,

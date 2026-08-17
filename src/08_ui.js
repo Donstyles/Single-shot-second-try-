@@ -574,7 +574,7 @@ const UI = (() => {
   // whose objectives live only in the head of the man who gave them is not navigable.
   function journal(g) {
     const En = E();
-    const f = screenFrame('QUEST JOURNAL', 720, 440);
+    const f = screenFrame('QUEST JOURNAL', 740, 448);
     const ids = World.QUEST_IDS.filter((q) => g.party.quests[q]);
     if (!ids.length) {
       Art.text(En, f.x + 26, f.inner + 30, 'No quests yet.', Core.idx(13, 13), 2);
@@ -584,8 +584,25 @@ const UI = (() => {
     }
     // Active first, then finished, because the one you are doing is the one you opened this for.
     const order = ids.slice().sort((a, b) => (g.party.quests[a].state) - (g.party.quests[b].state));
+    // PAGINATED. Five entries fit; a player who had accepted nine saw five, with blank space below
+    // the last one and nothing to say four more existed. Silently truncating a list is worse than
+    // truncating it loudly, because the player has no reason to look for what is missing.
+    const PER_PAGE = 5;
+    const pages = Math.max(1, Math.ceil(order.length / PER_PAGE));
+    const page = clamp(g.journalPage || 0, 0, pages - 1);
+    const shown = order.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+    if (pages > 1) {
+      Art.button(En, f.x + f.w - 200, f.y + f.h - 52, 60, 40, '<', false, 2);
+      reg('journalpage', f.x + f.w - 200, f.y + f.h - 52, 60, 40, -1);
+      Art.button(En, f.x + f.w - 76, f.y + f.h - 52, 60, 40, '>', false, 2);
+      reg('journalpage', f.x + f.w - 76, f.y + f.h - 52, 60, 40, 1);
+      Art.textCentred(En, f.x + f.w - 108, f.y + f.h - 44,
+        (page + 1) + '/' + pages, Core.idx(13, 14), 2);
+    }
+    Art.text(En, f.x + 22, f.y + f.h - 44, order.length + ' QUEST' + (order.length === 1 ? '' : 'S'),
+      Core.idx(13, 13), 2);
     let y = f.inner + 16;
-    for (const qid of order) {
+    for (const qid of shown) {
       if (y > f.y + f.h - 70) break;
       const q = World.QUESTS[qid], st = g.party.quests[qid];
       const done = st.state === 2;
@@ -699,45 +716,45 @@ const UI = (() => {
       // were unreadable and both were clickable in the overlap — an ambiguous hit region.
       const schools = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
       if (!schools.length) {
-        Art.text(En, f.x + 24, f.inner + 30, ch.name + ' has no aptitude for magic.', Core.idx(11, 12), 2);
-        Art.text(En, f.x + 24, f.inner + 56, 'Pick a spellcaster from the party above.', Core.idx(0, 12), 2);
+        Art.text(En, listX + 14, f.inner + 46, ch.name + ' has no aptitude for magic.', Core.idx(11, 13), 2);
+        Art.text(En, listX + 14, f.inner + 70, 'Pick a caster from the tabs above.', Core.idx(0, 13), 2);
         return;
       }
       let sch = g.guildSchool;
       if (schools.indexOf(sch) < 0) sch = schools[0];
       // School tabs.
       schools.forEach((sc, i) => {
-        const bx = f.x + 24 + i * 92, by = f.inner + 44;
+        const bx = listX + 12 + (i % 4) * 92, by = f.inner + 40 + Math.floor(i / 4) * 36;
         Art.button(En, bx, by, 86, 32, Spellcraft.SCHOOLS[sc].name.toUpperCase().slice(0, 6), sc === sch, 2);
         reg('guildschool', bx, by, 86, 32, sc);
       });
       const skill = ch.skills[sch];
       const lvl = skill ? skill.lvl : 0;
       const mast = skill ? skill.mastery : 0;
-      Art.text(En, f.x + 24, f.inner + 86, Spellcraft.SCHOOLS[sch].name + ' — ' +
+      Art.text(En, listX + 14, f.inner + 118, Spellcraft.SCHOOLS[sch].name + ' — ' +
         Rules.MASTERY_NAME[mast] + ' ' + lvl, Core.idx(13, 14), 2);
-      Art.button(En, f.x + 330, f.inner + 82, 230, 34,
+      Art.button(En, listX + 240, f.inner + 114, 210, 34,
         'STUDY (' + Rules.skillUpCost(lvl) + ' PTS, HAVE ' + ch.skillPts + ')', false, 2);
-      reg('skillup', f.x + 330, f.inner + 82, 230, 34, sch);
+      reg('skillup', listX + 240, f.inner + 114, 210, 34, sch);
 
       // The spells of this school, with what each needs and what it costs.
       const list = Spellcraft.bySchool(sch);
       list.forEach((id, i) => {
         const sp = Spellcraft.SPELLS[id];
-        const x = f.x + 22 + (i % 2) * 278, y = f.inner + 124 + Math.floor(i / 2) * 42;
+        const x = listX + 10 + (i % 2) * 232, y = f.inner + 156 + Math.floor(i / 2) * 42;
         if (y > f.y + f.h - 60) return;
         const known = !!(ch.spells && ch.spells[id]);
         const need = Spellcraft.TIER_MASTERY[sp.tier];
         const gated = mast < need;
         const price = Spellcraft.scrollPrice(id);
-        Art.panel(En, x, y, 270, 38, 4, true);
+        Art.panel(En, x, y, 226, 38, 4, true);
         Art.text(En, x + 6, y + 4, sp.name.slice(0, 17), Core.idx(0, known ? 8 : gated ? 6 : 14), 2);
         Art.text(En, x + 6, y + 22, 'T' + sp.tier + '  ' + sp.sp + ' SP', Core.idx(12, 12), 1);
         if (known) Art.text(En, x + 190, y + 12, 'KNOWN', Core.idx(6, 12), 2);
         else if (gated) Art.text(En, x + 150, y + 12, Rules.MASTERY_NAME[need].toUpperCase(), Core.idx(11, 11), 2);
         else {
           Art.text(En, x + 194, y + 12, price + 'g', Core.idx(13, g.party.gold >= price ? 14 : 7), 2);
-          reg('learnspell', x, y, 270, 38, id);
+          reg('learnspell', x, y, 226, 38, id);
         }
       });
       return;
@@ -747,22 +764,25 @@ const UI = (() => {
       const cost = Rules.trainCost(ch.level);
       // Below the tab row, like every other shop screen. "Alder Level 1" was drawn on top of the
       // ALDER/KESTA/CASS/DORN tabs and both were illegible.
-      Art.text(En, f.x + 24, f.inner + 46, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
-      Art.text(En, f.x + 24, f.inner + 70, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
-      Art.text(En, f.x + 24, f.inner + 92, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
+      En.rect(listX + 6, f.inner + 38, f.x + f.w - 20 - listX, f.h - 110, Core.idx(0, 3));
+      Art.text(En, listX + 14, f.inner + 46, ch.name + ' — level ' + ch.level, Core.idx(13, 15), 2);
+      Art.text(En, listX + 14, f.inner + 70, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      Art.text(En, listX + 14, f.inner + 92, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
       if (pending > 0) {
-        Art.button(En, f.x + 24, f.inner + 118, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
-        reg('train', f.x + 24, f.inner + 118, 260, 46, cost);
+        Art.button(En, listX + 14, f.inner + 118, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
+        reg('train', listX + 14, f.inner + 118, 260, 46, cost);
       }
       // Skill spending, at readable size. Twelve buttons of 1x type on a brown plate was "dim brown
       // on dim brown, and I had to squint to make out Sword 1 / Axe 0 / Spear 0".
-      Art.text(En, f.x + 24, f.inner + 172, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
+      Art.text(En, listX + 14, f.inner + 146, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
       const learnable = Object.keys(Rules.SKILLS).filter((k) => Rules.classCap(ch.cls, k) > 0).slice(0, 12);
       learnable.forEach((k, i) => {
-        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 196 + Math.floor(i / 3) * 40;
+        // Three columns, four rows. Two columns ran the last pair of skills off the bottom of the
+        // panel — PLATE and SHIELD were cut in half by the frame.
+        const x = listX + 12 + (i % 3) * 146, y = f.inner + 170 + Math.floor(i / 3) * 40;
         const cur = ch.skills[k];
-        Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 7).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
-        reg('skillup', x, y, 172, 34, k);
+        Art.button(En, x, y, 140, 34, Rules.SKILLS[k].name.slice(0, 6).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
+        reg('skillup', x, y, 140, 34, k);
       });
       return;
     }

@@ -332,6 +332,12 @@ const Game = (() => {
   }
 
   // ---------------------------------------------------------------- combat
+  // Monster names that already carry their own article must not be given a second one. "The Ashen
+  // Crown" is a proper name; "The The Ashen Crown falls." is a bug report waiting to happen.
+  function article(name) {
+    return /^the\s/i.test(name) ? name : 'The ' + name;
+  }
+
   function liveEnemies() {
     return (state.map.live || []).filter((e) => !e.dead);
   }
@@ -398,7 +404,7 @@ const Game = (() => {
     if (e.dead) return;
     e.dead = true;
     const def = Items.MONSTERS[e.kind];
-    Log.push('The ' + def.name + ' falls.', 'good');
+    Log.push(article(def.name) + ' falls.', 'good');
 
     // XP split across the living. A dead character earns nothing (Rules enforces it).
     const alive = state.party.members.filter((c) => !Rules.isDead(c));
@@ -454,7 +460,7 @@ const Game = (() => {
     if (Rules.rollHit(rng, def.atk, fdef.ac)) {
       const dmg = Rules.rollDamage(rng, def.dmg, 0, 0);
       foe.hp -= dmg;
-      Log.push('The ' + def.name + ' turns on the ' + fdef.name + '.', 'good');
+      Log.push(article(def.name) + ' turns on ' + (/^the\s/i.test(fdef.name) ? '' : 'the ') + fdef.name + '.', 'good');
       if (foe.hp <= 0) killEntityObj(foe);
     }
     e.recovery = def.speed * 8;
@@ -598,12 +604,12 @@ const Game = (() => {
         e.hp -= back;
         if (e.hp <= 0) killEntityObj(e);
       }
-      Log.push('The ' + def.name + ' hits ' + victim.name + ' for ' + r.dmg + '.', 'hit');
+      Log.push(article(def.name) + ' hits ' + victim.name + ' for ' + r.dmg + '.', 'hit');
       if (r.died) Log.push(victim.name + ' has died!', 'hit');
       else if (r.knocked) Log.push(victim.name + ' is knocked out.', 'hit');
       if (def.inflict && victim.cond && rng.chance(0.25)) victim.cond[def.inflict] = true;
     } else {
-      Log.push('The ' + def.name + ' misses ' + victim.name + '.', 'info');
+      Log.push(article(def.name) + ' misses ' + victim.name + '.', 'info');
     }
   }
 
@@ -861,6 +867,11 @@ const Game = (() => {
     }
     if (t.kind === 'questitem') {
       if (t.decor.taken) return false;
+      const req = World.QUEST_ITEM_REQUIRES[t.decor.item];
+      if (req && countItem(req.item) < req.count) {
+        Log.push(req.why, 'info');
+        return false;
+      }
       // ATOMIC. The old order marked the item taken, then tried to add it, then announced success
       // regardless. With four full packs the result was: "No room for Seal of the Barrow!" followed
       // immediately by "Taken: Seal of the Barrow", the item destroyed, the chest consumed, and the
@@ -893,6 +904,15 @@ const Game = (() => {
 
   function usePortal(portal) {
     if (portal.shop) {
+      // A SHOP IS NOT A BUNKER. Full-screen panels stop the world, so USE-into-a-shop with a
+      // monster in melee was an unlimited in-combat full heal: sleep at the inn for ten gold, wake
+      // healed and revived eight hours later, and the thing standing next to you got zero swings.
+      // MAKE CAMP already refuses for exactly this reason; the door needed the same rule.
+      const near = nearestEnemy(3.2);
+      if (near) {
+        Log.push('Not with ' + (Items.MONSTERS[near.kind] || { name: 'something' }).name + ' at your back.', 'info');
+        return false;
+      }
       state.shopKind = portal.shop;
       const day = Clock.day;
       state.shopStock = Items.shopStock(
@@ -901,9 +921,19 @@ const Game = (() => {
       state.screen = 'shop';
       return true;
     }
-    if (portal.locked && !countItem(portal.locked)) {
-      Log.push('The way is barred. Something is missing.', 'info');
-      return false;
+    // A ROAD, once opened, STAYS OPEN. The gate used to test possession of the key item — and the
+    // Smith's quest asks for that same key and consumes it on turn-in, with a 9,000 XP reward the
+    // player has every reason to take. Doing exactly what the game signposted permanently closed
+    // the only route to the endgame: an adversarial pass walked the whole sequence and the game
+    // became unfinishable in forty seconds. Opening a road is now a fact about the world, recorded
+    // when it happens; the key is what opens it, not what holds it open.
+    if (portal.locked && !state.party.flags['opened:' + portal.locked]) {
+      if (!countItem(portal.locked)) {
+        Log.push('The way is barred. Something is missing.', 'info');
+        return false;
+      }
+      state.party.flags['opened:' + portal.locked] = true;
+      Log.push('The way opens, and stays open.', 'good');
     }
     // Landing coordinates are mandatory and validated at build time; trust but verify.
     if (portal.tx === undefined || portal.ty === undefined) {
@@ -1353,7 +1383,19 @@ const Game = (() => {
         c.xp = clampNum(c.xp, 0, 1e12, 0);
         c.skillPts = clampNum(c.skillPts, 0, 9999, 0);
         if (Array.isArray(c.pack) && c.pack.length > 30) c.pack.length = 30;
+        // Stack QUANTITY was unclamped even though pack LENGTH was: one entry with qty 1e9 loaded
+        // and the census reported a billion items.
+        for (const st of (c.pack || [])) {
+          st.qty = clampNum(st.qty, 1, Items.maxStack(st.id) || 1, 1);
+        }
       }
+      // Position, too. x = 1e9 loaded cleanly and stranded the party somewhere no movement, camp or
+      // sleep could recover from — the only numeric field left that could produce a softlock.
+      const mp = state.world.maps[state.party.map];
+      state.party.x = clampNum(state.party.x, 0.5, (mp ? mp.w : 128) - 0.5, 2);
+      state.party.y = clampNum(state.party.y, 0.5, (mp ? mp.h : 128) - 0.5, 2);
+      state.party.z = clampNum(state.party.z, -64, 256, 0);
+      state.party.ang = clampNum(state.party.ang, -1e4, 1e4, 0);
       // The win flag is EARNED, never loaded. It is set in exactly one place — turning in the final
       // quest — and a save is not allowed to assert it.
       if (state.party.flags && state.party.flags.won && !(d.party.quests && d.party.quests.q_crown
@@ -1482,6 +1524,7 @@ const Game = (() => {
       case 'skillup': doSkillUp(r.data); break;
       case 'learnspell': doLearnSpell(r.data); break;
       case 'guildschool': state.guildSchool = r.data; break;
+      case 'journalpage': state.journalPage = Math.max(0, (state.journalPage || 0) + r.data); break;
       case 'acceptquest': acceptQuest(r.data); break;
       case 'turnin': turnInQuest(r.data); closeScreens(); break;
       case 'dorest': doRest(); break;

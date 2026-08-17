@@ -462,6 +462,49 @@ const RUNNER = `(() => {
     T.ok(fin.won, 'and turning it in WINS the campaign');
   }
 
+  // ============================================================ the key that closed the road
+  // An adversarial pass walked the sequence the game itself signposts — take the Ashen Key from the
+  // forge, open the road to the Ashen Reach, then turn the key in to the Smith for 9,000 XP — and
+  // the road closed permanently, because the gate tested possession of an item the quest consumes.
+  // The game became unfinishable in forty seconds by doing exactly what it asked for.
+  T.suite('the gated road');
+  {
+    const gate = await page.evaluate(`(() => {
+      const out = {};
+      const P = () => Game.state.party;
+      window.__game.newParty();
+      // Reach the gate with no key: it must refuse, and say so.
+      window.__game.gotoMap('barrowfields', 124, 64, 0);
+      const portal = Game.state.map.portals.find((q) => q.locked);
+      out.hasLockedPortal = !!portal;
+      if (!portal) return out;
+      window.__game.teleport(portal.x + 0.5, portal.y + 0.5, 0);
+      Game.interact();
+      out.closedWithoutKey = Game.state.map.id !== 'ashkeep';
+
+      // With the key, it opens.
+      window.__game.give('ash_key');
+      Game.interact();
+      out.openedWithKey = Game.state.map.id === 'ashkeep';
+
+      // Now destroy the key exactly as the quest does, and try again.
+      for (const c of P().members) {
+        for (let i = c.pack.length - 1; i >= 0; i--) if (c.pack[i].id === 'ash_key') c.pack.splice(i, 1);
+      }
+      out.keyGone = window.__session.census().byId.ash_key === undefined;
+      window.__game.gotoMap('barrowfields', 124, 64, 0);
+      window.__game.teleport(portal.x + 0.5, portal.y + 0.5, 0);
+      Game.interact();
+      out.stillOpen = Game.state.map.id === 'ashkeep';
+      return out;
+    })()`);
+    T.ok(gate.hasLockedPortal, 'the road to the Ashen Reach is gated');
+    T.ok(gate.closedWithoutKey, 'and refuses a party with no key');
+    T.ok(gate.openedWithKey, 'and opens for one that has it');
+    T.ok(gate.keyGone, 'the key can then be consumed, exactly as the quest consumes it');
+    T.ok(gate.stillOpen, 'and the road STAYS OPEN — opening it is a fact about the world');
+  }
+
   // ============================================================ winnability
   // A QA pass cleared all thirteen dungeons, opened every chest and turned in every reachable
   // quest, and `won` never flipped. Two independent causes: one quest asked for an item that
