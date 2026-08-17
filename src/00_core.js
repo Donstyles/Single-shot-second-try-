@@ -217,6 +217,32 @@ const Core = (() => {
     return best;
   }
 
+  // Cached blend tables. For a target index, the nearest palette entry to a linear mix from every
+  // source index, in `steps` stops. The renderer's distance fog already worked this way; text
+  // anti-aliasing needs the same thing for the same reason, because partial coverage in a
+  // palettised framebuffer is a real colour blend and not an alpha channel.
+  //
+  // Index 0 is TRANSPARENT, not black. Blending toward it would drag ink to black on any pixel
+  // that has not been painted yet, so a source of 0 takes full ink at any coverage at all.
+  const mixLuts = new Map();
+  function mixLut(target, steps) {
+    const key = (target << 6) | steps;
+    let lut = mixLuts.get(key);
+    if (lut) return lut;
+    lut = new Uint8Array(256 * steps);
+    const tr = PAL[target * 3], tg = PAL[target * 3 + 1], tb = PAL[target * 3 + 2];
+    for (let i = 0; i < 256; i++) {
+      const r = PAL[i * 3], g = PAL[i * 3 + 1], b = PAL[i * 3 + 2];
+      for (let q = 0; q < steps; q++) {
+        const t = q / (steps - 1);
+        lut[i * steps + q] = i === 0 ? target : palIdx(
+          Math.round(r + (tr - r) * t), Math.round(g + (tg - g) * t), Math.round(b + (tb - b) * t));
+      }
+    }
+    mixLuts.set(key, lut);
+    return lut;
+  }
+
   // 4x4 ordered dither matrix (Bayer). Values centred on zero.
   const BAYER4 = [
     -0.5000, 0.0000, -0.3750, 0.1250,
@@ -352,7 +378,7 @@ const Core = (() => {
     clamp, lerp, smooth, hashStr,
     Stream, RNG,
     PAL, PAL32, RAMPS, TRANSPARENT,
-    shade, shadeBy, rampOf, shadeOf, idx, palIdx, palDither,
+    shade, shadeBy, rampOf, shadeOf, idx, palIdx, palDither, mixLut,
     Clock, MIN_PER_DAY, Bus, Log,
   };
 })();

@@ -212,11 +212,9 @@ const UI = (() => {
     const slot = (i) => R.y + R.h - 8 - (i + 1) * bh - i * gap;
     const verb = (id, label, live, row) => {
       const y = slot(row);
-      Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2);
-      if (!live) {
-        // A dimming wash, so a dead verb reads as unavailable rather than as missing.
-        for (let yy = y + 1; yy < y + bh - 1; yy += 2) En.hline(vx + 1, yy, bw - 2, Core.idx(0, 3));
-      }
+      // A dead verb reads as unavailable rather than as missing. Art.button lays the checker on
+      // the plate and redraws the label over it dimmed — passing the flag, not washing after.
+      Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2, !live);
       if (live) reg(id, vx, y, bw, bh, id);
     };
     // USE IS ALWAYS LIVE. Making it conditional on "no enemy nearby" locked the player out of every

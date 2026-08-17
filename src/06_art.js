@@ -139,48 +139,55 @@ const Art = (() => {
   // A hard shadow at (+1,+1) makes every stroke two pixels thick in both axes, so a dropped column
   // leaves the other one standing. Drawn as a separate pass under the whole string, because per
   // glyph it would print over the previous glyph's ink.
+  // `scale` is kept as the caller-facing unit because ninety call sites speak it, but it now
+  // selects an OPTICAL SIZE rather than a pixel-doubling factor: scale 2 is a face drawn at 12px
+  // cap, not a 6px face with every pixel repeated. See 05a_font.js for why that distinction is the
+  // whole point.
+  function capFor(scale) {
+    const s = scale || 1;
+    return s === 1 ? 7 : 6 * s;
+  }
+
+  // Layouts anchor on the CAP TOP — that is where the old doubled bitmap put its first inked row,
+  // and it is the line the eye actually reads against. The face's own box is taller than its caps
+  // (ascenders, descenders), so the block is offset up by the difference.
+  function capOffset(cap) {
+    const m = Font.metrics(cap);
+    return m.base - m.cap;
+  }
+
+  function glyphPass(E, x, y, str, pi, s) {
+    const cap = capFor(s);
+    const lut = Core.mixLut(pi, 4);
+    const buf = E.buf, W = E.W, H = E.H;
+    const top = y - capOffset(cap);
+    Font.draw(String(str), x, top, cap, (px, py, lv) => {
+      if (px < 0 || py < 0 || px >= W || py >= H) return;
+      const o = py * W + px;
+      // Full coverage writes the ink. Partial coverage is a real blend against whatever is already
+      // on the pixel — the same mechanism distance fog uses, not a dither pretending to be one.
+      buf[o] = lv === 3 ? pi : lut[buf[o] * 4 + lv];
+    });
+    return Font.width(String(str), cap);
+  }
+
   function text(E, x, y, str, pi, scale) {
     const s = scale || 1;
+    // The smallest optical size still gets a hard drop, because at 7px cap the anti-aliasing that
+    // makes it smooth also makes it faint against a busy plate.
     if (s === 1) glyphPass(E, x + 1, y + 1, str, Core.idx(0, 1), 1);
     return glyphPass(E, x, y, str, pi, s);
   }
 
-  function glyphPass(E, x, y, str, pi, s) {
-    let cx = x;
-    for (let i = 0; i < str.length; i++) {
-      const code = str.charCodeAt(i);
-      const gi = (code < 32 || code > 126) ? -1 : code - 32;
-      if (gi >= 0) {
-        const o = gi * 5;
-        for (let c = 0; c < 5; c++) {
-          const bits = FONT[o + c];
-          if (!bits) continue;
-          for (let r = 0; r < GLYPH_H; r++) {
-            if (!(bits & (1 << r))) continue;
-            if (s === 1) E.px(cx + c, y + r, pi);
-            else E.rect(cx + c * s, y + r * s, s, s, pi);
-          }
-        }
-        cx += ADVANCE[gi] * s;
-      } else cx += 4 * s;
-    }
-    return cx - x;
-  }
-
   function textWidth(str, scale) {
-    const s = scale || 1;
-    let w = 0;
-    for (let i = 0; i < str.length; i++) {
-      const code = str.charCodeAt(i);
-      w += (code < 32 || code > 126) ? 4 * s : ADVANCE[code - 32] * s;
-    }
-    return w;
+    return Font.width(String(str), capFor(scale));
   }
 
   // Text with a 1px dark drop, which is what makes light type survive on a busy background.
   function textShadow(E, x, y, str, pi, scale) {
     const s = scale || 1;
-    glyphPass(E, x + s, y + s, str, Core.idx(0, 1), s);
+    const d = s === 1 ? 1 : 2;
+    glyphPass(E, x + d, y + d, str, Core.idx(0, 1), s);
     return glyphPass(E, x, y, str, pi, s);
   }
 
@@ -501,18 +508,35 @@ const Art = (() => {
   }
 
   // A raised button. `down` swaps the bevel, which is the entire visual language of "pressed".
-  function button(E, x, y, w, h, label, down, scale) {
+  //
+  // `disabled` greys it the way a 1990s toolbar greyed a dead control: a checker laid on the PLATE,
+  // then the label drawn OVER the checker in a dimmed entry. Drawn the other way round — the wash
+  // applied last, over the finished button — its scanlines ran through the letterforms at the same
+  // pitch as the font stroke and ate every second row of every glyph: WAIT read as UAII in all
+  // sixteen in-game shots. The spellbook hit the identical bug (EARTH -> FARTH, BODY -> BUUY) and
+  // fixed it locally; it lives here now so no third caller can rediscover it.
+  function button(E, x, y, w, h, label, down, scale, disabled) {
     const r = 13;
     E.rect(x, y, w, h, Core.idx(r, down ? 4 : 7));
     E.hline(x, y, w, Core.idx(r, down ? 3 : 12));
     E.vline(x, y, h, Core.idx(r, down ? 3 : 12));
     E.hline(x, y + h - 1, w, Core.idx(r, down ? 12 : 3));
     E.vline(x + w - 1, y, h, Core.idx(r, down ? 12 : 3));
+    if (disabled) {
+      // Checker on absolute coordinates, so the pattern does not swim when a button moves.
+      const dim = Core.idx(r, down ? 3 : 5);
+      for (let yy = y + 1; yy < y + h - 1; yy++) {
+        for (let xx = x + 1 + ((xx0(x, yy)) & 1); xx < x + w - 1; xx += 2) E.px(xx, yy, dim);
+      }
+    }
     if (label) {
       const s = scale || 2;
-      textCentred(E, x + w / 2, y + ((h - 7 * s) >> 1) + (down ? 1 : 0), label, Core.idx(0, 14), s);
+      textCentred(E, x + w / 2, y + ((h - 7 * s) >> 1) + (down ? 1 : 0), label,
+        Core.idx(0, disabled ? 10 : 14), s);
     }
   }
+  // Parity helper: keeps the checker phase tied to the framebuffer grid, not the button's corner.
+  function xx0(x, y) { return (x + y) & 1; }
 
   // Carved stone course-work, for the chrome the viewport is set into. A flat panel is a margin; a
   // coursed one is a frame, and the frame is now load-bearing — it holds the touch controls that

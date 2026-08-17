@@ -25,7 +25,11 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const REF_DIR = path.join(ROOT, 'critique', 'reference');
+// Prefer the NORMALISED crops. Raw reference shots are whatever desktop they were taken on —
+// staging a 3440x1440 card next to a 650x390 one measures monitors, not art. tools/refprep.js
+// crops the game window out of the letterbox and matches our presented height, aspect preserved.
+const REF_RAW = path.join(ROOT, 'critique', 'reference');
+const REF_DIR = fs.existsSync(path.join(REF_RAW, 'crop')) ? path.join(REF_RAW, 'crop') : REF_RAW;
 const OUT_DIR = path.join(ROOT, 'critique', 'discriminator');
 
 // SplitMix32, the same generator the game uses, so a round is reproducible from its seed.
@@ -59,7 +63,7 @@ function listPngs(dir) {
 // filename can leak the answer — "s04_road_east_noon.png" would give the whole game away.
 function buildRound(roundDir, seed) {
   const ours = listPngs(roundDir).filter((f) => !/^_/.test(path.basename(f)));
-  const refs = listPngs(REF_DIR);
+  const refs = listPngs(REF_DIR).filter((f) => !/^_/.test(path.basename(f)));
 
   if (!refs.length) {
     return {

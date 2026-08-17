@@ -26,3 +26,7 @@ package-lock.json
 # Never shipped, never sent to a generation API, never committed. No asset rips, ever.
 critique/reference/
 critique/discriminator/
+
+# Throwaway probe captures. Named rounds (r0, r1, ...) are the record and ARE committed;
+# probe rounds are scratch measurements taken between them.
+critique/shots/probe*/
