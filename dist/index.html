@@ -3341,6 +3341,43 @@ const Engine = (() => {
                 else if (hAbove < trimH + 0.10) { wmat = trimMat; trimLight = 3; }
                 else if (hAbove < trimH + 0.20) trimLight = -2;
               }
+              // A BUILDING IS NOT A RECTANGLE OF BRICK. Walking up to a house in town filled the
+              // entire viewport with one flat red facade and a row of stamped window slots, and it
+              // read as tiled wallpaper because that is exactly what it was: one texture from the
+              // pavement to the roof with nothing marking where the ground floor ends, where the
+              // building meets the street, or where it meets the sky. Every real facade of this
+              // period has three horizontal events, and they cost four comparisons to draw:
+              //
+              //   plinth        a stone base course, dirtier and darker than the wall
+              //   string course a moulding at each floor line, lit on top and shadowed beneath
+              //   cornice       a projecting band under the eaves, the brightest line on the wall
+              //
+              // They also break the vertical repeat, which is what stopped the eye reading it as a
+              // pattern rather than as a building.
+              else if (hasWindows) {
+                const hAbove = wh - gh;
+                const under = topH - wh;
+                if (hAbove < 0.62) {
+                  // Plinth: stone, and grimier where it meets the street.
+                  wmat = World.MAT.stonewall;
+                  trimLight = hAbove < 0.12 ? -3 : -1;
+                } else if (hAbove < 0.78) {
+                  wmat = World.MAT.stonewall; trimLight = 3;      // its weathered top edge
+                } else if (hAbove < 0.90) {
+                  trimLight = -2;                                  // the wall's shadow on it
+                } else if (under < 0.20) {
+                  trimLight = 4;                                   // cornice, catching the sky
+                } else if (under < 0.34) {
+                  trimLight = 1;
+                } else if (under < 0.46) {
+                  trimLight = -3;                                  // the eaves' shadow
+                } else if (storeys > 1) {
+                  // String course at every floor line above the first.
+                  const inFloor = hAbove - Math.floor(hAbove / STOREY) * STOREY;
+                  if (inFloor < 0.11) trimLight = -2;
+                  else if (inFloor < 0.24) trimLight = 3;
+                }
+              }
               const tx = Art.wallTexel(wmat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
