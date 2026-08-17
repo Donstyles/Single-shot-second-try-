@@ -113,7 +113,31 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00ec5-759c-78f3-8ad8-736959d7a895"
+    },
+    {
+      "n": 20,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling snow texture from above:"
+    },
+    {
+      "n": 21,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A hunched goblin warrior, green-grey ski"
+    },
+    {
+      "n": 22,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling marsh ground texture fro"
+    },
+    {
+      "n": 23,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ec7-6709-7d04-af23-27fbdf53c65c"
     }
   ],
-  "spent": 165
+  "spent": 198
 }
