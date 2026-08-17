@@ -2262,7 +2262,11 @@ const Game = (() => {
       const dist = Math.hypot(n.x - cam.x, n.y - cam.y);
       if (dist > m.fogEnd) continue;
       const nspr = Sprites.creature('npc_' + n.role);
-      list.push({ dist, spr: nspr, x: n.x, y: n.y,
+      // NPCs were the ONE billboard class with no near-clip, and a quest giver standing three and a
+      // half cells away was drawn six hundred pixels tall — a person's head and shoulders filling
+      // two thirds of the view with the town visible past his elbow. Monsters have had the coverage
+      // clamp since r11; there was never a reason for people to be exempt.
+      list.push({ dist, cullNear: true, spr: nspr, x: n.x, y: n.y,
         z: World.H(m, n.x, n.y), h: Sprites.worldHeight(nspr, 1.8) });
     }
     for (const e of (m.live || [])) {

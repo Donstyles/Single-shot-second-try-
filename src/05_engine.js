@@ -414,8 +414,13 @@ const Engine = (() => {
             //     y = horizon + (eyeZ - h) * PROJ / d   =>   d = (eyeZ - h) * PROJ / (y - horizon)
             // so solve per row and sample there. Near rows advance slowly in world space (large
             // texels), rows near the horizon advance fast (small texels). That IS perspective.
-            const slope = dungeon ? 0 : Art.slopeShade(map, wx, wy);
-            const baseLight = sun + slope + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
+            // SLOPE HAS TO BE SOLVED PER ROW TOO, FOR THE SAME REASON THE TEXEL IS. One slope
+            // sample taken at the march position was applied to the whole vertical run, so a
+            // hillside came out as a stack of flat shelves with a hard edge at every march step —
+            // a wedding cake where a moor should be. Worse, the shade was ROUNDED to nine integer
+            // steps, which contours a smooth gradient even when it is sampled correctly. Solving
+            // per row and dithering the fraction removes both.
+            const baseLight = sun + (dungeon ? dungeonLight(cam, wx, wy, map) + 2 : 0);
             const rise = eyeZ - surfH;
             const fogSpan = Math.max(1, fogEnd - fogStart);
             for (let y = top; y < ybuf; y++) {
@@ -433,7 +438,15 @@ const Engine = (() => {
               // foreground, which is the other half of why it read as a vertical curtain.
               const texel = Art.groundTexel(mat, rx, ry, map, Art.lodFor(rd));
               const rfog = clamp((rd - fogStart) / fogSpan, 0, 1);
-              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
+              // Ordered dither on the fractional shade, using the same Bayer cell the fog uses, so
+              // half a step of slope becomes a 50% mix of two shades instead of a contour line.
+              let rl = baseLight;
+              if (!dungeon) {
+                const slf = Art.slopeShadeF(map, rx, ry);
+                const fl = Math.floor(slf);
+                rl += fl + ((slf - fl) > FOG_BAYER[fogRow + (y & 7)] ? 1 : 0);
+              }
+              buf[y * W + px] = fogShade(texel, rl, rfog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             ybuf = top;
           }

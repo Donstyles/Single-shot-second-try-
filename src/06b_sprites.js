@@ -61,7 +61,87 @@ const Sprites = (() => {
   // ---------------------------------------------------------------- procedural
   // Stand-in creature painter. Deliberately silhouette-first: a blob that reads at 40px beats a
   // detailed thing that does not, and the silhouette is the best predictor of "reads as MM6".
+  // A SPIDER IS NOT A BIPED. The generic painter gave it a torso, two arms and two legs, which at
+  // any size reads as a small brown man rather than as the thing that just bit you. Eight legs in a
+  // radial spread, a low slung abdomen and a cluster of eyes is the whole silhouette, and the
+  // silhouette is what a player identifies at forty pixels.
+  function paintSpider(w, h) {
+    const d = new Uint8Array(w * h);
+    const put = (x, y, ramp, sh) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      d[y * w + x] = Core.shade(ramp << 4, clamp(sh, 2, 14));
+    };
+    const cx = w >> 1;
+    const groundY = h - 3;
+    const bodyY = groundY - Math.round(h * 0.22);      // it stands low
+    // Legs first, so the body overlaps them. Four a side, each a two-segment crook: out and up to
+    // the knee, then down to the ground.
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = 0; i < 4; i++) {
+        const reach = (0.30 + i * 0.11) * w * 0.5;
+        const kneeH = (0.30 - i * 0.045) * h;
+        const fx = cx + side * reach, fy = groundY + i - 1;
+        const kx = cx + side * reach * 0.52, ky = bodyY - kneeH;
+        const seg = (x0, y0, x1, y1, sh) => {
+          const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) | 0;
+          for (let s = 0; s <= n; s++) {
+            const t = n ? s / n : 0;
+            const px = Math.round(x0 + (x1 - x0) * t), py = Math.round(y0 + (y1 - y0) * t);
+            put(px, py, 4, sh); put(px, py + 1, 4, sh - 2);
+          }
+        };
+        seg(cx + side * 2, bodyY, kx, ky, side < 0 ? 8 : 6);   // femur
+        seg(kx, ky, fx, fy, side < 0 ? 7 : 5);                 // tibia to the ground
+      }
+    }
+    // Abdomen: a fat ellipse behind and above, with a pale chevron marking.
+    const arx = Math.round(w * 0.20), ary = Math.round(h * 0.15);
+    const ax = cx + 1, ay = bodyY - Math.round(h * 0.06);
+    for (let y = -ary; y <= ary; y++) {
+      for (let x = -arx; x <= arx; x++) {
+        const dd = Math.hypot(x / arx, y / ary);
+        if (dd > 1) continue;
+        let sh = 9 - Math.round(dd * 4) - Math.round((x + arx) / (arx * 2) * 3);
+        let ramp = 4;
+        if (Math.abs(Math.abs(x) * 0.9 - (y + ary * 0.3)) < 1.4 && y > -ary * 0.4) { ramp = 5; sh += 4; }
+        put(ax + x, ay + y, ramp, sh);
+      }
+    }
+    // Cephalothorax: smaller, in front and slightly lower.
+    const crx = Math.round(w * 0.12), cry = Math.round(h * 0.09);
+    const hx = cx - Math.round(w * 0.16), hy = bodyY + 1;
+    for (let y = -cry; y <= cry; y++) {
+      for (let x = -crx; x <= crx; x++) {
+        if (Math.hypot(x / crx, y / cry) > 1) continue;
+        put(hx + x, hy + y, 4, 10 - Math.round((x + crx) / (crx * 2) * 4) - Math.round((y + cry) / (cry * 2) * 2));
+      }
+    }
+    // Eyes: four pips in two rows, and two chelicerae below them.
+    for (let e = 0; e < 4; e++) {
+      put(hx - crx + 1 + (e & 1) * 2, hy - 2 + (e >> 1) * 2, 12, 13);
+    }
+    for (let k = 0; k < 3; k++) { put(hx - crx - k, hy + cry - 1, 4, 4); put(hx - crx - k, hy + cry, 4, 3); }
+    return outline(d, w, h);
+  }
+
+  // 1px dark keyline outside the silhouette — what separates 1998 pre-rendered from a modern render
+  // pasted onto a background.
+  function outline(d, w, h) {
+    const out = Uint8Array.from(d);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[y * w + x]) continue;
+        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) {
+          out[y * w + x] = Core.idx(0, 2);
+        }
+      }
+    }
+    return { w, h, data: out };
+  }
+
   function paintCreature(kind, w, h) {
+    if (/spider/.test(kind)) return paintSpider(w, h);
     const d = new Uint8Array(w * h);
     const r = RNG.world('spr:' + kind);
     const M = Items.MONSTERS[kind] || { level: 1 };
@@ -134,27 +214,63 @@ const Sprites = (() => {
       }
     }
 
-    // 1px dark outline outside the silhouette — what separates 1998 pre-rendered from a modern
-    // render pasted on a background.
-    const out = Uint8Array.from(d);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (d[y * w + x]) continue;
-        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
-            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) {
-          out[y * w + x] = Core.idx(0, 2);
-        }
-      }
+    return outline(d, w, h);
+  }
+
+  // WHAT THE FOUNDRY NEVER BAKED FELL THROUGH TO paintCreature, AND paintCreature IS A BLOB.
+  // Three quest-giver roles and two monsters had no baked frames, so the archivist who hands out the
+  // main quest chain — the first person a player talks to — was a featureless brown mannequin with
+  // two dot eyes standing four cells from the camera. A player's exact words: "childish placeholder
+  // sprites everywhere."
+  //
+  // Rather than spend credits the project does not have, an unbaked kind borrows the nearest baked
+  // body and is re-dressed: every ramp EXCEPT the keyline and the flesh is rotated, which changes
+  // robe, hair, leather and metal together while leaving hands and face alone. It is the same trick
+  // a 1998 artist used for the fourth guard in a row, and it reads far better than a blob.
+  const ALIAS = {
+    npc_archivist: ['npc_priest', 3],
+    npc_herbalist: ['npc_priest', 7],
+    npc_hunter: ['npc_captain', 5],
+    npc_bowyer: ['npc_captain', 11],
+    npc_innkeep: ['npc_smith', 9],
+    npc_trader: ['npc_smith', 3],
+    npc_alchemist: ['npc_priest', 11],
+    wraith: ['lich', 9],
+  };
+  const KEEP_RAMP = { 0: true, 10: true };   // keyline and flesh stay put
+
+  function redress(frame, shift) {
+    const data = new Uint8Array(frame.data.length);
+    for (let i = 0; i < data.length; i++) {
+      const px = frame.data[i];
+      if (!px) continue;                        // 0 is the only transparent index
+      const ramp = px >> 4;
+      if (KEEP_RAMP[ramp]) { data[i] = px; continue; }
+      data[i] = (((ramp + shift) & 15) << 4) | (px & 15);
     }
-    return { w, h, data: out };
+    return { w: frame.w, h: frame.h, data, pxPerUnit: frame.pxPerUnit };
   }
 
   function creature(kind, facing) {
-    const baked = BAKED.__ready && BAKED.__ready[kind];
+    const ready = BAKED.__ready;
+    const baked = ready && ready[kind];
     if (baked) {
       const f = baked.facings[clamp(facing || 0, 0, baked.facings.length - 1)];
       f.pxPerUnit = baked.pxPerUnit;
       return f;
+    }
+    const al = ALIAS[kind];
+    if (al && ready && ready[al[0]]) {
+      const src = ready[al[0]];
+      const fi = clamp(facing || 0, 0, src.facings.length - 1);
+      const k = 'a:' + kind + ':' + fi;
+      if (!cache[k]) {
+        const f = src.facings[fi];
+        f.pxPerUnit = src.pxPerUnit;
+        cache[k] = redress(f, al[1]);
+        cache[k].pxPerUnit = src.pxPerUnit;
+      }
+      return cache[k];
     }
     const k = 'c:' + kind;
     if (!cache[k]) cache[k] = paintCreature(kind, 48, 64);
@@ -169,6 +285,15 @@ const Sprites = (() => {
   }
 
   // ---------------------------------------------------------------- decor
+  // ONE CACHED SPRITE PER KIND WAS THE SINGLE WORST THING IN THE GAME. A player standing in the
+  // barrowfields saw three hundred and forty-eight pixel-identical standing stones scattered across
+  // open grass, and described the result as a field of oil drums. It does not matter how good the
+  // menhir is: repeat it verbatim two hundred times and the eye stops reading stone and starts
+  // reading wallpaper. The suffix after the colon is therefore an INDIVIDUAL'S SEED — every natural
+  // prop the world scatters carries one, and no two are the same object.
+  //
+  // 'stall:2' and 'sign:smith' predate this and parse their own suffix, so they keep testing the
+  // full key; everything natural tests `base` and varies on `vseed`.
   function paintDecor(kind) {
     const w = 40, h = 56;
     const clamp = Core.clamp;
@@ -178,17 +303,39 @@ const Sprites = (() => {
       d[y * w + x] = Core.shade(ramp << 4, sh);
     };
     const cx = w >> 1;
+    const colon = kind.indexOf(':');
+    const base = colon > 0 ? kind.slice(0, colon) : kind;
+    let vseed = 0;
+    for (let i = colon + 1; i > 0 && i < kind.length; i++) vseed = (vseed * 131 + kind.charCodeAt(i)) >>> 0;
+    // A stable value stream for this individual. vr(0), vr(1)... are independent and repeatable.
+    const vr = (n) => {
+      let s = (vseed ^ (n * 0x9e3779b1)) >>> 0;
+      s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0;
+      return s / 4294967296;
+    };
 
-    if (kind === 'oak' || kind === 'pine' || kind === 'deadtree' || kind === 'ashstump') {
+    if (base === 'oak' || base === 'pine' || base === 'deadtree' || base === 'ashstump') {
       // Trunk and canopy MUST overlap. The first version started the trunk below where the canopy
       // ended, which drew a floating crown and a detached post — the defect reads instantly as
       // "sprites are not grounded" and no amount of texture work hides it.
-      const canopyBottom = kind === 'pine' ? Math.round(h * 0.72) : Math.round(h * 0.58);
-      const trunkTop = kind === 'ashstump' ? Math.round(h * 0.78) : Math.round(canopyBottom * 0.72);
-      const trunkW = kind === 'ashstump' ? 4 : 2;
+      // This individual's proportions. A stand of trees where every trunk leans the same way and
+      // every crown is the same size is a texture, not a wood.
+      const lean = Math.round((vr(1) - 0.5) * 7);              // trunk sway, px across its height
+      const scale = 0.84 + vr(2) * 0.32;                       // canopy size
+      const bare = base === 'ashstump';
+      const canopyBottom = base === 'pine' ? Math.round(h * (0.70 + vr(3) * 0.07)) : Math.round(h * (0.54 + vr(3) * 0.08));
+      const trunkTop = bare ? Math.round(h * 0.78) : Math.round(canopyBottom * 0.72);
+      const trunkW = bare ? 4 : 2;
+      const swayAt = (y) => Math.round(lean * (1 - (y - trunkTop) / Math.max(1, h - trunkTop)));
       for (let y = trunkTop; y < h; y++) {
         const taper = trunkW + Math.round((y - trunkTop) / Math.max(1, h - trunkTop) * 1.6);
-        for (let x = -taper; x <= taper; x++) put(cx + x, y, 4, clamp(8 - Math.abs(x + 1), 3, 12));
+        const sx = cx + swayAt(y);
+        for (let x = -taper; x <= taper; x++) {
+          // Bark: a vertical grain that differs per tree, so two trunks side by side are not one
+          // trunk drawn twice.
+          const grain = ((y * 3 + x * 7 + (vseed & 15)) % 11) === 0 ? -1 : 0;
+          put(sx + x, y, 4, clamp(8 - Math.abs(x + 1) + grain, 3, 12));
+        }
       }
       // Root flare: without a darkened, widening base the trunk ends in a flat cut and the tree
       // reads as floating above the ground.
@@ -196,44 +343,101 @@ const Sprites = (() => {
         const flare = trunkW + 2 + (y - (h - 4));
         for (let x = -flare; x <= flare; x++) put(cx + x, y, 5, clamp(5 - Math.abs(x) / 2, 2, 7));
       }
-      if (kind !== 'ashstump') {
-        const leafRamp = kind === 'deadtree' ? 4 : 7;
-        if (kind === 'pine') {
-          for (let t = 0; t < 4; t++) {
-            const cyy = Math.round(h * (0.10 + t * 0.16));
-            const rr = 5 + t * 4;
+      if (base === 'deadtree') {
+        // A DEAD TREE IS BRANCHES. The old code took the leafy crown and dropped three pixels in
+        // every four — `if (deadtree && ((x*3+y*5)&3)) continue` — which is a 25% dither screen in
+        // the shape of a cabbage. Magnified, it is a chequerboard; at play size it is a brown haze
+        // with a hard checked edge, and it is the single most artificial thing in the landscape.
+        // There is no shortcut here: a bare tree has to actually be drawn as limbs.
+        const limb = (x0, y0, ang, len, thick, depth) => {
+          let px = x0, py = y0;
+          const steps = Math.max(2, Math.round(len));
+          for (let s = 0; s < steps; s++) {
+            // Branches curve as they climb, and the curve differs per limb.
+            const a = ang + Math.sin(s * 0.42 + depth) * 0.12;
+            px += Math.cos(a); py += Math.sin(a);
+            const t = Math.max(1, Math.round(thick * (1 - s / steps)));
+            for (let k = -(t >> 1); k <= (t >> 1); k++) {
+              put(Math.round(px) + k, Math.round(py), 4, clamp(9 - Math.abs(k) - depth, 3, 11));
+            }
+          }
+          if (depth >= 3 || len < 4) return;
+          // Two children, splitting at a real fork angle, shorter and thinner than the parent.
+          const spread = 0.42 + vr(depth * 7 + 60) * 0.45;
+          limb(px, py, ang - spread, len * (0.56 + vr(depth * 7 + 61) * 0.2), thick - 1, depth + 1);
+          limb(px, py, ang + spread * (0.7 + vr(depth * 7 + 62) * 0.6), len * (0.52 + vr(depth * 7 + 63) * 0.24), thick - 1, depth + 1);
+        };
+        const forkY = trunkTop + Math.round((h - trunkTop) * 0.10);
+        const nLimbs = 3 + Math.floor(vr(8) * 3);
+        for (let i = 0; i < nLimbs; i++) {
+          // Up and outward. -PI/2 is straight up in screen space.
+          const ang = -Math.PI / 2 + (i - (nLimbs - 1) / 2) * (0.52 + vr(70 + i) * 0.22) + (vr(80 + i) - 0.5) * 0.2;
+          limb(cx + swayAt(forkY), forkY, ang, (10 + vr(90 + i) * 8) * scale, 3, 0);
+        }
+      } else if (!bare) {
+        // Even the foliage hue moves a little between individuals — a wood is never one green.
+        const leafRamp = 7;
+        const tint = vr(4) < 0.34 ? -1 : vr(4) > 0.76 ? 1 : 0;
+        if (base === 'pine') {
+          const tiers = 4 + (vr(5) < 0.4 ? 1 : 0);
+          for (let t = 0; t < tiers; t++) {
+            const cyy = Math.round(h * (0.08 + vr(6) * 0.05) + t * h * 0.16);
+            const rr = Math.round((5 + t * 4) * scale);
+            const jx = Math.round((vr(20 + t) - 0.5) * 3);
             for (let y = -rr; y <= rr + 2; y++) {
               for (let x = -rr; x <= rr; x++) {
                 if (Math.abs(x) + Math.abs(y) * 1.3 > rr) continue;
-                put(cx + x, cyy + y, leafRamp,
-                  clamp(11 - Math.round((x + rr) / (rr * 2 + 1) * 5) - Math.round((y + rr) / (rr * 2 + 1) * 2), 3, 13));
+                put(cx + x + jx + swayAt(cyy), cyy + y, leafRamp,
+                  clamp(11 + tint - Math.round((x + rr) / (rr * 2 + 1) * 5) - Math.round((y + rr) / (rr * 2 + 1) * 2), 3, 13));
               }
             }
           }
         } else {
-          // Four overlapping lobes of different size, then a per-pixel noise nibble at the rim.
-          // A clean ellipse is what makes a tree read as a modern low-poly asset.
-          const cyy = Math.round(h * 0.30);
+          // A BROADLEAF CROWN IS A PILE OF CLUMPS, NOT A CABBAGE. Overlapping lobes gave a good
+          // silhouette but the inside was one flat green, so at play size an oak read as a solid
+          // green blob on a stick. What makes a real crown legible is what the light does INSIDE
+          // it: each mass is lit on its upper left and dark underneath, the boughs show through in
+          // places, and there are holes to the sky.
+          const cyy = Math.round(h * (0.26 + vr(7) * 0.08));
+          // Boughs into the crown, drawn first so foliage covers most of them.
+          for (let i = 0; i < 3; i++) {
+            const a = -Math.PI / 2 + (i - 1) * 0.62 + (vr(120 + i) - 0.5) * 0.3;
+            const len = (7 + vr(130 + i) * 5) * scale;
+            for (let s = 0; s < len; s++) {
+              put(Math.round(cx + swayAt(canopyBottom) + Math.cos(a) * s),
+                Math.round(canopyBottom + Math.sin(a) * s), 4, clamp(7 - (s >> 2), 3, 9));
+            }
+          }
           const lobes = [[0, 0, 13], [-8, 3, 9], [8, 2, 10], [-2, -7, 8], [4, 8, 7]];
-          for (const [ox, oy, rr] of lobes) {
+          for (let li = 0; li < lobes.length; li++) {
+            const ox = Math.round((lobes[li][0] + (vr(30 + li) - 0.5) * 6) * scale);
+            const oy = Math.round((lobes[li][1] + (vr(40 + li) - 0.5) * 5) * scale);
+            const rr = Math.max(4, Math.round(lobes[li][2] * scale * (0.86 + vr(50 + li) * 0.3)));
             for (let y = -rr; y <= rr; y++) {
               for (let x = -rr; x <= rr; x++) {
                 const dd = Math.hypot(x, y * 1.12);
                 if (dd > rr) continue;
                 // Ragged rim: drop scattered pixels in the outer 22% so the edge is alpha-cut
                 // foliage rather than a geometric arc.
-                if (dd > rr * 0.78 && ((x * 7 + y * 13 + ox * 3) & 3) === 0) continue;
-                if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;
+                if (dd > rr * 0.78 && ((x * 7 + y * 13 + ox * 3 + vseed) & 3) === 0) continue;
+                // Sky holes: a few real gaps through the canopy, not noise. They are placed by a
+                // low-frequency hash so they come out as holes rather than as speckle.
+                const hole = (((x + ox + 40) >> 1) * 2654435761 ^ ((y + oy + 40) >> 1) * 40503) >>> 0;
+                if (dd < rr * 0.8 && (hole & 63) < 3) continue;
                 const gx = x + ox, gy = y + oy;
-                put(cx + gx, cyy + gy, leafRamp,
-                  clamp(11 - Math.round((gx + 16) / 32 * 5) - Math.round((gy + 16) / 32 * 3)
-                    + (((gx * 5 + gy * 3) & 3) === 0 ? 1 : 0), 3, 13));
+                // Per-clump modelling: bright where this clump faces up and left, dark on its own
+                // underside — that is what separates five masses from one mass.
+                const own = -Math.round((x + rr) / (rr * 2 + 1) * 4) - Math.round((y + rr) / (rr * 2 + 1) * 4) + 4;
+                // Global: the whole crown is still lit from the same sun.
+                const glob = -Math.round((gx + 16) / 32 * 3) - Math.round((gy + 16) / 32 * 2);
+                const speck = ((gx * 5 + gy * 3 + vseed) & 3) === 0 ? 1 : 0;
+                put(cx + gx + swayAt(cyy), cyy + gy, leafRamp, clamp(9 + tint + own + glob + speck, 3, 13));
               }
             }
           }
         }
       }
-    } else if (kind === 'rock' || kind === 'standingstone') {
+    } else if (base === 'rock' || base === 'standingstone') {
       // A MENHIR IS NOT A CYLINDER. This drew a constant-width bar with a left-to-right gradient,
       // and a veteran touring the world wrote: "the standing stones are perfectly smooth,
       // untextured light-grey cylinders with hard vertical edges. No cap, no base, no weathering,
@@ -243,46 +447,102 @@ const Sprites = (() => {
       // So: an irregular silhouette that leans and tapers, a chiselled facet down one side, pitting
       // that is denser where rain runs, lichen in the shadowed half, and a base where it meets the
       // ground rather than a clean cut.
-      const stone = kind === 'standingstone';
-      const rh = stone ? Math.round(h * 0.82) : Math.round(h * 0.36);
+      //
+      // And a menhir is not TWO HUNDRED IDENTICAL MENHIRS either. Each one now gets its own height,
+      // lean, girth, taper, facet position, seam pitch and lichen coverage, and about one in six is
+      // a broken stump rather than a whole stone — because a real alignment has fallen members.
+      const stone = base === 'standingstone';
+      // Height varies by a factor of nearly two, which is what breaks the "row of oil drums" read
+      // at a glance, before any surface detail is even resolvable.
+      const broken = stone && vr(9) < 0.17;
+      const hf = stone ? (broken ? 0.30 + vr(10) * 0.16 : 0.58 + vr(10) * 0.30) : 0.26 + vr(10) * 0.16;
+      const rh = Math.round(h * hf);
       const y0 = h - rh;
-      // One hash per sprite so the two kinds do not share a face.
-      const hs = (a, b) => (((a * 73856093) ^ (b * 19349663) ^ (stone ? 0x9e37 : 0x85eb)) >>> 0) / 4294967296;
-      const lean = stone ? 1.6 : 0;
+      // One hash per sprite so the two kinds do not share a face, and the individual seed folded in
+      // so two stones never share a pitting pattern.
+      const hs = (a, b) => (((a * 73856093) ^ (b * 19349663) ^ (stone ? 0x9e37 : 0x85eb) ^ vseed) >>> 0) / 4294967296;
+      const lean = stone ? (vr(11) - 0.45) * 9 : 0;
+      const girth = stone ? 0.72 + vr(12) * 0.85 : 0.8 + vr(12) * 0.5;
+      const taper = stone ? 1.4 + vr(13) * 2.6 : 5.5;
+      const wob = 4.5 + vr(14) * 5.0;                                 // silhouette wobble frequency
+      const facet = 0.36 + vr(15) * 0.34;                             // where the chiselled face breaks
+      const seam = 13 + Math.floor(vr(16) * 14);                      // bedding pitch
+      const mossy = 0.78 + vr(17) * 0.16;                             // lichen threshold: low = furry
+      // Granite, sandstone or the dark stone the barrows are cut from. Three tones across a field
+      // of stones does more for it than any amount of per-pixel noise on one tone.
+      const stoneRamp = stone ? [1, 1, 2, 3][Math.floor(vr(18) * 4)] : 1;
+      const tone = Math.round((vr(19) - 0.5) * 2.4);
       for (let y = y0; y < h; y++) {
         const t = (y - y0) / rh;                     // 0 at the top, 1 at the foot
         // Silhouette: tapers upward, wobbles, and the foot flares where it is bedded in.
         let ww = stone
-          ? 3.2 + t * 2.6 + Math.sin(t * 7.3) * 0.8 + hs(0, y | 0) * 1.1
-          : 5 + t * 5.5 + Math.sin(t * 5.1 + 1.3) * 1.6;
+          ? (3.2 + t * taper + Math.sin(t * wob + vseed % 6) * 0.9 + hs(0, y | 0) * 1.1) * girth
+          : (5 + t * taper + Math.sin(t * 5.1 + 1.3) * 1.6) * girth;
         if (stone && t > 0.86) ww += (t - 0.86) * 16;                 // bedded foot
+        // A broken stone has a jagged shear across the top rather than a weathered crown.
+        if (broken && t < 0.08) ww *= 0.55 + hs(y, 5) * 0.5;
         const sx = Math.round(cx + (0.5 - t) * lean);
         const wi = Math.max(1, Math.round(ww));
         for (let x = -wi; x <= wi; x++) {
           const u = (x + wi) / (wi * 2 + 1);                          // 0 lit edge, 1 shadow edge
           // Base form: lit from the upper left, with a chiselled facet break partway across.
-          let sh = 11 - u * 6;
-          if (u > 0.52 && u < 0.60) sh += 1.4;                        // the facet's own highlight
-          if (u > 0.60) sh -= 0.8;                                    // the face beyond it
+          let sh = 11 + tone - u * 6;
+          if (u > facet && u < facet + 0.08) sh += 1.4;               // the facet's own highlight
+          if (u > facet + 0.08) sh -= 0.8;                            // the face beyond it
           // Weathering: pitting, denser low down where water sits.
           const n = hs(x + 64, y);
           if (n < 0.10 + t * 0.10) sh -= 1.6 + n * 4;
           else if (n > 0.94) sh += 1.1;
           // Horizontal bedding seams, the way sedimentary rock actually splits.
-          if (stone && ((y * 5 + (x >> 2)) % 19) === 0) sh -= 1.2;
-          let ramp = 1;
+          if (stone && ((y * 5 + (x >> 2)) % seam) === 0) sh -= 1.2;
+          let ramp = stoneRamp;
           // Lichen, in the shadowed half and the damp lower third only.
-          if (hs(x + 128, y + 7) > 0.86 && u > 0.42 && t > 0.30) { ramp = 6; sh = clamp(sh - 1, 4, 9); }
+          if (hs(x + 128, y + 7) > mossy && u > 0.42 && t > 0.30) { ramp = 6; sh = clamp(sh - 1, 4, 9); }
           put(sx + x, y, ramp, clamp(Math.round(sh), 3, 13));
         }
       }
-    } else if (kind === 'reed' || kind === 'bush') {
-      for (let i = 0; i < 26; i++) {
-        const bx = cx - 9 + ((i * 7) % 19);
-        const bh = 14 + ((i * 11) % 18);
-        for (let y = h - bh; y < h; y++) put(bx, y, kind === 'reed' ? 6 : 7, 6 + ((i + y) & 3));
+    } else if (base === 'reed' || base === 'bush') {
+      // A bush is a clump of foliage, not a comb. This drew twenty-six single-pixel vertical bars
+      // at a fixed pitch, which at any distance reads as a barcode.
+      const rr = 8 + Math.round(vr(1) * 5);
+      const bh = Math.round(h * (base === 'reed' ? 0.44 + vr(2) * 0.22 : 0.26 + vr(2) * 0.14));
+      const leafRamp = base === 'reed' ? 6 : 7;
+      const tint = vr(3) < 0.35 ? -1 : vr(3) > 0.72 ? 1 : 0;
+      if (base === 'reed') {
+        // Reeds ARE blades — but each one leans on its own and carries a seed head.
+        for (let i = 0; i < 22; i++) {
+          const bx = cx + Math.round((vr(10 + i) - 0.5) * rr * 2.2);
+          const bl = Math.round(bh * (0.55 + vr(40 + i) * 0.6));
+          const swing = (vr(70 + i) - 0.5) * 5;
+          for (let k = 0; k < bl; k++) {
+            const y = h - 1 - k;
+            const tt = k / Math.max(1, bl);
+            put(bx + Math.round(swing * tt * tt), y, leafRamp, clamp(5 + tint + Math.round(tt * 4), 3, 12));
+          }
+          if (vr(100 + i) > 0.55) {
+            for (let k = 0; k < 4; k++) put(bx + Math.round(swing), h - 1 - bl - k, 5, 7 - k);
+          }
+        }
+      } else {
+        // A bush: three overlapping mounds with a nibbled rim and a few dark gaps for depth.
+        for (let m = 0; m < 3; m++) {
+          const ox = Math.round((vr(10 + m) - 0.5) * rr * 1.3);
+          const mr = Math.max(3, Math.round(rr * (0.6 + vr(20 + m) * 0.55)));
+          const oy = h - 2 - Math.round(mr * (0.5 + vr(30 + m) * 0.4));
+          for (let y = -mr; y <= mr; y++) {
+            for (let x = -mr; x <= mr; x++) {
+              const dd = Math.hypot(x, y * 1.35);
+              if (dd > mr) continue;
+              if (dd > mr * 0.72 && ((x * 5 + y * 11 + vseed) & 3) === 0) continue;
+              const deep = ((x * 7 + y * 3 + vseed) & 7) === 0;
+              put(cx + ox + x, oy + y, leafRamp,
+                clamp(10 + tint - Math.round((x + mr) / (mr * 2 + 1) * 4)
+                  - Math.round((y + mr) / (mr * 2 + 1) * 3) - (deep ? 3 : 0), 3, 13));
+            }
+          }
+        }
       }
-    } else if (kind === 'brazier') {
+    } else if (base === 'brazier') {
       // "A grey rectangle post with a stepped orange diamond on top." A brazier is a bowl on legs
       // with coals in it and flame above, and the flame is the brightest thing in a dark room.
       // Three splayed legs.
@@ -457,7 +717,7 @@ const Sprites = (() => {
         }
       }
 
-    } else if (kind === 'crate') {
+    } else if (base === 'crate') {
       const S = 11;
       for (let y = h - S * 2; y < h; y++) {
         for (let x = -S; x <= S; x++) {
@@ -468,7 +728,7 @@ const Sprites = (() => {
       // Diagonal bracing.
       for (let i = 0; i < S * 2; i++) { put(cx - S + i, h - 1 - i, 4, 10); put(cx + S - i, h - 1 - i, 4, 10); }
 
-    } else if (kind === 'barrel') {
+    } else if (base === 'barrel') {
       const S = 9, top = h - 24;
       for (let y = top; y < h; y++) {
         const bulge = Math.round(Math.sin((y - top) / 24 * Math.PI) * 2);
@@ -480,7 +740,7 @@ const Sprites = (() => {
       }
       for (let x = -S; x <= S; x++) put(cx + x, top, 4, 9);
 
-    } else if (kind === 'tent') {
+    } else if (base === 'tent') {
       // There was no painter for 'tent' at all, so every bandit camp and every wilderness
       // encampment drew an EMPTY SPRITE — a decor entry with collision, a name, and nothing on
       // screen. A veteran toured the world and reported "grey cones for tents"; the cones were
@@ -596,8 +856,45 @@ const Sprites = (() => {
       else if (trade === 'tavern') { gbox(-4, 4, 8, 8, 13, 12); gbox(4, 5, 3, 4, 13, 9); gbox(-4, 2, 8, 2, 2, 14); }
       else if (trade === 'trainer') { gbox(-5, 5, 10, 2, 14, 13); gbox(-3, 2, 2, 8, 4, 7); gbox(1, 2, 2, 8, 4, 7); }
       else if (trade === 'guild') { gbox(-4, 1, 8, 10, 12, 10); gbox(-1, 4, 2, 4, 13, 14); }
-    } else if (kind === 'stump') {
-      for (let y = h - 12; y < h; y++) for (let x = -6; x <= 6; x++) put(cx + x, y, 4, 7);
+    } else if (base === 'stump') {
+      // This was a flat brown rectangle — thirteen pixels wide, one shade, no top, no bark, no
+      // roots. Thirty-six of them stood in the barrowfields. A cut stump is a disc of pale
+      // heartwood ringed by dark bark, sitting in a flare of roots, with a splintered edge where
+      // the saw or the wind took it.
+      const rr = 5 + Math.round(vr(1) * 3);
+      const sh0 = 7 + Math.round(vr(2) * 3);                          // how tall it stands
+      const topY = h - sh0;
+      const split = vr(3) < 0.35;                                     // torn off rather than cut
+      // Roots, first, so the trunk overlaps them.
+      for (let i = 0; i < 5; i++) {
+        const a = vr(10 + i) * Math.PI * 2;
+        const len = 3 + vr(20 + i) * 5;
+        for (let k = 0; k < len; k++) {
+          const rx = Math.round(Math.cos(a) * (rr + k));
+          const ry = h - 2 + Math.round(Math.sin(a) * (rr + k) * 0.28);
+          for (let t = 0; t < 2; t++) put(cx + rx, ry + t, 5, clamp(6 - (k >> 1), 3, 8));
+        }
+      }
+      // Bark barrel.
+      for (let y = topY; y < h; y++) {
+        const wi = rr + Math.round((y - topY) / Math.max(1, h - topY) * 2);
+        for (let x = -wi; x <= wi; x++) {
+          const u = (x + wi) / (wi * 2 + 1);
+          const grain = ((y * 3 + x * 5 + vseed) % 7) === 0 ? -1 : 0;
+          put(cx + x, y, 4, clamp(9 - Math.round(u * 6) + grain, 3, 12));
+        }
+      }
+      // Cut face: an ellipse of heartwood with growth rings, tilted if the stump is split.
+      for (let y = -3; y <= 3; y++) {
+        for (let x = -rr; x <= rr; x++) {
+          const dd = Math.hypot(x / rr, y / 3);
+          if (dd > 1) continue;
+          const yy = topY + y + (split ? Math.round(x * 0.35) : 0);
+          if (split && vr(60 + ((x + rr) & 7)) < 0.22) continue;       // splinters missing
+          const ring = (Math.round(dd * 7) & 1) ? 1 : 0;
+          put(cx + x, yy, 5, clamp(11 - ring * 2 - Math.round(dd * 2), 4, 13));
+        }
+      }
     } else if (kind === 'questitem') {
       for (let y = h - 22; y < h - 6; y++) {
         const ww = 8 - Math.abs(y - (h - 14));
@@ -621,8 +918,16 @@ const Sprites = (() => {
     return { w, h, data: out };
   }
 
+  // A REGION SCATTERS SIX HUNDRED PROPS AND EVERY ONE OF THEM ASKS FOR ITS OWN SPRITE. Painting a
+  // unique 40x56 frame per instance would be both slow and a megabyte of cache per map, so the
+  // individual seed is folded into a pool of VARIANTS. Forty-eight distinct stones is far past the
+  // point where the eye can pick out a repeat in a field of a hundred, and it costs about a
+  // megabyte for the whole game. Small integers pass through untouched, so 'stall' variants 0-2 and
+  // the string keys 'sign:smith' / 'door:temple' still mean exactly what they meant.
+  const VARIANTS = 48;
   function decor(kind, variant) {
-    const key = variant ? kind + ':' + variant : kind;
+    const v = typeof variant === 'number' ? variant % VARIANTS : variant;
+    const key = v ? kind + ':' + v : kind;
     const k = 'd:' + key;
     if (!cache[k]) cache[k] = paintDecor(key);
     return cache[k];

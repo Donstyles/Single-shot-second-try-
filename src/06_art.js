@@ -572,10 +572,21 @@ const Art = (() => {
   // Slope shading from the terrain gradient against the key direction (upper-left, matching the
   // sprite rig). Hills read as hills because of this and almost nothing else.
   function slopeShade(map, wx, wy) {
+    return clamp(Math.round(slopeShadeF(map, wx, wy)), -4, 4);
+  }
+
+  // THE ROUNDED FORM IS WHY THE HILLS WERE TERRACED. Rounding to nine integer steps turns a smooth
+  // hillside into nine flat shelves with hard edges between them — the classic contour-map look,
+  // and a player looking across the barrowfields saw the moor as a wedding cake. The float form
+  // lets the caller dither the fractional part instead, which costs nothing and removes the
+  // contours entirely. The sample offset is small enough to be a local gradient rather than an
+  // average over a whole cell, which is the other half of why the shelves were so wide.
+  function slopeShadeF(map, wx, wy) {
     const h0 = World.H(map, wx, wy);
-    const hx = World.H(map, wx + 0.9, wy) - h0;
-    const hy = World.H(map, wx, wy + 0.9) - h0;
-    return clamp(Math.round((-hx * 1.6 - hy * 1.1)), -4, 4);
+    const hx = World.H(map, wx + 0.45, wy) - h0;
+    const hy = World.H(map, wx, wy + 0.45) - h0;
+    const v = (-hx * 3.2 - hy * 2.2);
+    return v < -4 ? -4 : (v > 4 ? 4 : v);
   }
 
   // ---------------------------------------------------------------- sky
@@ -1017,7 +1028,7 @@ const Art = (() => {
     TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
     text, textShadow, textCentred, textCentredShadow, textWidth, textFit, textFitCentred,
     isBuilding, windowTexel,
-    makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
+    makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade, slopeShadeF,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
     panel, button, gameFrame, stonework, arrowGlyph, bar, step, hudIcon, shopSign, shopInterior,

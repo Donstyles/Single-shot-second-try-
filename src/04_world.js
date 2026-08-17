@@ -222,10 +222,30 @@ const World = (() => {
         if (r.biome === 'marsh') hgt = hgt * 0.35 - 0.4;
         if (r.biome === 'volcanic') hgt += ridged(nx * 1.3, ny * 1.3, seed + 77, 3) * 9 - 2;
         if (r.biome === 'barrow') {
-          // Grave mounds: a lattice of low domes. Reads as deliberate rather than lumpy.
-          const mx = Math.abs(((x % 17) / 17) - 0.5), my = Math.abs(((y % 19) / 19) - 0.5);
-          const d = Math.sqrt(mx * mx + my * my);
-          hgt += Math.max(0, 1 - d * 3.6) * 2.6;
+          // Grave mounds. These were a MODULO LATTICE — a dome every 17 cells east and every 19
+          // north, forever — and a perfectly rectangular grid of hills is the loudest procedural
+          // tell there is: looking across the moor you saw regular corduroy ridges marching to the
+          // horizon, which a player fairly called kaleidoscopic. A burial ground is a cemetery, not
+          // a crop: one barrow per grid cell, jittered well off centre, with its own size and
+          // height, and two cells in five left empty.
+          const G = 21;
+          const gx0 = Math.floor(x / G), gy0 = Math.floor(y / G);
+          for (let oy = -1; oy <= 1; oy++) {
+            for (let ox = -1; ox <= 1; ox++) {
+              const gx = gx0 + ox, gy = gy0 + oy;
+              let s = (((gx + 977) * 73856093) ^ ((gy + 641) * 19349663) ^ seed) >>> 0;
+              s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0;
+              if ((s & 255) < 102) continue;                       // 40% of cells hold no barrow
+              const jx = ((s >>> 8) & 255) / 255, jy = ((s >>> 16) & 255) / 255;
+              const cxm = (gx + 0.15 + jx * 0.7) * G, cym = (gy + 0.15 + jy * 0.7) * G;
+              const rad = 4.0 + ((s >>> 24) & 15) * 0.55;           // 4.0 .. 12.3 cells across
+              const amp = 1.5 + (((s >>> 4) & 7) * 0.36);           // 1.5 .. 4.0 high
+              const dd = Math.hypot(x - cxm, y - cym) / rad;
+              if (dd >= 1) continue;
+              // A smooth dome, not a cone: cos falloff so the foot meets the ground tangentially.
+              hgt += amp * 0.5 * (1 + Math.cos(dd * Math.PI));
+            }
+          }
         }
         T[y * (w + 1) + x] = hgt;
       }
@@ -654,23 +674,115 @@ const World = (() => {
     }
 
     // Scatter decor by biome. Density is what makes a region feel inhabited rather than empty.
-    const treeKind = { forest: 'pine', temperate: 'oak', snow: 'deadtree', marsh: 'reed',
-      volcanic: 'ashstump', barrow: 'standingstone', coast: 'rock', highland: 'rock', blighted: 'deadtree' }[r.biome];
-    const nDecor = 460;
-    for (let i = 0; i < nDecor; i++) {
-      const x = rng.float(2, RW - 2), y = rng.float(2, RH - 2);
+    //
+    // THE MIX MATTERS AS MUCH AS THE DENSITY. This scattered ONE kind at 82% across the whole
+    // region, and in the barrowfields — where that kind is a standing stone — the result was three
+    // hundred and forty-eight menhirs strewn evenly over open grass. A player called it a field of
+    // oil drums, and he was right: a monoculture at uniform density is not landscape, it is a fill
+    // pattern. Standing stones are no longer scattered at all (see the alignments below); they are
+    // placed, the way people place them.
+    const canScatter = (x, y) => {
       const cx = Math.floor(x), cy = Math.floor(y);
+      if (cx < 1 || cy < 1 || cx >= RW - 1 || cy >= RH - 1) return null;
       const c = m.cells[cy * RW + cx];
-      if (isSolid(c)) continue;
+      if (isSolid(c)) return null;
       const mt = matOf(c);
-      if (mt === MAT.water || mt === MAT.road || mt === MAT.plaza || mt === MAT.wood) continue;
+      if (mt === MAT.water || mt === MAT.road || mt === MAT.plaza || mt === MAT.wood) return null;
       // Nothing scatters INSIDE a settlement. Testing the cell material alone let a full-grown oak
       // land on the one dirt tile between two market stalls, where it filled the middle of the
       // town's flagship shot with a trunk. A town is built ground; whatever grows there was planted.
-      if (town && Math.hypot(x - town.cx, y - town.cy) < (r.townSize === 'city' ? 16 : 12)) continue;
+      if (town && Math.hypot(x - town.cx, y - town.cy) < (r.townSize === 'city' ? 16 : 12)) return null;
       const h = H(m, x, y);
-      if (h < r.sea + 0.3) continue;
-      m.decor.push({ kind: rng.chance(0.82) ? treeKind : rng.pick(['rock', 'bush', 'stump']), x, y, z: h });
+      if (h < r.sea + 0.3) return null;
+      return h;   // ground height, which is legitimately 0 or negative — callers test for null
+    };
+    // Each biome gets a weighted table with at least three kinds in it, so no region is one prop
+    // repeated. The dominant kind is still dominant — a forest is mostly pines — but a fifth of
+    // what you see is something else.
+    const MIX = {
+      forest:    [['pine', 52], ['oak', 18], ['bush', 14], ['stump', 9], ['rock', 7]],
+      temperate: [['oak', 46], ['bush', 22], ['pine', 10], ['stump', 12], ['rock', 10]],
+      snow:      [['deadtree', 44], ['rock', 30], ['stump', 16], ['bush', 10]],
+      marsh:     [['reed', 54], ['bush', 18], ['stump', 16], ['deadtree', 12]],
+      volcanic:  [['ashstump', 46], ['rock', 34], ['deadtree', 12], ['stump', 8]],
+      barrow:    [['stump', 26], ['bush', 24], ['rock', 24], ['deadtree', 18], ['oak', 8]],
+      coast:     [['rock', 48], ['bush', 22], ['stump', 16], ['pine', 14]],
+      highland:  [['rock', 46], ['bush', 24], ['pine', 18], ['stump', 12]],
+      blighted:  [['deadtree', 42], ['rock', 30], ['ashstump', 18], ['stump', 10]],
+    }[r.biome] || [['rock', 60], ['bush', 40]];
+    const MIX_TOTAL = MIX.reduce((s, e) => s + e[1], 0);
+    const pickKind = () => {
+      let n = rng.float(0, MIX_TOTAL);
+      for (const [k, wgt] of MIX) { n -= wgt; if (n <= 0) return k; }
+      return MIX[0][0];
+    };
+    // Density is not uniform either: props cluster into stands and thin out between them, which is
+    // what a wood actually looks like from inside it.
+    const nDecor = 460;
+    let vseq = 0;
+    for (let i = 0; i < nDecor; i++) {
+      const x = rng.float(2, RW - 2), y = rng.float(2, RH - 2);
+      const h = canScatter(x, y);
+      if (h === null) continue;
+      const kind = pickKind();
+      m.decor.push({ kind, x, y, z: h, variant: ++vseq });
+      // A stand: two to five more of the SAME kind within a few cells, which reads as one thicket
+      // rather than as evenly-spread noise. Only for things that actually grow in company.
+      if ((kind === 'pine' || kind === 'oak' || kind === 'reed' || kind === 'bush') && rng.chance(0.34)) {
+        const n = 2 + rng.int(4);
+        for (let k = 0; k < n; k++) {
+          const a = rng.float(0, Math.PI * 2), rad = rng.float(1.1, 4.2);
+          const sx = x + Math.cos(a) * rad, sy = y + Math.sin(a) * rad;
+          const sh = canScatter(sx, sy);
+          if (sh === null) continue;
+          m.decor.push({ kind, x: sx, y: sy, z: sh, variant: ++vseq });
+        }
+      }
+    }
+
+    // ---- MEGALITHS ARE BUILT, NOT SCATTERED.
+    // The barrowfields are named for their monuments, so the monuments are laid out the way real
+    // ones are: a handful of circles and processional rows, standing clear of each other, with
+    // fallen members. Twelve deliberate structures read as an ancient landscape; three hundred and
+    // forty-eight random ones read as a bug.
+    if (r.biome === 'barrow' || r.biome === 'highland') {
+      const nSites = r.biome === 'barrow' ? 9 : 3;
+      for (let s = 0; s < nSites; s++) {
+        const ox = rng.float(14, RW - 14), oy = rng.float(14, RH - 14);
+        if (town && Math.hypot(ox - town.cx, oy - town.cy) < 18) continue;
+        if (canScatter(ox, oy) === null) continue;
+        const circle = rng.chance(0.55);
+        if (circle) {
+          const rad = rng.float(4.5, 9.0);
+          const n = 7 + rng.int(7);
+          const a0 = rng.float(0, Math.PI * 2);
+          for (let k = 0; k < n; k++) {
+            // A real circle has gaps where stones were robbed for walls.
+            if (rng.chance(0.18)) continue;
+            const a = a0 + k * (Math.PI * 2 / n) + rng.float(-0.06, 0.06);
+            const px = ox + Math.cos(a) * rad * rng.float(0.94, 1.06);
+            const py = oy + Math.sin(a) * rad * rng.float(0.94, 1.06);
+            const ph = canScatter(px, py);
+            if (ph === null) continue;
+            m.decor.push({ kind: 'standingstone', x: px, y: py, z: ph, variant: ++vseq });
+          }
+        } else {
+          // An avenue: two parallel files walking off across the moor.
+          const a = rng.float(0, Math.PI * 2);
+          const n = 6 + rng.int(8);
+          const gap = rng.float(2.6, 4.4), pitch = rng.float(3.0, 5.0);
+          for (let k = 0; k < n; k++) {
+            for (const side of [-1, 1]) {
+              if (rng.chance(0.14)) continue;
+              const px = ox + Math.cos(a) * k * pitch - Math.sin(a) * gap * side;
+              const py = oy + Math.sin(a) * k * pitch + Math.cos(a) * gap * side;
+              const ph = canScatter(px, py);
+              if (ph === null) continue;
+              m.decor.push({ kind: 'standingstone', x: px, y: py, z: ph, variant: ++vseq });
+            }
+          }
+        }
+      }
     }
 
     // Monster spawn points, kept off roads and out of the settlement. The safe radius used to be
