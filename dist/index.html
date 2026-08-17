@@ -5108,7 +5108,7 @@ const UI = (() => {
     const x = (E().W - w) >> 1, y = (E().H - h) >> 1;
     Art.panel(En, x, y, w, h, 13, false);
     Art.panel(En, x + 6, y + 6, w - 12, h - 12, 4, true);
-    Art.textCentred(En, 320, y + 14, title, Core.idx(13, 14), 2);
+    Art.textCentred(En, x + w / 2, y + 14, title, Core.idx(13, 14), 2);
     En.hline(x + 14, y + 34, w - 28, Core.idx(13, 9));
     // Close button, large enough to hit without aiming.
     Art.button(En, x + w - 52, y + 8, 44, 26, 'X', false, 2);
@@ -5714,9 +5714,9 @@ const UI = (() => {
     En.rect(0, 0, En.W, En.H, Core.idx(0, 1));
     for (let y = 0; y < En.H; y += 2) En.hline(0, y, En.W, Core.idx(11, 2));
     Art.panel(En, 90, 130, 460, 220, 13, false);
-    Art.textCentred(En, 320, 158, 'YOUR PARTY HAS FALLEN', Core.idx(11, 13), 3);
-    Art.textCentred(En, 320, 210, 'The priests of Harrowgate will take you in,', Core.idx(0, 12), 2);
-    Art.textCentred(En, 320, 232, 'for a share of what you carry.', Core.idx(0, 12), 2);
+    Art.textCentred(En, En.W / 2, 158, 'YOUR PARTY HAS FALLEN', Core.idx(11, 13), 3);
+    Art.textCentred(En, En.W / 2, 210, 'The priests of Harrowgate will take you in,', Core.idx(0, 13), 2);
+    Art.textCentred(En, En.W / 2, 232, 'for a share of what you carry.', Core.idx(0, 13), 2);
     Art.button(En, 170, 268, 300, 56, 'WAKE AT THE TEMPLE', false, 2);
     reg('revive', 170, 268, 300, 56, 1);
   }
@@ -5745,8 +5745,16 @@ const UI = (() => {
   function title(g) {
     const En = E();
     // Vista: sky gradient, a ridge line and the logotype. First impression is a real shot (s22).
-    for (let y = 0; y < 480; y++) {
-      En.hline(0, y, En.W, Core.shade(9 << 4, clamp(Math.round(3 + y / En.H * 9), 0, 15)));
+    // DITHERED, like the in-game sky. Rounding a nine-step gradient to an integer shade gives seven
+    // flat 43-pixel bands with one colour per row across the whole width — the exact defect that was
+    // fixed in every 3D view, still alive on the first screen anybody sees.
+    const TH = [0.0625, 0.5625, 0.1875, 0.6875, 0.4375, 0.9375, 0.3125, 0.8125];
+    for (let y = 0; y < En.H; y++) {
+      const exact = clamp(3 + y / En.H * 9, 0, 15);
+      const lo = Math.floor(exact), frac = exact - lo;
+      for (let x = 0; x < En.W; x++) {
+        En.px(x, y, Core.shade(9 << 4, frac > TH[(x + (y & 1) * 4) & 7] ? lo + 1 : lo));
+      }
     }
     for (let x = 0; x < En.W; x++) {
       const h = 300 + Math.round(Math.sin(x / 61) * 26 + Math.sin(x / 23) * 12 + World.vnoise(x / 40, 0, 99) * 40);
@@ -5761,20 +5769,24 @@ const UI = (() => {
 
     // A carved wordmark, not a panel. Drop shadow, dark bevel, bright face, and a rule beneath —
     // so the logo cannot be mistaken for a third button.
-    Art.textCentred(En, 322, 66, 'THORNMARCH', Core.idx(0, 1), 5);
-    Art.textCentred(En, 320, 64, 'THORNMARCH', Core.idx(13, 6), 5);
-    Art.textCentred(En, 319, 63, 'THORNMARCH', Core.idx(13, 15), 5);
+    const midX = En.W / 2;
+    Art.textCentred(En, midX + 2, 66, 'THORNMARCH', Core.idx(0, 1), 5);
+    Art.textCentred(En, midX, 64, 'THORNMARCH', Core.idx(13, 6), 5);
+    Art.textCentred(En, midX - 1, 63, 'THORNMARCH', Core.idx(13, 15), 5);
     const tw = Art.textWidth('THORNMARCH', 5);
-    En.hline(320 - tw / 2, 112, tw, Core.idx(13, 11));
-    En.hline(320 - tw / 2, 114, tw, Core.idx(13, 5));
-    Art.textCentred(En, 321, 127, 'THE ASHEN CROWN', Core.idx(0, 1), 2);
-    Art.textCentred(En, 320, 126, 'THE ASHEN CROWN', Core.idx(13, 13), 2);
+    En.hline(midX - tw / 2, 112, tw, Core.idx(13, 11));
+    En.hline(midX - tw / 2, 114, tw, Core.idx(13, 5));
+    Art.textCentred(En, midX + 1, 127, 'THE ASHEN CROWN', Core.idx(0, 1), 2);
+    Art.textCentred(En, midX, 126, 'THE ASHEN CROWN', Core.idx(13, 14), 2);
 
-    Art.button(En, 200, 250, 240, 56, 'NEW GAME', false, 3);
-    reg('newgame', 200, 250, 240, 56, 1);
-    Art.button(En, 200, 316, 240, 56, 'CONTINUE', false, 3);
-    reg('continue', 200, 316, 240, 56, 1);
-    Art.textCentred(En, 320, 444, 'THE ROAD ENDS AT THE KEEP', Core.idx(13, 10), 2);
+    // Centred on the frame, not on 320 — the title screen's own buttons were sitting a hundred
+    // pixels left of centre after the framebuffer went to 800 wide.
+    const bx0 = Math.round(midX - 120);
+    Art.button(En, bx0, 250, 240, 56, 'NEW GAME', false, 3);
+    reg('newgame', bx0, 250, 240, 56, 1);
+    Art.button(En, bx0, 316, 240, 56, 'CONTINUE', false, 3);
+    reg('continue', bx0, 316, 240, 56, 1);
+    Art.textCentred(En, midX, 444, 'THE ROAD ENDS AT THE KEEP', Core.idx(13, 11), 2);
   }
 
   function creation(g) {
