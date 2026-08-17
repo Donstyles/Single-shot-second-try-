@@ -260,6 +260,108 @@ const Sprites = (() => {
       for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
       for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
       put(cx, h - 12, 13, 13);
+    } else if (kind.indexOf('stall') === 0) {
+      // A market stall: four posts, a striped awning, a trestle, and goods on it. This is the whole
+      // content of the market shot, and for three rounds the market shot contained two blank walls.
+      const variant = kind.indexOf(':') > 0 ? (parseInt(kind.split(':')[1], 10) || 0) : 0;
+      const AW = 17, ay0 = h - 40;
+      // Posts.
+      for (const px2 of [-AW + 2, AW - 2]) {
+        for (let y = ay0 + 6; y < h - 2; y++) { put(cx + px2, y, 4, 5); put(cx + px2 + 1, y, 4, 3); }
+      }
+      // Awning: sloping stripes, front edge scalloped.
+      const stripe = [11, 2, 6][variant % 3];
+      for (let x = -AW; x <= AW; x++) {
+        const drop = Math.round(Math.abs(x) * 0.18);
+        for (let y = ay0 + drop; y < ay0 + 8 + drop; y++) {
+          const band = (((x + AW) / 4) | 0) & 1;
+          put(cx + x, y, band ? stripe : 2, band ? 10 - (y - ay0 - drop) / 3 : 13 - (y - ay0 - drop) / 3);
+        }
+        // Scalloped valance.
+        if (((x + AW) % 6) < 4) put(cx + x, ay0 + 8 + drop, 4, 3);
+      }
+      // Trestle table and goods.
+      for (let x = -AW + 3; x <= AW - 3; x++) for (let y = h - 15; y < h - 11; y++) put(cx + x, y, 4, y === h - 15 ? 9 : 5);
+      for (let i = 0; i < 6; i++) {
+        const gx = -AW + 5 + i * 5;
+        const ramp = [6, 15, 11, 2, 13, 3][(i + variant) % 6];
+        for (let y = h - 20; y < h - 15; y++) for (let x = gx; x < gx + 4; x++) {
+          const r2 = (x - gx - 1.5) * (x - gx - 1.5) + (y - (h - 18)) * (y - (h - 18));
+          if (r2 < 5) put(cx + x, y, ramp, 9 + ((x + y) & 1));
+        }
+      }
+      // Legs.
+      for (const lx of [-AW + 4, AW - 5]) for (let y = h - 11; y < h - 1; y++) put(cx + lx, y, 4, 4);
+
+    } else if (kind === 'herb') {
+      // A clump of marshwort: broad basal leaves and three flower spikes. It has to read as
+      // "pick me" at ten paces or the quest is invisible even once the item exists.
+      for (let i = 0; i < 9; i++) {
+        const a = -Math.PI / 2 + (i - 4) * 0.28;
+        const len = 13 + ((i * 5) % 5);
+        for (let t = 0; t < len; t++) {
+          const bx = Math.round(Math.cos(a) * t * 1.15);
+          const by = h - 2 + Math.round(Math.sin(a) * t);
+          put(cx + bx, by, 7, 6 + (t > len - 4 ? 3 : 0) + ((i & 1) ? 1 : 0));
+          if (t > 3 && t < len - 3) put(cx + bx + (i < 4 ? -1 : 1), by, 7, 4);
+        }
+      }
+      for (const sx of [-5, 0, 5]) {
+        for (let t = 0; t < 9; t++) {
+          const yy = h - 16 - t;
+          put(cx + sx + (t > 5 ? (sx > 0 ? 1 : sx < 0 ? -1 : 0) : 0), yy, 12, 9 + (t & 1) * 3);
+          if (t > 2 && t < 8) {
+            put(cx + sx - 1, yy, 12, 7);
+            put(cx + sx + 1, yy, 12, 12);
+          }
+        }
+      }
+
+    } else if (kind === 'crate') {
+      const S = 11;
+      for (let y = h - S * 2; y < h; y++) {
+        for (let x = -S; x <= S; x++) {
+          const edge = (y === h - S * 2 || y === h - 1 || x === -S || x === S);
+          put(cx + x, y, 4, edge ? 3 : 7 - (((x + y) >> 2) & 1));
+        }
+      }
+      // Diagonal bracing.
+      for (let i = 0; i < S * 2; i++) { put(cx - S + i, h - 1 - i, 4, 10); put(cx + S - i, h - 1 - i, 4, 10); }
+
+    } else if (kind === 'barrel') {
+      const S = 9, top = h - 24;
+      for (let y = top; y < h; y++) {
+        const bulge = Math.round(Math.sin((y - top) / 24 * Math.PI) * 2);
+        for (let x = -S - bulge; x <= S + bulge; x++) {
+          const stave = ((x + S) % 4) === 0;
+          const hoop = (y === top + 3 || y === top + 19);
+          put(cx + x, y, 4, hoop ? 11 : stave ? 3 : 6 - (Math.abs(x) > S ? 1 : 0));
+        }
+      }
+      for (let x = -S; x <= S; x++) put(cx + x, top, 4, 9);
+
+    } else if (kind === 'campfire') {
+      // Ring of stones, charred logs, flame. The camp's centre of gravity.
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const sx = Math.round(Math.cos(a) * 13), sy = h - 4 + Math.round(Math.sin(a) * 4);
+        for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) {
+          if (dx * dx + dy * dy > 5) continue;
+          put(cx + sx + dx, sy + dy, 1, 5 + ((i + dx) & 1));
+        }
+      }
+      for (const [lx, ly, len] of [[-8, h - 8, 16], [-6, h - 10, 13]]) {
+        for (let i = 0; i < len; i++) put(cx + lx + i, ly - ((i * 3) / len | 0), 4, 2 + (i & 1));
+      }
+      for (let y = 0; y < 22; y++) {
+        const t = y / 22;
+        const wF = Math.round((1 - t) * 7) + 1;
+        for (let x = -wF; x <= wF; x++) {
+          const edge = Math.abs(x) >= wF - 1;
+          put(cx + x + Math.round(Math.sin(t * 5) * 2), h - 12 - y, 15, edge ? 8 + (y & 1) : 13);
+        }
+      }
+
     } else if (kind === 'door' || kind.indexOf('door:') === 0) {
       // A DOOR, standing in the doorway. A cold player spent fifteen minutes in a town and entered
       // exactly one building, by accident: "every building is a featureless solid block of stone
@@ -359,6 +461,7 @@ const Sprites = (() => {
     oak: 6.5, pine: 8.0, deadtree: 5.5, ashstump: 2.4, reed: 1.6, bush: 1.2,
     rock: 1.8, standingstone: 4.2, brazier: 2.0, fountain: 2.4, chest: 1.1,
     sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6, door: 3.1,
+    stall: 3.0, crate: 1.1, barrel: 1.2, campfire: 1.9, herb: 1.0,
   };
 
   // ---------------------------------------------------------------- portraits

@@ -715,14 +715,18 @@ const Rules = (() => {
   function restResult(party) {
     const out = { minutes: REST_MINUTES, food: -REST_FOOD, members: [] };
     for (const ch of party.members) {
-      const dead = ch.cond && (ch.cond.dead || ch.cond.unconscious);
+      const dead = ch.cond && ch.cond.dead;
+      // UNCONSCIOUS is a rest-shaped condition, not a death-shaped one. Treating it as death meant
+      // a party knocked out with no gold had no route back at all: the temple wanted a fee they
+      // could not pay, and camping "worked" while leaving all four at negative HP. A night's sleep
+      // brings the merely unconscious round at a fraction of their health. Actual death, poison,
+      // disease and curse still need a temple or a spell, or the temple has no reason to exist.
+      const ko = !dead && ch.cond && ch.cond.unconscious;
       out.members.push({
         id: ch.id,
-        hp: dead ? 0 : maxHP(ch) - ch.hp,
+        hp: dead ? 0 : ko ? (Math.round(maxHP(ch) * 0.35) - ch.hp) : maxHP(ch) - ch.hp,
         sp: dead ? 0 : maxSP(ch) - ch.sp,
-        // Rest clears fatigue-shaped conditions only. Poison, disease, curse and death need a
-        // temple or a spell — otherwise the temple has no reason to exist.
-        clears: dead ? [] : ['asleep', 'afraid', 'weak'],
+        clears: dead ? [] : ko ? ['unconscious', 'asleep', 'afraid', 'weak'] : ['asleep', 'afraid', 'weak'],
       });
     }
     return out;
@@ -1682,6 +1686,12 @@ const World = (() => {
       terrain: new Float32Array((w + 1) * (h + 1)),
       spans: new Map(),
       entities: [], portals: [], decor: [], zones: [], npcs: [],
+      // Named viewing poses for the features a screenshot is supposed to contain. The shot list is
+      // a SPEC the world must satisfy, and for eight rounds it did not: an art critic reported "no
+      // gate arch exists in frame", "there is no market", "no water and no coastline", "the bridge
+      // is a doormat". Hardcoded camera coordinates cannot find a procedurally placed feature, so
+      // the world now says where its own landmarks are and the capture asks.
+      landmarks: [],
       sea: -999, light: 1, fogStart: 14, fogEnd: 56,
     };
   }
@@ -1762,6 +1772,10 @@ const World = (() => {
   }
 
   // A bridge over a carved ravine: deck at a fixed height, ravine floor visible in the gap.
+  function landmark(m, kind, x, y, ang) {
+    m.landmarks.push({ kind, x: x + 0.5, y: y + 0.5, ang });
+  }
+
   function bridge(m, x0, y0, x1, y1, deckH) {
     const steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0)));
     for (let k = 0; k <= steps; k++) {
@@ -1771,6 +1785,10 @@ const World = (() => {
         addSpan(m, x + (y0 === y1 ? 0 : w), y + (y0 === y1 ? w : 0), deckH - 0.55, deckH, MAT.stonewall);
       }
     }
+    // Viewed from side-on and a little back, which is the only angle a bridge reads from.
+    const mx = Math.round((x0 + x1) / 2), my = Math.round((y0 + y1) / 2);
+    const alongY = Math.abs(y1 - y0) > Math.abs(x1 - x0);
+    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2);
   }
 
   // A gate arch: solid overhead, walkable underneath. `lo` must leave the party's 1.6 headroom.
@@ -1779,6 +1797,10 @@ const World = (() => {
     for (let w = -1; w <= 1; w++) {
       addSpan(m, x + (dir === 'ns' ? w : 0), y + (dir === 'ns' ? 0 : w), lo, hi, MAT.stonewall);
     }
+    // Stand back OUTSIDE the wall and look through the opening, so the arch is the subject.
+    const out = 7;
+    if (dir === 'ns') landmark(m, 'gate', x, y + out, -Math.PI / 2);
+    else landmark(m, 'gate', x + out, y, Math.PI);
   }
 
   // A cave mouth: an overhang above a tunnel entrance, so a dungeon portal reads as a dark opening
@@ -1789,6 +1811,7 @@ const World = (() => {
         addSpan(m, x + dx, y + dy, groundH + 2.4, groundH + 9 + Math.abs(dx), MAT.cliff);
       }
     }
+    landmark(m, 'cave', x, y + 8, -Math.PI / 2);
   }
 
   // ---------------------------------------------------------------- settlements
@@ -1857,6 +1880,29 @@ const World = (() => {
       m.decor.push({ kind: 'door', x: doorX + 0.5, y: doorY + 0.5, z: b.gh, shop: kind });
       setCell(m, doorX, doorY, MAT.wood);
     }
+
+    // A MARKET ROW along one edge of the plaza. Three review rounds asked for the market shot and
+    // got two blank walls: "there is no market." A town square with nothing being sold in it is a
+    // courtyard, and MM6 taught its towns by what was standing in them.
+    if (size !== 'hamlet') {
+      const mrY = cy - plazaR + 1;
+      const nStall = size === 'city' ? 6 : 4;
+      for (let i = 0; i < nStall; i++) {
+        const sx = cx - ((nStall - 1) * 1.6) / 2 + i * 1.6;
+        const gh2 = H(m, sx, mrY);
+        m.decor.push({ kind: 'stall', x: sx, y: mrY + 0.5, z: gh2, variant: i % 3 });
+        if (i % 2 === 0) m.decor.push({ kind: 'crate', x: sx + 0.7, y: mrY + 1.4, z: gh2 });
+        else m.decor.push({ kind: 'barrel', x: sx + 0.7, y: mrY + 1.4, z: gh2 });
+      }
+      // Looked at along the row from one end and a few cells back, so the awnings overlap into a
+      // real market read instead of one stall filling the frame.
+      // Stand INSIDE the plaza, on the far side, looking back along the row. Outside the plaza is
+      // a ring of buildings, and the first attempt put the camera inside one of them.
+      const mcx = cx - plazaR + 1, mcy = cy + plazaR - 2;
+      landmark(m, 'market', mcx, mcy, Math.atan2(mrY - mcy, (cx + 2) - mcx));
+    }
+    // Corner of the plaza looking across it into the ring of buildings: the widest read a town has.
+    landmark(m, 'plaza', cx - plazaR + 1, cy + plazaR - 1, Math.atan2(-1.4, 1));
 
     // Houses that are pure dressing: a settlement of only shops reads as a strip mall.
     const nHouses = size === 'city' ? 16 : size === 'village' ? 8 : 4;
@@ -2085,6 +2131,134 @@ const World = (() => {
       }
     }
 
+    // ---- harvestable marshwort, for the one quest whose objective did not exist
+    // A full assisted playthrough cleared all thirteen dungeons, opened every chest and swept every
+    // cell of every map with the interact verb: "no marshwort-like item exists anywhere in the
+    // world". The quest asked for four bundles of something that was never placed. Herbs regrow,
+    // so the quest cannot be locked out by a player who harvests carelessly.
+    if (r.biome === 'marsh' || r.biome === 'temperate' || r.biome === 'forest') {
+      const want = r.biome === 'marsh' ? 14 : 4;
+      let made = 0;
+      for (let t = 0; t < 900 && made < want; t++) {
+        const x = rng.float(6, RW - 6), y = rng.float(6, RH - 6);
+        const cx2 = Math.floor(x), cy2 = Math.floor(y);
+        const c = m.cells[cy2 * RW + cx2];
+        if (isSolid(c)) continue;
+        const mt = matOf(c);
+        if (mt !== MAT.marsh && mt !== MAT.grass) continue;
+        const h2 = H(m, x, y);
+        if (h2 < m.sea - 0.2 || h2 > m.sea + 3.2) continue;
+        m.decor.push({ kind: 'herb', x, y, z: h2, item: 'herb_bundle' });
+        made++;
+      }
+    }
+
+    // ---- a bandit camp, in a clearing away from the town and the road
+    // The camp shot came back with "a hill, trees, a tent, a horizon" and no camp, because there
+    // was no camp: the generator placed a lone tent prop and nothing else. A camp is a fire, a ring
+    // of tents facing it, gear on the ground, and people.
+    {
+      let placed = false;
+      for (let attempt = 0; attempt < 60 && !placed; attempt++) {
+        const a = rng.float(0, Math.PI * 2), d = rng.float(30, 52);
+        const cxp = Math.round(RW / 2 + Math.cos(a) * d), cyp = Math.round(RH / 2 + Math.sin(a) * d);
+        if (cxp < 8 || cyp < 8 || cxp > RW - 8 || cyp > RH - 8) continue;
+        let ok = true;
+        for (let y = cyp - 4; y <= cyp + 4 && ok; y++) {
+          for (let x = cxp - 4; x <= cxp + 4; x++) {
+            const c = m.cells[y * RW + x];
+            if (isSolid(c) || matOf(c) === MAT.water) { ok = false; break; }
+          }
+        }
+        if (!ok) continue;
+        const gh2 = H(m, cxp, cyp);
+        flatten(m, cxp, cyp, 5, 5, gh2, 2);
+        for (let x = cxp - 4; x <= cxp + 4; x++) {
+          for (let y = cyp - 4; y <= cyp + 4; y++) {
+            if (Math.hypot(x - cxp, y - cyp) <= 4 && !isSolid(m.cells[y * RW + x])) {
+              m.cells[y * RW + x] = MAT.dirt;
+            }
+          }
+        }
+        m.decor.push({ kind: 'campfire', x: cxp + 0.5, y: cyp + 0.5, z: gh2 });
+        for (let i = 0; i < 3; i++) {
+          const ta = (i / 3) * Math.PI * 2 + 0.6;
+          m.decor.push({ kind: 'tent', x: cxp + 0.5 + Math.cos(ta) * 2.6, y: cyp + 0.5 + Math.sin(ta) * 2.6, z: gh2 });
+        }
+        m.decor.push({ kind: 'crate', x: cxp + 2.2, y: cyp - 1.6, z: gh2 });
+        m.decor.push({ kind: 'barrel', x: cxp - 2.4, y: cyp + 1.2, z: gh2 });
+        for (let i = 0; i < 3; i++) {
+          const ta = (i / 3) * Math.PI * 2;
+          m.entities.push({
+            eid: 'camp' + id + '_' + i, kind: r.spawn.indexOf('bandit') >= 0 ? 'bandit' : r.spawn[0],
+            x: cxp + 0.5 + Math.cos(ta) * 1.6, y: cyp + 0.5 + Math.sin(ta) * 1.6,
+            z: gh2, ang: ta + Math.PI, state: 'idle', home: { x: cxp, y: cyp },
+          });
+        }
+        landmark(m, 'camp', cxp, cyp + 8, -Math.PI / 2);
+        placed = true;
+      }
+    }
+
+    // ---- shoreline, for regions that have a sea to stand beside
+    {
+      let best = null, bestScore = -1;
+      for (let y = 6; y < RH - 6; y += 3) {
+        for (let x = 6; x < RW - 6; x += 3) {
+          if (matOf(m.cells[y * RW + x]) === MAT.water) continue;
+          if (isSolid(m.cells[y * RW + x])) continue;
+          // Count water in a ring: a good shoreline pose has open sea in front and land behind.
+          let wet = 0;
+          for (let k = 0; k < 8; k++) {
+            const ax = x + Math.round(Math.cos(k * Math.PI / 4) * 7);
+            const ay = y + Math.round(Math.sin(k * Math.PI / 4) * 7);
+            if (ax < 0 || ay < 0 || ax >= RW || ay >= RH) continue;
+            if (matOf(m.cells[ay * RW + ax]) === MAT.water) wet++;
+          }
+          if (wet < 3 || wet > 6) continue;
+          // Prefer the widest expanse: sample far out along the water direction.
+          let open = 0, ox2 = 0, oy2 = 0;
+          for (let k = 0; k < 8; k++) {
+            const dxk = Math.cos(k * Math.PI / 4), dyk = Math.sin(k * Math.PI / 4);
+            let run = 0;
+            for (let t = 3; t < 40; t += 2) {
+              const ax = Math.round(x + dxk * t), ay = Math.round(y + dyk * t);
+              if (ax < 0 || ay < 0 || ax >= RW || ay >= RH) break;
+              if (matOf(m.cells[ay * RW + ax]) !== MAT.water) break;
+              run = t;
+            }
+            if (run > open) { open = run; ox2 = dxk; oy2 = dyk; }
+          }
+          if (open > bestScore) { bestScore = open; best = { x, y, ang: Math.atan2(oy2, ox2) }; }
+        }
+      }
+      if (best && bestScore >= 12) landmark(m, 'coast', best.x, best.y, best.ang);
+    }
+
+    // ---- a stretch of open road, looked at along its length
+    {
+      for (let t = 0; t < 400; t++) {
+        const x = Math.round(rng.float(10, RW - 10)), y = Math.round(rng.float(10, RH - 10));
+        if (matOf(m.cells[y * RW + x]) !== MAT.road) continue;
+        if (town && Math.hypot(x - town.cx, y - town.cy) < 16) continue;
+        // Which way does the road run from here?
+        let dirX = 0, dirY = 0;
+        for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          let run = 0;
+          for (let k = 1; k < 12; k++) {
+            const nx = x + ax * k, ny = y + ay * k;
+            if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) break;
+            if (matOf(m.cells[ny * RW + nx]) !== MAT.road) break;
+            run = k;
+          }
+          if (run > 7) { dirX = ax; dirY = ay; break; }
+        }
+        if (!dirX && !dirY) continue;
+        landmark(m, 'road', x - dirX * 5, y - dirY * 5, Math.atan2(dirY, dirX));
+        break;
+      }
+    }
+
     m.fogStart = r.biome === 'marsh' ? 8 : 16;
     m.fogEnd = r.biome === 'marsh' ? 34 : 62;
     return m;
@@ -2251,21 +2425,37 @@ const World = (() => {
     }
 
     // NPCs: quest givers in their region's settlement, plus wanderers.
+    // Every giver must stand on OPEN GROUND the party can walk to. The old placement for a region
+    // with no town laid its refugees out in a straight line east of the harrowgate plaza — which
+    // walks into the ring of buildings after a few of them, and the giver of the FINAL quest ended
+    // up inside one. A full playthrough that cleared all thirteen dungeons and turned in every
+    // other quest never saw q_crown at all, so the game could not be won.
+    const placeGiver = (m, qid, role) => {
+      for (let ring = 0; ring < 4; ring++) {
+        const rad = 5.5 + ring * 1.8;
+        for (let k = 0; k < 24; k++) {
+          const a = (m.npcs.length * 0.7 + k) * (Math.PI * 2 / 24) + 0.4;
+          const nx = m.town.x + Math.cos(a) * rad, ny = m.town.y + Math.sin(a) * rad;
+          if (!passable(m, nx, ny, H(m, nx, ny))) continue;
+          let clash = false;
+          for (const n of m.npcs) if (Math.hypot(n.x - nx, n.y - ny) < 1.6) { clash = true; break; }
+          if (clash) continue;
+          m.npcs.push({ id: 'npc_' + qid, role, quest: qid, x: nx, y: ny, z: H(m, nx, ny) });
+          return true;
+        }
+      }
+      return false;
+    };
     for (const qid of QUEST_IDS) {
       const q = QUESTS[qid];
       const m = maps[q.region];
-      if (!m || !m.town) {
-        // A region with no town puts its giver at the regional landmark instead of nowhere.
-        const host = maps.harrowgate;
+      // A region with no town hosts its giver in the capital instead of nowhere.
+      const host = (m && m.town) ? m : maps.harrowgate;
+      if (!placeGiver(host, qid, q.giver)) {
+        // Never silently drop a quest giver: an unplaceable one is an unwinnable campaign.
         host.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid,
-          x: host.town.x + 2.5 + host.npcs.length, y: host.town.y + 3.5, z: H(host, host.town.x, host.town.y) });
-        continue;
+          x: host.town.x + 0.5, y: host.town.y + 2.5, z: H(host, host.town.x, host.town.y) });
       }
-      // Ring the plaza rather than crowding the spawn point. A giver standing inside the party's
-      // interact radius fired a quest modal before the player had seen the world at all.
-      const a = (m.npcs.length / 6) * Math.PI * 2 + 0.4;
-      const nx = m.town.x + Math.cos(a) * 5.5, ny = m.town.y + Math.sin(a) * 5.5;
-      m.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid, x: nx, y: ny, z: H(m, nx, ny) });
     }
 
     return { seed: RNG.seed, maps, regions: REGIONS, dungeons: DUNGEONS, quests: QUESTS };
@@ -3733,6 +3923,108 @@ const Sprites = (() => {
       for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
       for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
       put(cx, h - 12, 13, 13);
+    } else if (kind.indexOf('stall') === 0) {
+      // A market stall: four posts, a striped awning, a trestle, and goods on it. This is the whole
+      // content of the market shot, and for three rounds the market shot contained two blank walls.
+      const variant = kind.indexOf(':') > 0 ? (parseInt(kind.split(':')[1], 10) || 0) : 0;
+      const AW = 17, ay0 = h - 40;
+      // Posts.
+      for (const px2 of [-AW + 2, AW - 2]) {
+        for (let y = ay0 + 6; y < h - 2; y++) { put(cx + px2, y, 4, 5); put(cx + px2 + 1, y, 4, 3); }
+      }
+      // Awning: sloping stripes, front edge scalloped.
+      const stripe = [11, 2, 6][variant % 3];
+      for (let x = -AW; x <= AW; x++) {
+        const drop = Math.round(Math.abs(x) * 0.18);
+        for (let y = ay0 + drop; y < ay0 + 8 + drop; y++) {
+          const band = (((x + AW) / 4) | 0) & 1;
+          put(cx + x, y, band ? stripe : 2, band ? 10 - (y - ay0 - drop) / 3 : 13 - (y - ay0 - drop) / 3);
+        }
+        // Scalloped valance.
+        if (((x + AW) % 6) < 4) put(cx + x, ay0 + 8 + drop, 4, 3);
+      }
+      // Trestle table and goods.
+      for (let x = -AW + 3; x <= AW - 3; x++) for (let y = h - 15; y < h - 11; y++) put(cx + x, y, 4, y === h - 15 ? 9 : 5);
+      for (let i = 0; i < 6; i++) {
+        const gx = -AW + 5 + i * 5;
+        const ramp = [6, 15, 11, 2, 13, 3][(i + variant) % 6];
+        for (let y = h - 20; y < h - 15; y++) for (let x = gx; x < gx + 4; x++) {
+          const r2 = (x - gx - 1.5) * (x - gx - 1.5) + (y - (h - 18)) * (y - (h - 18));
+          if (r2 < 5) put(cx + x, y, ramp, 9 + ((x + y) & 1));
+        }
+      }
+      // Legs.
+      for (const lx of [-AW + 4, AW - 5]) for (let y = h - 11; y < h - 1; y++) put(cx + lx, y, 4, 4);
+
+    } else if (kind === 'herb') {
+      // A clump of marshwort: broad basal leaves and three flower spikes. It has to read as
+      // "pick me" at ten paces or the quest is invisible even once the item exists.
+      for (let i = 0; i < 9; i++) {
+        const a = -Math.PI / 2 + (i - 4) * 0.28;
+        const len = 13 + ((i * 5) % 5);
+        for (let t = 0; t < len; t++) {
+          const bx = Math.round(Math.cos(a) * t * 1.15);
+          const by = h - 2 + Math.round(Math.sin(a) * t);
+          put(cx + bx, by, 7, 6 + (t > len - 4 ? 3 : 0) + ((i & 1) ? 1 : 0));
+          if (t > 3 && t < len - 3) put(cx + bx + (i < 4 ? -1 : 1), by, 7, 4);
+        }
+      }
+      for (const sx of [-5, 0, 5]) {
+        for (let t = 0; t < 9; t++) {
+          const yy = h - 16 - t;
+          put(cx + sx + (t > 5 ? (sx > 0 ? 1 : sx < 0 ? -1 : 0) : 0), yy, 12, 9 + (t & 1) * 3);
+          if (t > 2 && t < 8) {
+            put(cx + sx - 1, yy, 12, 7);
+            put(cx + sx + 1, yy, 12, 12);
+          }
+        }
+      }
+
+    } else if (kind === 'crate') {
+      const S = 11;
+      for (let y = h - S * 2; y < h; y++) {
+        for (let x = -S; x <= S; x++) {
+          const edge = (y === h - S * 2 || y === h - 1 || x === -S || x === S);
+          put(cx + x, y, 4, edge ? 3 : 7 - (((x + y) >> 2) & 1));
+        }
+      }
+      // Diagonal bracing.
+      for (let i = 0; i < S * 2; i++) { put(cx - S + i, h - 1 - i, 4, 10); put(cx + S - i, h - 1 - i, 4, 10); }
+
+    } else if (kind === 'barrel') {
+      const S = 9, top = h - 24;
+      for (let y = top; y < h; y++) {
+        const bulge = Math.round(Math.sin((y - top) / 24 * Math.PI) * 2);
+        for (let x = -S - bulge; x <= S + bulge; x++) {
+          const stave = ((x + S) % 4) === 0;
+          const hoop = (y === top + 3 || y === top + 19);
+          put(cx + x, y, 4, hoop ? 11 : stave ? 3 : 6 - (Math.abs(x) > S ? 1 : 0));
+        }
+      }
+      for (let x = -S; x <= S; x++) put(cx + x, top, 4, 9);
+
+    } else if (kind === 'campfire') {
+      // Ring of stones, charred logs, flame. The camp's centre of gravity.
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const sx = Math.round(Math.cos(a) * 13), sy = h - 4 + Math.round(Math.sin(a) * 4);
+        for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) {
+          if (dx * dx + dy * dy > 5) continue;
+          put(cx + sx + dx, sy + dy, 1, 5 + ((i + dx) & 1));
+        }
+      }
+      for (const [lx, ly, len] of [[-8, h - 8, 16], [-6, h - 10, 13]]) {
+        for (let i = 0; i < len; i++) put(cx + lx + i, ly - ((i * 3) / len | 0), 4, 2 + (i & 1));
+      }
+      for (let y = 0; y < 22; y++) {
+        const t = y / 22;
+        const wF = Math.round((1 - t) * 7) + 1;
+        for (let x = -wF; x <= wF; x++) {
+          const edge = Math.abs(x) >= wF - 1;
+          put(cx + x + Math.round(Math.sin(t * 5) * 2), h - 12 - y, 15, edge ? 8 + (y & 1) : 13);
+        }
+      }
+
     } else if (kind === 'door' || kind.indexOf('door:') === 0) {
       // A DOOR, standing in the doorway. A cold player spent fifteen minutes in a town and entered
       // exactly one building, by accident: "every building is a featureless solid block of stone
@@ -3832,6 +4124,7 @@ const Sprites = (() => {
     oak: 6.5, pine: 8.0, deadtree: 5.5, ashstump: 2.4, reed: 1.6, bush: 1.2,
     rock: 1.8, standingstone: 4.2, brazier: 2.0, fountain: 2.4, chest: 1.1,
     sign: 2.6, stump: 0.8, questitem: 1.0, tent: 2.6, door: 3.1,
+    stall: 3.0, crate: 1.1, barrel: 1.2, campfire: 1.9, herb: 1.0,
   };
 
   // ---------------------------------------------------------------- portraits
@@ -4478,7 +4771,57 @@ const UI = (() => {
       Art.text(En, f.x + 24, f.inner + 210, 'Food: ' + g.party.food, Core.idx(2, 12), 2);
       return;
     }
-    if (kind === 'trainer' || kind === 'guild') {
+    // A GUILD teaches magic; a TRAINER teaches arms. They used to render the identical body — the
+    // same twelve weapon and armour buttons — so no magic-school skill was reachable anywhere in
+    // the game, and neither was any spell. A QA pass at level 100 with every skill point spent
+    // could cast three spells out of ninety-nine.
+    if (kind === 'guild') {
+      const schools = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
+      if (!schools.length) {
+        Art.text(En, f.x + 24, f.inner + 30, ch.name + ' has no aptitude for magic.', Core.idx(11, 12), 2);
+        Art.text(En, f.x + 24, f.inner + 56, 'Pick a spellcaster from the party above.', Core.idx(0, 12), 2);
+        return;
+      }
+      let sch = g.guildSchool;
+      if (schools.indexOf(sch) < 0) sch = schools[0];
+      // School tabs.
+      schools.forEach((sc, i) => {
+        const bx = f.x + 24 + i * 92, by = f.inner + 16;
+        Art.button(En, bx, by, 86, 32, Spellcraft.SCHOOLS[sc].name.toUpperCase().slice(0, 6), sc === sch, 2);
+        reg('guildschool', bx, by, 86, 32, sc);
+      });
+      const skill = ch.skills[sch];
+      const lvl = skill ? skill.lvl : 0;
+      const mast = skill ? skill.mastery : 0;
+      Art.text(En, f.x + 24, f.inner + 58, Spellcraft.SCHOOLS[sch].name + ' — ' +
+        Rules.MASTERY_NAME[mast] + ' ' + lvl, Core.idx(13, 14), 2);
+      Art.button(En, f.x + 330, f.inner + 54, 230, 34,
+        'STUDY (' + Rules.skillUpCost(lvl) + ' PTS, HAVE ' + ch.skillPts + ')', false, 2);
+      reg('skillup', f.x + 330, f.inner + 54, 230, 34, sch);
+
+      // The spells of this school, with what each needs and what it costs.
+      const list = Spellcraft.bySchool(sch);
+      list.forEach((id, i) => {
+        const sp = Spellcraft.SPELLS[id];
+        const x = f.x + 22 + (i % 2) * 278, y = f.inner + 96 + Math.floor(i / 2) * 42;
+        if (y > f.y + f.h - 60) return;
+        const known = !!(ch.spells && ch.spells[id]);
+        const need = Spellcraft.TIER_MASTERY[sp.tier];
+        const gated = mast < need;
+        const price = Spellcraft.scrollPrice(id);
+        Art.panel(En, x, y, 270, 38, 4, true);
+        Art.text(En, x + 6, y + 4, sp.name.slice(0, 17), Core.idx(0, known ? 8 : gated ? 6 : 14), 2);
+        Art.text(En, x + 6, y + 22, 'T' + sp.tier + '  ' + sp.sp + ' SP', Core.idx(12, 12), 1);
+        if (known) Art.text(En, x + 190, y + 12, 'KNOWN', Core.idx(6, 12), 2);
+        else if (gated) Art.text(En, x + 150, y + 12, Rules.MASTERY_NAME[need].toUpperCase(), Core.idx(11, 11), 2);
+        else {
+          Art.text(En, x + 194, y + 12, price + 'g', Core.idx(13, g.party.gold >= price ? 14 : 7), 2);
+          reg('learnspell', x, y, 270, 38, id);
+        }
+      });
+      return;
+    }
+    if (kind === 'trainer') {
       const pending = Rules.levelForXP(ch.xp) - ch.level;
       const cost = Rules.trainCost(ch.level);
       Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
@@ -5221,10 +5564,16 @@ const Game = (() => {
   // Defeat is a terminal event with a cost, the way MM6 handled it: you wake at the temple,
   // poorer, a day later. It must NEVER be a state the player can walk around in, and it must never
   // be something a save can silently capture.
+  // Defeat RE-ARMS. `state.defeated` used to latch, so once the modal had been dismissed it never
+  // came back: a QA pass pressed M then Escape on the defeat screen and got a party of four
+  // unconscious characters walking around a world they could no longer fight or cast in, with zero
+  // gold, no temple they could afford, and a camp that does not revive the unconscious. Save and
+  // load did not re-arm it either — only tearing down the page did. The latch is the bug; the
+  // condition is the truth, and the condition is checked every tick.
   function checkDefeat() {
-    if (!state.party || state.defeated) return false;
+    if (!state.party) return false;
     const anyUp = state.party.members.some((c) => Rules.canAct(c));
-    if (anyUp) return false;
+    if (anyUp) { state.defeated = false; return false; }
     state.defeated = true;
     state.screen = 'defeat';
     return true;
@@ -5272,8 +5621,30 @@ const Game = (() => {
 
   function grantItem(id, n) {
     const st = { id, qty: n || 1, ident: true, bonus: 0, charges: 0 };
-    giveStack(st);
-    return st;
+    return giveStack(st) ? st : null;
+  }
+
+  // Would this whole list fit? Simulated against a copy of the slot counts, because a two-item
+  // pickup that half-succeeds is the same class of bug as one that silently fails.
+  function hasPackRoom(stacks) {
+    const p = state.party;
+    const slots = p.members.map((c) => 30 - c.pack.length);
+    const room = p.members.map((c) => c.pack.map((s) => ({ id: s.id, qty: s.qty || 1 })));
+    for (const st of stacks) {
+      const cap = Items.maxStack(st.id);
+      let placed = false;
+      if (cap > 1) {
+        for (const bag of room) {
+          const ex = bag.find((s) => s.id === st.id && s.qty < cap);
+          if (ex) { ex.qty += (st.qty || 1); placed = true; break; }
+        }
+      }
+      if (placed) continue;
+      const i = slots.findIndex((n) => n > 0);
+      if (i < 0) return false;
+      slots[i]--; room[i].push({ id: st.id, qty: st.qty || 1 });
+    }
+    return true;
   }
 
   function grantXP(n) {
@@ -5348,13 +5719,14 @@ const Game = (() => {
     }
     let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
-      if (d.kind !== 'chest' && d.kind !== 'questitem') continue;
+      if (d.kind !== 'chest' && d.kind !== 'questitem' && d.kind !== 'herb') continue;
       if (d.opened || d.taken) continue;
+      if (d.kind === 'herb' && d.regrowAt !== undefined && Clock.t < d.regrowAt) continue;
       const dd = Math.hypot(d.x - p.x, d.y - p.y);
       if (dd >= 3.0) continue;
       // Quest items outrank chests unconditionally. A chest standing beside the seal must never
       // consume the interaction the campaign depends on.
-      const rank = d.kind === 'questitem' ? 0 : 1;
+      const rank = d.kind === 'questitem' ? 0 : d.kind === 'herb' ? 1 : 2;
       if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
@@ -5392,19 +5764,45 @@ const Game = (() => {
     }
     if (t.kind === 'chest') {
       if (t.decor.opened) { Log.push('Already looted.', 'info'); return false; }
-      t.decor.opened = true;
       const rng = RNG.live('loot');
       const loot = Items.rollLoot(rng, t.decor.tier, 0);
+      const items = Items.sortForPickup(loot.items);
+      // A chest is one-shot, so it must not be spent on a pickup that cannot happen. Refuse the
+      // whole thing while the packs are full rather than consuming it and deleting the contents.
+      if (items.length && !hasPackRoom(items)) {
+        Log.push('Your packs are full. The chest stays shut.', 'hit');
+        return false;
+      }
+      t.decor.opened = true;
       state.party.gold += loot.gold;
-      for (const st of Items.sortForPickup(loot.items)) giveStack(st);
+      for (const st of items) giveStack(st);
       Log.push('The chest holds ' + loot.gold + ' gold' + (loot.items.length ? ' and something else.' : '.'), 'good');
       return true;
     }
     if (t.kind === 'questitem') {
       if (t.decor.taken) return false;
+      // ATOMIC. The old order marked the item taken, then tried to add it, then announced success
+      // regardless. With four full packs the result was: "No room for Seal of the Barrow!" followed
+      // immediately by "Taken: Seal of the Barrow", the item destroyed, the chest consumed, and the
+      // quest stuck at state 1 forever with no way back — including for the Ashen Key, which is the
+      // endgame item. Take it only if it actually lands in a pack.
+      if (!grantItem(t.decor.item, 1)) {
+        Log.push('Your packs are full. Drop something and try again.', 'hit');
+        return false;
+      }
       t.decor.taken = true;
-      grantItem(t.decor.item, 1);
       Log.push('Taken: ' + Items.ITEMS[t.decor.item].name, 'good');
+      return true;
+    }
+    if (t.kind === 'herb') {
+      // Gathered, not consumed. A quest that asks for four bundles must not be lockable by a player
+      // who picked eight and dropped them; the patch regrows in a day.
+      if (!grantItem(t.decor.item, 1)) {
+        Log.push('Your packs are full.', 'hit');
+        return false;
+      }
+      t.decor.regrowAt = Clock.t + Core.MIN_PER_DAY;
+      Log.push('You gather ' + Items.ITEMS[t.decor.item].name + '.', 'good');
       return true;
     }
     if (t.kind === 'portal') {
@@ -5855,6 +6253,8 @@ const Game = (() => {
   // ---------------------------------------------------------------- input
   function onKey(k, down) {
     state.keys[k] = down;
+    // The defeat screen is MODAL. Every screen hotkey dismissed it, and the check did not re-arm.
+    if (state.screen === 'defeat' && down) return;
     if (down && (k === 'fwd' || k === 'back' || k === 'turnL' || k === 'turnR'
       || k === 'strafeL' || k === 'strafeR')) state.keyLatch[k] = TAP_LATCH_MS;
     if (!down) return;
@@ -5875,7 +6275,10 @@ const Game = (() => {
     state.screen = state.screen === name ? null : name;
     return state.screen;
   }
-  function closeScreens() { state.screen = null; state.talkingTo = null; return true; }
+  function closeScreens() {
+    if (state.screen === 'defeat') return false;      // there is nothing behind it to go back to
+    state.screen = null; state.talkingTo = null; return true;
+  }
 
   function onTap(x, y, down) {
     const r = UI.hit(x, y);
@@ -5937,6 +6340,8 @@ const Game = (() => {
       case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; Log.push('Bought rations.', 'good'); } else Log.push('Not enough gold for rations.', 'info'); break;
       case 'train': doTrain(r.data); break;
       case 'skillup': doSkillUp(r.data); break;
+      case 'learnspell': doLearnSpell(r.data); break;
+      case 'guildschool': state.guildSchool = r.data; break;
       case 'acceptquest': acceptQuest(r.data); break;
       case 'turnin': turnInQuest(r.data); closeScreens(); break;
       case 'dorest': doRest(); break;
@@ -6040,6 +6445,13 @@ const Game = (() => {
       Log.push('Not enough gold — ' + Items.ITEMS[st.id].name + ' costs ' + price + ', you have ' + state.party.gold + '.', 'info');
       return false;
     }
+    // Check room BEFORE taking the money. With full packs the shop took 18 gold a click, forever,
+    // logging "No room for Club!" and "Bought Club." on the same frame. There is no sell verb, so
+    // a full pack is the normal end state of play and every shop became a gold shredder.
+    if (!hasPackRoom([{ id: st.id, qty: 1 }])) {
+      Log.push('No room in your packs for ' + Items.ITEMS[st.id].name + '.', 'info');
+      return false;
+    }
     state.party.gold -= price;
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
@@ -6053,6 +6465,39 @@ const Game = (() => {
     if (!gained) { Log.push('Not enough experience.', 'info'); return false; }
     state.party.gold -= cost;
     Log.push(ch.name + ' reaches level ' + ch.level + '.', 'good');
+    return true;
+  }
+
+  // Buy a spell from a guild. The 99-spell book was UNREACHABLE: a QA pass at level 100 with all
+  // 198 skill points spent could cast exactly three spells, because the guild screen rendered the
+  // trainer's twelve weapon skills, no magic school appeared anywhere, and no scroll dropped in any
+  // of the thirteen dungeons. Ninety-nine spells that cannot be obtained are ninety-nine spells
+  // that do not exist.
+  function doLearnSpell(id) {
+    const ch = state.party.members[state.active];
+    const sp = Spellcraft.SPELLS[id];
+    if (!sp) return false;
+    if (ch.spells && ch.spells[id]) { Log.push(ch.name + ' already knows ' + sp.name + '.', 'info'); return false; }
+    if (!Spellcraft.learnable(ch, id)) {
+      Log.push(ch.name + ' cannot learn ' + sp.name + ' — wrong class for that school.', 'info');
+      return false;
+    }
+    const skill = ch.skills[sp.school];
+    const need = Spellcraft.TIER_MASTERY[sp.tier];
+    if (!skill || skill.mastery < need) {
+      Log.push(sp.name + ' needs ' + Rules.MASTERY_NAME[need] + ' ' +
+        Spellcraft.SCHOOLS[sp.school].name + '. Raise the skill first.', 'info');
+      return false;
+    }
+    const price = Spellcraft.scrollPrice(id);
+    if (state.party.gold < price) {
+      Log.push('Not enough gold — ' + sp.name + ' costs ' + price + '.', 'info');
+      return false;
+    }
+    state.party.gold -= price;
+    if (!ch.spells) ch.spells = {};
+    ch.spells[id] = true;
+    Log.push(ch.name + ' learns ' + sp.name + '.', 'good');
     return true;
   }
 
@@ -6250,7 +6695,7 @@ const Game = (() => {
       if (d.kind === 'questitem' && d.taken) continue;
       const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.decor(d.kind, d.shop), x: d.x, y: d.y,
+      list.push({ dist, spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
         z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
         h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
     }
@@ -6671,6 +7116,16 @@ const Debug = (() => {
 
     // ---- screens
     screen(name) { if (!hasGame()) need('screen'); return Game.openScreen(name); },
+    // Where the world says its own landmarks are. The shot list is a spec the world must satisfy;
+    // hardcoded camera coordinates cannot find a procedurally placed gate, bridge or shoreline,
+    // which is why eight rounds of "gate at dusk" captured a brown rectangle in a field.
+    landmark(mapId, kind) {
+      if (!hasGame()) need('landmark');
+      const m = Game.state.world.maps[mapId];
+      if (!m || !m.landmarks) return null;
+      const hit = m.landmarks.filter((l) => l.kind === kind);
+      return hit.length ? hit[0] : null;
+    },
     closeAll() { if (!hasGame()) need('closeAll'); return Game.closeScreens(); },
 
     // ---- determinism control

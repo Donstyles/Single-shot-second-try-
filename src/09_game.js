@@ -483,10 +483,16 @@ const Game = (() => {
   // Defeat is a terminal event with a cost, the way MM6 handled it: you wake at the temple,
   // poorer, a day later. It must NEVER be a state the player can walk around in, and it must never
   // be something a save can silently capture.
+  // Defeat RE-ARMS. `state.defeated` used to latch, so once the modal had been dismissed it never
+  // came back: a QA pass pressed M then Escape on the defeat screen and got a party of four
+  // unconscious characters walking around a world they could no longer fight or cast in, with zero
+  // gold, no temple they could afford, and a camp that does not revive the unconscious. Save and
+  // load did not re-arm it either — only tearing down the page did. The latch is the bug; the
+  // condition is the truth, and the condition is checked every tick.
   function checkDefeat() {
-    if (!state.party || state.defeated) return false;
+    if (!state.party) return false;
     const anyUp = state.party.members.some((c) => Rules.canAct(c));
-    if (anyUp) return false;
+    if (anyUp) { state.defeated = false; return false; }
     state.defeated = true;
     state.screen = 'defeat';
     return true;
@@ -534,8 +540,30 @@ const Game = (() => {
 
   function grantItem(id, n) {
     const st = { id, qty: n || 1, ident: true, bonus: 0, charges: 0 };
-    giveStack(st);
-    return st;
+    return giveStack(st) ? st : null;
+  }
+
+  // Would this whole list fit? Simulated against a copy of the slot counts, because a two-item
+  // pickup that half-succeeds is the same class of bug as one that silently fails.
+  function hasPackRoom(stacks) {
+    const p = state.party;
+    const slots = p.members.map((c) => 30 - c.pack.length);
+    const room = p.members.map((c) => c.pack.map((s) => ({ id: s.id, qty: s.qty || 1 })));
+    for (const st of stacks) {
+      const cap = Items.maxStack(st.id);
+      let placed = false;
+      if (cap > 1) {
+        for (const bag of room) {
+          const ex = bag.find((s) => s.id === st.id && s.qty < cap);
+          if (ex) { ex.qty += (st.qty || 1); placed = true; break; }
+        }
+      }
+      if (placed) continue;
+      const i = slots.findIndex((n) => n > 0);
+      if (i < 0) return false;
+      slots[i]--; room[i].push({ id: st.id, qty: st.qty || 1 });
+    }
+    return true;
   }
 
   function grantXP(n) {
@@ -610,13 +638,14 @@ const Game = (() => {
     }
     let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
-      if (d.kind !== 'chest' && d.kind !== 'questitem') continue;
+      if (d.kind !== 'chest' && d.kind !== 'questitem' && d.kind !== 'herb') continue;
       if (d.opened || d.taken) continue;
+      if (d.kind === 'herb' && d.regrowAt !== undefined && Clock.t < d.regrowAt) continue;
       const dd = Math.hypot(d.x - p.x, d.y - p.y);
       if (dd >= 3.0) continue;
       // Quest items outrank chests unconditionally. A chest standing beside the seal must never
       // consume the interaction the campaign depends on.
-      const rank = d.kind === 'questitem' ? 0 : 1;
+      const rank = d.kind === 'questitem' ? 0 : d.kind === 'herb' ? 1 : 2;
       if (rank < bestRank || (rank === bestRank && dd < bestD)) { bestRank = rank; bestD = dd; bestDecor = d; }
     }
     if (bestDecor) return { kind: bestDecor.kind, decor: bestDecor };
@@ -654,19 +683,45 @@ const Game = (() => {
     }
     if (t.kind === 'chest') {
       if (t.decor.opened) { Log.push('Already looted.', 'info'); return false; }
-      t.decor.opened = true;
       const rng = RNG.live('loot');
       const loot = Items.rollLoot(rng, t.decor.tier, 0);
+      const items = Items.sortForPickup(loot.items);
+      // A chest is one-shot, so it must not be spent on a pickup that cannot happen. Refuse the
+      // whole thing while the packs are full rather than consuming it and deleting the contents.
+      if (items.length && !hasPackRoom(items)) {
+        Log.push('Your packs are full. The chest stays shut.', 'hit');
+        return false;
+      }
+      t.decor.opened = true;
       state.party.gold += loot.gold;
-      for (const st of Items.sortForPickup(loot.items)) giveStack(st);
+      for (const st of items) giveStack(st);
       Log.push('The chest holds ' + loot.gold + ' gold' + (loot.items.length ? ' and something else.' : '.'), 'good');
       return true;
     }
     if (t.kind === 'questitem') {
       if (t.decor.taken) return false;
+      // ATOMIC. The old order marked the item taken, then tried to add it, then announced success
+      // regardless. With four full packs the result was: "No room for Seal of the Barrow!" followed
+      // immediately by "Taken: Seal of the Barrow", the item destroyed, the chest consumed, and the
+      // quest stuck at state 1 forever with no way back — including for the Ashen Key, which is the
+      // endgame item. Take it only if it actually lands in a pack.
+      if (!grantItem(t.decor.item, 1)) {
+        Log.push('Your packs are full. Drop something and try again.', 'hit');
+        return false;
+      }
       t.decor.taken = true;
-      grantItem(t.decor.item, 1);
       Log.push('Taken: ' + Items.ITEMS[t.decor.item].name, 'good');
+      return true;
+    }
+    if (t.kind === 'herb') {
+      // Gathered, not consumed. A quest that asks for four bundles must not be lockable by a player
+      // who picked eight and dropped them; the patch regrows in a day.
+      if (!grantItem(t.decor.item, 1)) {
+        Log.push('Your packs are full.', 'hit');
+        return false;
+      }
+      t.decor.regrowAt = Clock.t + Core.MIN_PER_DAY;
+      Log.push('You gather ' + Items.ITEMS[t.decor.item].name + '.', 'good');
       return true;
     }
     if (t.kind === 'portal') {
@@ -1117,6 +1172,8 @@ const Game = (() => {
   // ---------------------------------------------------------------- input
   function onKey(k, down) {
     state.keys[k] = down;
+    // The defeat screen is MODAL. Every screen hotkey dismissed it, and the check did not re-arm.
+    if (state.screen === 'defeat' && down) return;
     if (down && (k === 'fwd' || k === 'back' || k === 'turnL' || k === 'turnR'
       || k === 'strafeL' || k === 'strafeR')) state.keyLatch[k] = TAP_LATCH_MS;
     if (!down) return;
@@ -1137,7 +1194,10 @@ const Game = (() => {
     state.screen = state.screen === name ? null : name;
     return state.screen;
   }
-  function closeScreens() { state.screen = null; state.talkingTo = null; return true; }
+  function closeScreens() {
+    if (state.screen === 'defeat') return false;      // there is nothing behind it to go back to
+    state.screen = null; state.talkingTo = null; return true;
+  }
 
   function onTap(x, y, down) {
     const r = UI.hit(x, y);
@@ -1199,6 +1259,8 @@ const Game = (() => {
       case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; Log.push('Bought rations.', 'good'); } else Log.push('Not enough gold for rations.', 'info'); break;
       case 'train': doTrain(r.data); break;
       case 'skillup': doSkillUp(r.data); break;
+      case 'learnspell': doLearnSpell(r.data); break;
+      case 'guildschool': state.guildSchool = r.data; break;
       case 'acceptquest': acceptQuest(r.data); break;
       case 'turnin': turnInQuest(r.data); closeScreens(); break;
       case 'dorest': doRest(); break;
@@ -1302,6 +1364,13 @@ const Game = (() => {
       Log.push('Not enough gold — ' + Items.ITEMS[st.id].name + ' costs ' + price + ', you have ' + state.party.gold + '.', 'info');
       return false;
     }
+    // Check room BEFORE taking the money. With full packs the shop took 18 gold a click, forever,
+    // logging "No room for Club!" and "Bought Club." on the same frame. There is no sell verb, so
+    // a full pack is the normal end state of play and every shop became a gold shredder.
+    if (!hasPackRoom([{ id: st.id, qty: 1 }])) {
+      Log.push('No room in your packs for ' + Items.ITEMS[st.id].name + '.', 'info');
+      return false;
+    }
     state.party.gold -= price;
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
@@ -1315,6 +1384,39 @@ const Game = (() => {
     if (!gained) { Log.push('Not enough experience.', 'info'); return false; }
     state.party.gold -= cost;
     Log.push(ch.name + ' reaches level ' + ch.level + '.', 'good');
+    return true;
+  }
+
+  // Buy a spell from a guild. The 99-spell book was UNREACHABLE: a QA pass at level 100 with all
+  // 198 skill points spent could cast exactly three spells, because the guild screen rendered the
+  // trainer's twelve weapon skills, no magic school appeared anywhere, and no scroll dropped in any
+  // of the thirteen dungeons. Ninety-nine spells that cannot be obtained are ninety-nine spells
+  // that do not exist.
+  function doLearnSpell(id) {
+    const ch = state.party.members[state.active];
+    const sp = Spellcraft.SPELLS[id];
+    if (!sp) return false;
+    if (ch.spells && ch.spells[id]) { Log.push(ch.name + ' already knows ' + sp.name + '.', 'info'); return false; }
+    if (!Spellcraft.learnable(ch, id)) {
+      Log.push(ch.name + ' cannot learn ' + sp.name + ' — wrong class for that school.', 'info');
+      return false;
+    }
+    const skill = ch.skills[sp.school];
+    const need = Spellcraft.TIER_MASTERY[sp.tier];
+    if (!skill || skill.mastery < need) {
+      Log.push(sp.name + ' needs ' + Rules.MASTERY_NAME[need] + ' ' +
+        Spellcraft.SCHOOLS[sp.school].name + '. Raise the skill first.', 'info');
+      return false;
+    }
+    const price = Spellcraft.scrollPrice(id);
+    if (state.party.gold < price) {
+      Log.push('Not enough gold — ' + sp.name + ' costs ' + price + '.', 'info');
+      return false;
+    }
+    state.party.gold -= price;
+    if (!ch.spells) ch.spells = {};
+    ch.spells[id] = true;
+    Log.push(ch.name + ' learns ' + sp.name + '.', 'good');
     return true;
   }
 
@@ -1512,7 +1614,7 @@ const Game = (() => {
       if (d.kind === 'questitem' && d.taken) continue;
       const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.decor(d.kind, d.shop), x: d.x, y: d.y,
+      list.push({ dist, spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
         z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
         h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
     }

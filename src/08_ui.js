@@ -493,7 +493,57 @@ const UI = (() => {
       Art.text(En, f.x + 24, f.inner + 210, 'Food: ' + g.party.food, Core.idx(2, 12), 2);
       return;
     }
-    if (kind === 'trainer' || kind === 'guild') {
+    // A GUILD teaches magic; a TRAINER teaches arms. They used to render the identical body — the
+    // same twelve weapon and armour buttons — so no magic-school skill was reachable anywhere in
+    // the game, and neither was any spell. A QA pass at level 100 with every skill point spent
+    // could cast three spells out of ninety-nine.
+    if (kind === 'guild') {
+      const schools = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
+      if (!schools.length) {
+        Art.text(En, f.x + 24, f.inner + 30, ch.name + ' has no aptitude for magic.', Core.idx(11, 12), 2);
+        Art.text(En, f.x + 24, f.inner + 56, 'Pick a spellcaster from the party above.', Core.idx(0, 12), 2);
+        return;
+      }
+      let sch = g.guildSchool;
+      if (schools.indexOf(sch) < 0) sch = schools[0];
+      // School tabs.
+      schools.forEach((sc, i) => {
+        const bx = f.x + 24 + i * 92, by = f.inner + 16;
+        Art.button(En, bx, by, 86, 32, Spellcraft.SCHOOLS[sc].name.toUpperCase().slice(0, 6), sc === sch, 2);
+        reg('guildschool', bx, by, 86, 32, sc);
+      });
+      const skill = ch.skills[sch];
+      const lvl = skill ? skill.lvl : 0;
+      const mast = skill ? skill.mastery : 0;
+      Art.text(En, f.x + 24, f.inner + 58, Spellcraft.SCHOOLS[sch].name + ' — ' +
+        Rules.MASTERY_NAME[mast] + ' ' + lvl, Core.idx(13, 14), 2);
+      Art.button(En, f.x + 330, f.inner + 54, 230, 34,
+        'STUDY (' + Rules.skillUpCost(lvl) + ' PTS, HAVE ' + ch.skillPts + ')', false, 2);
+      reg('skillup', f.x + 330, f.inner + 54, 230, 34, sch);
+
+      // The spells of this school, with what each needs and what it costs.
+      const list = Spellcraft.bySchool(sch);
+      list.forEach((id, i) => {
+        const sp = Spellcraft.SPELLS[id];
+        const x = f.x + 22 + (i % 2) * 278, y = f.inner + 96 + Math.floor(i / 2) * 42;
+        if (y > f.y + f.h - 60) return;
+        const known = !!(ch.spells && ch.spells[id]);
+        const need = Spellcraft.TIER_MASTERY[sp.tier];
+        const gated = mast < need;
+        const price = Spellcraft.scrollPrice(id);
+        Art.panel(En, x, y, 270, 38, 4, true);
+        Art.text(En, x + 6, y + 4, sp.name.slice(0, 17), Core.idx(0, known ? 8 : gated ? 6 : 14), 2);
+        Art.text(En, x + 6, y + 22, 'T' + sp.tier + '  ' + sp.sp + ' SP', Core.idx(12, 12), 1);
+        if (known) Art.text(En, x + 190, y + 12, 'KNOWN', Core.idx(6, 12), 2);
+        else if (gated) Art.text(En, x + 150, y + 12, Rules.MASTERY_NAME[need].toUpperCase(), Core.idx(11, 11), 2);
+        else {
+          Art.text(En, x + 194, y + 12, price + 'g', Core.idx(13, g.party.gold >= price ? 14 : 7), 2);
+          reg('learnspell', x, y, 270, 38, id);
+        }
+      });
+      return;
+    }
+    if (kind === 'trainer') {
       const pending = Rules.levelForXP(ch.xp) - ch.level;
       const cost = Rules.trainCost(ch.level);
       Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);

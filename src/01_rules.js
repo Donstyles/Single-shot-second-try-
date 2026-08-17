@@ -347,14 +347,18 @@ const Rules = (() => {
   function restResult(party) {
     const out = { minutes: REST_MINUTES, food: -REST_FOOD, members: [] };
     for (const ch of party.members) {
-      const dead = ch.cond && (ch.cond.dead || ch.cond.unconscious);
+      const dead = ch.cond && ch.cond.dead;
+      // UNCONSCIOUS is a rest-shaped condition, not a death-shaped one. Treating it as death meant
+      // a party knocked out with no gold had no route back at all: the temple wanted a fee they
+      // could not pay, and camping "worked" while leaving all four at negative HP. A night's sleep
+      // brings the merely unconscious round at a fraction of their health. Actual death, poison,
+      // disease and curse still need a temple or a spell, or the temple has no reason to exist.
+      const ko = !dead && ch.cond && ch.cond.unconscious;
       out.members.push({
         id: ch.id,
-        hp: dead ? 0 : maxHP(ch) - ch.hp,
+        hp: dead ? 0 : ko ? (Math.round(maxHP(ch) * 0.35) - ch.hp) : maxHP(ch) - ch.hp,
         sp: dead ? 0 : maxSP(ch) - ch.sp,
-        // Rest clears fatigue-shaped conditions only. Poison, disease, curse and death need a
-        // temple or a spell — otherwise the temple has no reason to exist.
-        clears: dead ? [] : ['asleep', 'afraid', 'weak'],
+        clears: dead ? [] : ko ? ['unconscious', 'asleep', 'afraid', 'weak'] : ['asleep', 'afraid', 'weak'],
       });
     }
     return out;

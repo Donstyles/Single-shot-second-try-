@@ -284,6 +284,16 @@ const Debug = (() => {
 
     // ---- screens
     screen(name) { if (!hasGame()) need('screen'); return Game.openScreen(name); },
+    // Where the world says its own landmarks are. The shot list is a spec the world must satisfy;
+    // hardcoded camera coordinates cannot find a procedurally placed gate, bridge or shoreline,
+    // which is why eight rounds of "gate at dusk" captured a brown rectangle in a field.
+    landmark(mapId, kind) {
+      if (!hasGame()) need('landmark');
+      const m = Game.state.world.maps[mapId];
+      if (!m || !m.landmarks) return null;
+      const hit = m.landmarks.filter((l) => l.kind === kind);
+      return hit.length ? hit[0] : null;
+    },
     closeAll() { if (!hasGame()) need('closeAll'); return Game.closeScreens(); },
 
     // ---- determinism control

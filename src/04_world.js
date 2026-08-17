@@ -244,6 +244,12 @@ const World = (() => {
       terrain: new Float32Array((w + 1) * (h + 1)),
       spans: new Map(),
       entities: [], portals: [], decor: [], zones: [], npcs: [],
+      // Named viewing poses for the features a screenshot is supposed to contain. The shot list is
+      // a SPEC the world must satisfy, and for eight rounds it did not: an art critic reported "no
+      // gate arch exists in frame", "there is no market", "no water and no coastline", "the bridge
+      // is a doormat". Hardcoded camera coordinates cannot find a procedurally placed feature, so
+      // the world now says where its own landmarks are and the capture asks.
+      landmarks: [],
       sea: -999, light: 1, fogStart: 14, fogEnd: 56,
     };
   }
@@ -324,6 +330,10 @@ const World = (() => {
   }
 
   // A bridge over a carved ravine: deck at a fixed height, ravine floor visible in the gap.
+  function landmark(m, kind, x, y, ang) {
+    m.landmarks.push({ kind, x: x + 0.5, y: y + 0.5, ang });
+  }
+
   function bridge(m, x0, y0, x1, y1, deckH) {
     const steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0)));
     for (let k = 0; k <= steps; k++) {
@@ -333,6 +343,10 @@ const World = (() => {
         addSpan(m, x + (y0 === y1 ? 0 : w), y + (y0 === y1 ? w : 0), deckH - 0.55, deckH, MAT.stonewall);
       }
     }
+    // Viewed from side-on and a little back, which is the only angle a bridge reads from.
+    const mx = Math.round((x0 + x1) / 2), my = Math.round((y0 + y1) / 2);
+    const alongY = Math.abs(y1 - y0) > Math.abs(x1 - x0);
+    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2);
   }
 
   // A gate arch: solid overhead, walkable underneath. `lo` must leave the party's 1.6 headroom.
@@ -341,6 +355,10 @@ const World = (() => {
     for (let w = -1; w <= 1; w++) {
       addSpan(m, x + (dir === 'ns' ? w : 0), y + (dir === 'ns' ? 0 : w), lo, hi, MAT.stonewall);
     }
+    // Stand back OUTSIDE the wall and look through the opening, so the arch is the subject.
+    const out = 7;
+    if (dir === 'ns') landmark(m, 'gate', x, y + out, -Math.PI / 2);
+    else landmark(m, 'gate', x + out, y, Math.PI);
   }
 
   // A cave mouth: an overhang above a tunnel entrance, so a dungeon portal reads as a dark opening
@@ -351,6 +369,7 @@ const World = (() => {
         addSpan(m, x + dx, y + dy, groundH + 2.4, groundH + 9 + Math.abs(dx), MAT.cliff);
       }
     }
+    landmark(m, 'cave', x, y + 8, -Math.PI / 2);
   }
 
   // ---------------------------------------------------------------- settlements
@@ -419,6 +438,29 @@ const World = (() => {
       m.decor.push({ kind: 'door', x: doorX + 0.5, y: doorY + 0.5, z: b.gh, shop: kind });
       setCell(m, doorX, doorY, MAT.wood);
     }
+
+    // A MARKET ROW along one edge of the plaza. Three review rounds asked for the market shot and
+    // got two blank walls: "there is no market." A town square with nothing being sold in it is a
+    // courtyard, and MM6 taught its towns by what was standing in them.
+    if (size !== 'hamlet') {
+      const mrY = cy - plazaR + 1;
+      const nStall = size === 'city' ? 6 : 4;
+      for (let i = 0; i < nStall; i++) {
+        const sx = cx - ((nStall - 1) * 1.6) / 2 + i * 1.6;
+        const gh2 = H(m, sx, mrY);
+        m.decor.push({ kind: 'stall', x: sx, y: mrY + 0.5, z: gh2, variant: i % 3 });
+        if (i % 2 === 0) m.decor.push({ kind: 'crate', x: sx + 0.7, y: mrY + 1.4, z: gh2 });
+        else m.decor.push({ kind: 'barrel', x: sx + 0.7, y: mrY + 1.4, z: gh2 });
+      }
+      // Looked at along the row from one end and a few cells back, so the awnings overlap into a
+      // real market read instead of one stall filling the frame.
+      // Stand INSIDE the plaza, on the far side, looking back along the row. Outside the plaza is
+      // a ring of buildings, and the first attempt put the camera inside one of them.
+      const mcx = cx - plazaR + 1, mcy = cy + plazaR - 2;
+      landmark(m, 'market', mcx, mcy, Math.atan2(mrY - mcy, (cx + 2) - mcx));
+    }
+    // Corner of the plaza looking across it into the ring of buildings: the widest read a town has.
+    landmark(m, 'plaza', cx - plazaR + 1, cy + plazaR - 1, Math.atan2(-1.4, 1));
 
     // Houses that are pure dressing: a settlement of only shops reads as a strip mall.
     const nHouses = size === 'city' ? 16 : size === 'village' ? 8 : 4;
@@ -647,6 +689,134 @@ const World = (() => {
       }
     }
 
+    // ---- harvestable marshwort, for the one quest whose objective did not exist
+    // A full assisted playthrough cleared all thirteen dungeons, opened every chest and swept every
+    // cell of every map with the interact verb: "no marshwort-like item exists anywhere in the
+    // world". The quest asked for four bundles of something that was never placed. Herbs regrow,
+    // so the quest cannot be locked out by a player who harvests carelessly.
+    if (r.biome === 'marsh' || r.biome === 'temperate' || r.biome === 'forest') {
+      const want = r.biome === 'marsh' ? 14 : 4;
+      let made = 0;
+      for (let t = 0; t < 900 && made < want; t++) {
+        const x = rng.float(6, RW - 6), y = rng.float(6, RH - 6);
+        const cx2 = Math.floor(x), cy2 = Math.floor(y);
+        const c = m.cells[cy2 * RW + cx2];
+        if (isSolid(c)) continue;
+        const mt = matOf(c);
+        if (mt !== MAT.marsh && mt !== MAT.grass) continue;
+        const h2 = H(m, x, y);
+        if (h2 < m.sea - 0.2 || h2 > m.sea + 3.2) continue;
+        m.decor.push({ kind: 'herb', x, y, z: h2, item: 'herb_bundle' });
+        made++;
+      }
+    }
+
+    // ---- a bandit camp, in a clearing away from the town and the road
+    // The camp shot came back with "a hill, trees, a tent, a horizon" and no camp, because there
+    // was no camp: the generator placed a lone tent prop and nothing else. A camp is a fire, a ring
+    // of tents facing it, gear on the ground, and people.
+    {
+      let placed = false;
+      for (let attempt = 0; attempt < 60 && !placed; attempt++) {
+        const a = rng.float(0, Math.PI * 2), d = rng.float(30, 52);
+        const cxp = Math.round(RW / 2 + Math.cos(a) * d), cyp = Math.round(RH / 2 + Math.sin(a) * d);
+        if (cxp < 8 || cyp < 8 || cxp > RW - 8 || cyp > RH - 8) continue;
+        let ok = true;
+        for (let y = cyp - 4; y <= cyp + 4 && ok; y++) {
+          for (let x = cxp - 4; x <= cxp + 4; x++) {
+            const c = m.cells[y * RW + x];
+            if (isSolid(c) || matOf(c) === MAT.water) { ok = false; break; }
+          }
+        }
+        if (!ok) continue;
+        const gh2 = H(m, cxp, cyp);
+        flatten(m, cxp, cyp, 5, 5, gh2, 2);
+        for (let x = cxp - 4; x <= cxp + 4; x++) {
+          for (let y = cyp - 4; y <= cyp + 4; y++) {
+            if (Math.hypot(x - cxp, y - cyp) <= 4 && !isSolid(m.cells[y * RW + x])) {
+              m.cells[y * RW + x] = MAT.dirt;
+            }
+          }
+        }
+        m.decor.push({ kind: 'campfire', x: cxp + 0.5, y: cyp + 0.5, z: gh2 });
+        for (let i = 0; i < 3; i++) {
+          const ta = (i / 3) * Math.PI * 2 + 0.6;
+          m.decor.push({ kind: 'tent', x: cxp + 0.5 + Math.cos(ta) * 2.6, y: cyp + 0.5 + Math.sin(ta) * 2.6, z: gh2 });
+        }
+        m.decor.push({ kind: 'crate', x: cxp + 2.2, y: cyp - 1.6, z: gh2 });
+        m.decor.push({ kind: 'barrel', x: cxp - 2.4, y: cyp + 1.2, z: gh2 });
+        for (let i = 0; i < 3; i++) {
+          const ta = (i / 3) * Math.PI * 2;
+          m.entities.push({
+            eid: 'camp' + id + '_' + i, kind: r.spawn.indexOf('bandit') >= 0 ? 'bandit' : r.spawn[0],
+            x: cxp + 0.5 + Math.cos(ta) * 1.6, y: cyp + 0.5 + Math.sin(ta) * 1.6,
+            z: gh2, ang: ta + Math.PI, state: 'idle', home: { x: cxp, y: cyp },
+          });
+        }
+        landmark(m, 'camp', cxp, cyp + 8, -Math.PI / 2);
+        placed = true;
+      }
+    }
+
+    // ---- shoreline, for regions that have a sea to stand beside
+    {
+      let best = null, bestScore = -1;
+      for (let y = 6; y < RH - 6; y += 3) {
+        for (let x = 6; x < RW - 6; x += 3) {
+          if (matOf(m.cells[y * RW + x]) === MAT.water) continue;
+          if (isSolid(m.cells[y * RW + x])) continue;
+          // Count water in a ring: a good shoreline pose has open sea in front and land behind.
+          let wet = 0;
+          for (let k = 0; k < 8; k++) {
+            const ax = x + Math.round(Math.cos(k * Math.PI / 4) * 7);
+            const ay = y + Math.round(Math.sin(k * Math.PI / 4) * 7);
+            if (ax < 0 || ay < 0 || ax >= RW || ay >= RH) continue;
+            if (matOf(m.cells[ay * RW + ax]) === MAT.water) wet++;
+          }
+          if (wet < 3 || wet > 6) continue;
+          // Prefer the widest expanse: sample far out along the water direction.
+          let open = 0, ox2 = 0, oy2 = 0;
+          for (let k = 0; k < 8; k++) {
+            const dxk = Math.cos(k * Math.PI / 4), dyk = Math.sin(k * Math.PI / 4);
+            let run = 0;
+            for (let t = 3; t < 40; t += 2) {
+              const ax = Math.round(x + dxk * t), ay = Math.round(y + dyk * t);
+              if (ax < 0 || ay < 0 || ax >= RW || ay >= RH) break;
+              if (matOf(m.cells[ay * RW + ax]) !== MAT.water) break;
+              run = t;
+            }
+            if (run > open) { open = run; ox2 = dxk; oy2 = dyk; }
+          }
+          if (open > bestScore) { bestScore = open; best = { x, y, ang: Math.atan2(oy2, ox2) }; }
+        }
+      }
+      if (best && bestScore >= 12) landmark(m, 'coast', best.x, best.y, best.ang);
+    }
+
+    // ---- a stretch of open road, looked at along its length
+    {
+      for (let t = 0; t < 400; t++) {
+        const x = Math.round(rng.float(10, RW - 10)), y = Math.round(rng.float(10, RH - 10));
+        if (matOf(m.cells[y * RW + x]) !== MAT.road) continue;
+        if (town && Math.hypot(x - town.cx, y - town.cy) < 16) continue;
+        // Which way does the road run from here?
+        let dirX = 0, dirY = 0;
+        for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          let run = 0;
+          for (let k = 1; k < 12; k++) {
+            const nx = x + ax * k, ny = y + ay * k;
+            if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) break;
+            if (matOf(m.cells[ny * RW + nx]) !== MAT.road) break;
+            run = k;
+          }
+          if (run > 7) { dirX = ax; dirY = ay; break; }
+        }
+        if (!dirX && !dirY) continue;
+        landmark(m, 'road', x - dirX * 5, y - dirY * 5, Math.atan2(dirY, dirX));
+        break;
+      }
+    }
+
     m.fogStart = r.biome === 'marsh' ? 8 : 16;
     m.fogEnd = r.biome === 'marsh' ? 34 : 62;
     return m;
@@ -813,21 +983,37 @@ const World = (() => {
     }
 
     // NPCs: quest givers in their region's settlement, plus wanderers.
+    // Every giver must stand on OPEN GROUND the party can walk to. The old placement for a region
+    // with no town laid its refugees out in a straight line east of the harrowgate plaza — which
+    // walks into the ring of buildings after a few of them, and the giver of the FINAL quest ended
+    // up inside one. A full playthrough that cleared all thirteen dungeons and turned in every
+    // other quest never saw q_crown at all, so the game could not be won.
+    const placeGiver = (m, qid, role) => {
+      for (let ring = 0; ring < 4; ring++) {
+        const rad = 5.5 + ring * 1.8;
+        for (let k = 0; k < 24; k++) {
+          const a = (m.npcs.length * 0.7 + k) * (Math.PI * 2 / 24) + 0.4;
+          const nx = m.town.x + Math.cos(a) * rad, ny = m.town.y + Math.sin(a) * rad;
+          if (!passable(m, nx, ny, H(m, nx, ny))) continue;
+          let clash = false;
+          for (const n of m.npcs) if (Math.hypot(n.x - nx, n.y - ny) < 1.6) { clash = true; break; }
+          if (clash) continue;
+          m.npcs.push({ id: 'npc_' + qid, role, quest: qid, x: nx, y: ny, z: H(m, nx, ny) });
+          return true;
+        }
+      }
+      return false;
+    };
     for (const qid of QUEST_IDS) {
       const q = QUESTS[qid];
       const m = maps[q.region];
-      if (!m || !m.town) {
-        // A region with no town puts its giver at the regional landmark instead of nowhere.
-        const host = maps.harrowgate;
+      // A region with no town hosts its giver in the capital instead of nowhere.
+      const host = (m && m.town) ? m : maps.harrowgate;
+      if (!placeGiver(host, qid, q.giver)) {
+        // Never silently drop a quest giver: an unplaceable one is an unwinnable campaign.
         host.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid,
-          x: host.town.x + 2.5 + host.npcs.length, y: host.town.y + 3.5, z: H(host, host.town.x, host.town.y) });
-        continue;
+          x: host.town.x + 0.5, y: host.town.y + 2.5, z: H(host, host.town.x, host.town.y) });
       }
-      // Ring the plaza rather than crowding the spawn point. A giver standing inside the party's
-      // interact radius fired a quest modal before the player had seen the world at all.
-      const a = (m.npcs.length / 6) * Math.PI * 2 + 0.4;
-      const nx = m.town.x + Math.cos(a) * 5.5, ny = m.town.y + Math.sin(a) * 5.5;
-      m.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid, x: nx, y: ny, z: H(m, nx, ny) });
     }
 
     return { seed: RNG.seed, maps, regions: REGIONS, dungeons: DUNGEONS, quests: QUESTS };

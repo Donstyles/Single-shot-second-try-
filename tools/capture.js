@@ -20,17 +20,21 @@ function requirePlaywright() {
 
 // map, x, y, ang, t — mirrors critique/SHOTLIST.md exactly. A shot that cannot be taken is a WORLD
 // bug, not a shot-list bug.
+// A shot may name a LANDMARK instead of a coordinate. The world records where it put its gate,
+// its bridge, its cave mouth, its market and its shoreline, and the capture asks. Eight rounds of
+// hardcoded coordinates produced "there is no market", "no gate arch exists in frame", "no water
+// and no coastline" — the shots were not lying, they were pointed at empty ground.
 const WORLD_SHOTS = [
-  ['s01_plaza_noon',       'harrowgate', 58.5, 56.5, 0, 720, true],
-  ['s02_market_row_morn',  'harrowgate', 50.5, 60.5, -1.5708, 540, false],
-  ['s03_gate_east_dusk',   'harrowgate', 78.5, 57.5, 3.1416, 1140, true],
-  ['s04_road_east_noon',   'harrowgate', 88.5, 57.5, 0, 720, true],
-  ['s05_barrow_mouth',     'harrowgate', 101.5, 52.5, 0, 900, true],
-  ['s06_bridge_ravine',    'harrowgate', 84.5, 62.5, -1.5708, 660, true],
-  ['s07_bandit_camp',      'duskwood',   92.5, 34.5, -1.5708, 780, false],
-  ['s08_town_night',       'harrowgate', 58.5, 59.5, -1.5708, 1380, true],
-  ['s09_dawn_road',        'harrowgate', 70.5, 50.5, 0, 330, false],
-  ['s10_coast_west',       'ashencoast', 18.5, 58.5, 3.1416, 1020, false],
+  ['s01_plaza_noon',       'harrowgate', 58.5, 56.5, 0, 720, true, 'plaza'],
+  ['s02_market_row_morn',  'harrowgate', 50.5, 60.5, -1.5708, 540, false, 'market'],
+  ['s03_gate_east_dusk',   'harrowgate', 78.5, 57.5, 3.1416, 1140, true, 'gate'],
+  ['s04_road_east_noon',   'harrowgate', 88.5, 57.5, 0, 720, true, 'road'],
+  ['s05_barrow_mouth',     'harrowgate', 101.5, 52.5, 0, 900, true, 'cave'],
+  ['s06_bridge_ravine',    'harrowgate', 84.5, 62.5, -1.5708, 660, true, 'bridge'],
+  ['s07_bandit_camp',      'duskwood',   92.5, 34.5, -1.5708, 780, false, 'camp'],
+  ['s08_town_night',       'harrowgate', 58.5, 59.5, -1.5708, 1380, true, 'plaza'],
+  ['s09_dawn_road',        'harrowgate', 70.5, 50.5, 0, 330, false, 'road'],
+  ['s10_coast_west',       'ashencoast', 18.5, 58.5, 3.1416, 1020, false, 'coast'],
   ['s11_ridge_north',      'greyhollow', 60.5, 22.5, -1.5708, 840, false],
   ['s12_barrow_entry',     'barrow',      3.5,  2.5, 0, 720, true],
   ['s13_barrow_corridor',  'barrow',      9.5,  9.5, 0, 720, false],
@@ -79,14 +83,24 @@ async function main() {
   await page.waitForFunction('typeof window.__game !== "undefined" && window.__game.ready()', null, { timeout: 20000 });
 
   let taken = 0, skipped = [];
-  for (const [id, map, x, y, ang, t, isCore] of WORLD_SHOTS) {
+  const missing = [];
+  for (const [id, map, x, y, ang, t, isCore, mark] of WORLD_SHOTS) {
     if (core && !isCore) continue;
     try {
-      await page.evaluate(([m, xx, yy, aa, tt]) => {
+      const found = await page.evaluate(([m, xx, yy, aa, tt, mk]) => {
         Game.state.screen = null;
-        window.__game.gotoMap(m, xx, yy, aa);
+        let px = xx, py = yy, pa = aa, resolved = false;
+        if (mk) {
+          const l = window.__game.landmark(m, mk);
+          if (l) { px = l.x; py = l.y; pa = l.ang; resolved = true; }
+        }
+        window.__game.gotoMap(m, px - 0.5, py - 0.5, pa);
         window.__game.setTime(tt);
-      }, [map, x, y, ang, t]);
+        return resolved;
+      }, [map, x, y, ang, t, mark || null]);
+      // A shot whose subject the world does not contain is a WORLD bug, and it must be visible in
+      // the run output rather than quietly captured as a picture of a field.
+      if (mark && !found) missing.push(id + ' (no "' + mark + '" landmark in ' + map + ')');
       await page.evaluate('window.__game.settle(4)');
       await page.locator('#fb').screenshot({ path: path.join(outDir, id + '.png') });
       taken++;
@@ -126,6 +140,11 @@ async function main() {
 
   await browser.close();
 
+  if (missing.length) {
+    console.log('WORLD GAPS — the world does not contain these shots\' subjects, so they fell back');
+    console.log('to a hardcoded pose. Each one is a world bug:');
+    for (const mm of missing) console.log('  ! ' + mm);
+  }
   console.log('round ' + round + ' @ ' + sha + ': ' + taken + ' shots -> critique/shots/' + round + '/');
   if (skipped.length) {
     console.log('SKIPPED (each of these is a world bug, not a shot-list bug):');
