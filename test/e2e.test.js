@@ -558,16 +558,19 @@ const T = require('./_harness.js');
       window.__game.setTime(720);
       for (const c of Game.state.party.members) { c.hp = 30; c.cond.unconscious = false; c.cond.dead = false; }
       window.__game.settle(2);            // lets checkDefeat see a party that can act and stand down
-      window.__game.spawn('goblin', Game.state.party.x + 1.2, Game.state.party.y + 0.3);
+      const spawned = window.__game.spawn('goblin', Game.state.party.x + 1.2, Game.state.party.y + 0.3);
+      const eid = spawned && spawned.eid;
       window.__game.settle(4);
       Game.onKey('turnbased', true); Game.onKey('turnbased', false);
       window.__game.settle(1);            // step past the boundary frame the toggle happened on
       const t0 = Core.Clock.t, hp0 = Game.state.party.members.map((c) => c.hp);
       window.__game.settle(90);
       const t1 = Core.Clock.t, hp1 = Game.state.party.members.map((c) => c.hp);
-      const foe0 = (Game.state.nearestFoe(14) || {}).hp;
+      const find = () => (Game.state.map.live || []).find((e) => e.eid === eid);
+      const foe0 = (find() || {}).hp;
       for (let i = 0; i < 4; i++) { Game.onKey('act', true); Game.onKey('act', false); }
-      const foe1 = (Game.state.nearestFoe(14) || {}).hp;
+      const f1 = find();
+      const foe1 = f1 ? f1.hp : 0;
       return { on: Game.state.turnBased, t0, t1, hp0, hp1, foe0, foe1, round: Game.state.tbRound };
     })()`);
     T.eq(tb.on, true, 'turn-based mode engages');

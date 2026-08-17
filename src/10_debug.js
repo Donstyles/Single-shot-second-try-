@@ -147,15 +147,22 @@ const Debug = (() => {
         y: Math.floor((clientY - r.top) / r.height * Engine.H),
       };
     };
+    // OUTSIDE THE CANVAS IS OUTSIDE THE GAME. A click in the letterbox bar was mapping to a
+    // framebuffer coordinate and firing a button: on a phone those bars are the bezel, and a game
+    // that responds to the bezel responds to the hand holding it.
+    const inFb = (p) => p.x >= 0 && p.y >= 0 && p.x < Engine.W && p.y < Engine.H;
     const down = (x, y) => {
       const p = toFb(x, y);
+      if (!inFb(p)) return;
       state.pointer.x = p.x; state.pointer.y = p.y; state.pointer.down = true;
       if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, true);
     };
     const up = (x, y) => {
       const p = toFb(x, y);
       state.pointer.down = false;
-      if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, false);
+      // A release outside the canvas must still clear held movement keys, or a finger that slides
+      // off the edge leaves the party walking forever.
+      if (hasGame() && Game.onTap) Game.onTap(inFb(p) ? p.x : -1, inFb(p) ? p.y : -1, false);
     };
     // Bind EVERY input family. Pointer events alone left the game unreachable in any context that
     // dispatches touch or plain mouse events, and "the title screen ate four taps" is the worst

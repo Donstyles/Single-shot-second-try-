@@ -9,7 +9,9 @@ const Game = (() => {
 
   const { clamp, RNG, Clock, Log, Bus } = Core;
 
-  const AGGRO = 11;
+  // 9, not 11. Every monster inside the radius converges at once, so a wide radius means the first
+  // thing a new party meets is three wolves simultaneously rather than one.
+  const AGGRO = 9;
   const MELEE = 1.9;
   const RECOVER_MS = 16;              // one fixed timestep of recovery per frame
 
@@ -142,6 +144,11 @@ const Game = (() => {
         ch.equip[it.slot] = st;
       }
       ch.pack.push({ id: 'potion_heal', qty: 2, ident: true, bonus: 0, charges: 0 });
+      // TORCHES. The first quest sends the party into the Sunken Barrow, which is correctly and
+      // completely dark, and a veteran discovered there is nothing in the starting town that sells
+      // a light: "shipping the first quest into a black screen with no light source is not"
+      // faithful, it is a dead end. Every character carries three.
+      ch.pack.push({ id: 'torch', qty: 3, ident: true, bonus: 0, charges: 0 });
       recompute(ch);
       ch.hp = Rules.maxHP(ch); ch.sp = Rules.maxSP(ch);
     });
@@ -1360,6 +1367,7 @@ const Game = (() => {
     if (k === 'book') openScreen('book');
     if (k === 'map') openScreen('map');
     if (k === 'rest') openScreen('rest');
+    if (k === 'journal') openScreen('journal');
     if (k === 'esc') closeScreens();
     if (k === 'next') state.active = (state.active + 1) % 4;
     if (k === 'turnbased') toggleTurnBased();
@@ -1409,6 +1417,8 @@ const Game = (() => {
         openScreen(r.data);
         break;
       case 'act': doAct(); break;
+      // USE never attacks. It is the door/chest/NPC verb and it must work with a wolf on your heel.
+      case 'use': interact(); break;
       case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
       case 'wait': if (state.turnBased) spendTurn(); else stepTurn(); break;
       case 'turnbased': toggleTurnBased(); break;
@@ -1452,6 +1462,7 @@ const Game = (() => {
   // ---------------------------------------------------------------- actions
   // One button, two verbs, exactly as the label says: ATK when something is in reach, USE
   // otherwise. Shared by the on-screen button and the keyboard, which used to disagree.
+  // ATK. Kept separate from USE so neither can ever take the other's slot or its meaning.
   function doAct() {
     if (state.turnBased && nearestEnemy(18)) {
       // ONE character swings, then the turn passes. That is the entire value of turn-based: the
@@ -1722,12 +1733,13 @@ const Game = (() => {
     state.seen = seen;
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
+    state.countItem = countItem;
     state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
     // The nearest hostile the party is actually facing, shaped for a nameplate. UI must never walk
     // the entity list itself; that is how a second implementation of "what counts as a foe" is born.
-    state.nearestFoe = (r) => {
-      const e = nearestEnemy(r === undefined ? 14 : r);
-      if (!e) return null;
+    state.nearestFoe = () => {
+      const e = state.drawnFoe;
+      if (!e || e.dead || e.hp <= 0) return null;
       const def = Items.MONSTERS[e.kind];
       if (!def) return null;
       return { name: def.name, hp: Math.max(0, Math.round(e.hp)), maxHp: def.hp, kind: e.kind };
@@ -1864,14 +1876,23 @@ const Game = (() => {
         : /rat|spider/.test(e.kind) ? 0.8 : /wolf/.test(e.kind) ? 1.1 : 1.8;
       list.push({ dist, spr, mirror: f.mirror,
         x: e.x, y: e.y, z: World.walkHeight(m, e.x, e.y, e.z),
-        h: Sprites.worldHeight(spr, real) });
+        h: Sprites.worldHeight(spr, real),
+        foe: (e.ally || e.charmed > Clock.t || e.enslaved > Clock.t) ? null : e });
     }
 
     list.sort((a, b) => b.dist - a.dist);
     const lit = m.kind === 'dungeon' ? 0 : Art.sunShade(1);
+    // The nameplate names what you can SEE. Deriving it from "nearest live enemy within 14" put a
+    // permanent "Grey Wolf 22/22" banner on screen that survived a full 360-degree sweep, four
+    // in-game days, a map change and a save/load, and at one point pointed at a town guard. A HUD
+    // a player stops trusting is worse than no HUD, so the banner is now a by-product of the draw:
+    // if the sprite pass actually put pixels on the screen for it, it gets a nameplate.
+    state.drawnFoe = null;
+    let bestFoe = 1e9;
     for (const s of list) {
-      Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
+      const drew = Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
         { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0), mirror: s.mirror });
+      if (drew && s.foe && s.dist < bestFoe) { bestFoe = s.dist; state.drawnFoe = s.foe; }
     }
   }
 

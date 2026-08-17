@@ -417,10 +417,21 @@ const Engine = (() => {
             if (face ? dx > 0 : dy < 0) u = 1 - u;
             const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
             const lod = Art.lodFor(dist);
+            // LIT WINDOWS after dark. Both an art critic and a veteran reported the same thing from
+            // opposite directions: "not one emissive pixel" and "a market town at 23:00 with no lit
+            // window, no lantern, no warm pool". Night was a global multiply, and a global multiply
+            // is a filter, not a time of day. A window is a hole in a wall with a fire behind it,
+            // and it must ignore the sun term entirely or it goes out with everything else.
+            const lampLit = !dungeon && sun <= -1 && Art.isBuilding(mat);
+            const lampSeed = lampLit ? (Core.hashStr('win' + cx + ':' + cy + ':' + face) >>> 0) : 0;
             for (let y = top; y < ybuf; y++) {
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
+              if (lampLit) {
+                const lit = Art.windowTexel(u, v, lampSeed, storeys);
+                if (lit) { buf[y * W + px] = lit; continue; }
+              }
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
@@ -472,8 +483,11 @@ const Engine = (() => {
     const radius = cam.torch || 7.5;
     // A torch POOL: bright at the party's feet, near black at the edge of the radius. The previous
     // curve floored at -2, which left a whole dungeon evenly lit and blew s15 to 218/255 mean.
+    // Floor at -11, not -14. A first quest into a barrow the party could not see AT ALL — black
+    // at midnight and black at noon — is a dead end, not atmosphere. Dark enough that a torch is
+    // worth carrying; light enough that the walls exist without one.
     const t = clamp(1 - d / radius, 0, 1);
-    return Math.round(t * t * 14) - 14;
+    return Math.round(t * t * 13) - 11;
   }
 
   // ---------------------------------------------------------------- sprites
@@ -484,7 +498,7 @@ const Engine = (() => {
     const cosA = Math.cos(-cam.ang), sinA = Math.sin(-cam.ang);
     const tx = dxw * cosA - dyw * sinA;
     const ty = dxw * sinA + dyw * cosA;
-    if (tx < 0.25) return null;                         // behind the camera
+    if (tx < 0.25) return false;                        // behind the camera
 
     const halfFov = Math.tan(FOV_H / 2);
     const sx = VIEW.x + (VIEW.w / 2) * (1 + (ty / tx) / halfFov);
@@ -497,12 +511,13 @@ const Engine = (() => {
     const yFeet = horizon + (eyeZ - wz) * invD;
     const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
 
-    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return null;
+    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return false;
 
     // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
     const lit = opts && opts.lit !== undefined ? opts.lit : 0;
     const mirror = opts && opts.mirror;
+    let drawn = 0;
     const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
     const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
     const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
@@ -545,10 +560,13 @@ const Engine = (() => {
         const pi = spr.data[syi * spr.w + sxi];
         if (pi === 0) continue;
         buf[y * W + x] = Core.shade(pi & 0xf0, (pi & 0x0f) + lit);
+        drawn++;
       }
     }
     clipReset();
-    return { x: x0, y: y0, w: wPix, h: hPix, dist: tx };
+    // The pixel count is the honest answer to "can the player see this?" — a sprite entirely
+    // behind a wall is z-rejected column by column and draws nothing.
+    return drawn > 6 ? { x: x0, y: y0, w: wPix, h: hPix, dist: tx, drawn } : false;
   }
 
   // Which of the 8 facings to draw, and whether to mirror. Sprites are baked for 0..180 only;

@@ -78,7 +78,7 @@ const UI = (() => {
 
     // ---- message log
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
-    const lw = En.W - 6 - lx - (58 * 3 + 10 + 14);   // leaves room for the command bar
+    const lw = En.W - 6 - lx - (50 * 4 + 15 + 14);   // leaves room for the command bar
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
@@ -125,14 +125,14 @@ const UI = (() => {
     // a phone game gets fifteen minutes.
     // Three across, two down. Two columns of six left no room under the icon for its name, so the
     // labels printed over the pictograms. The 800px HUD has the width for a proper command bar.
-    const BW = 58, BH = 55, BX = En.W - (BW * 3 + 10) - 6;
+    const BW = 50, BH = 55, BX = En.W - (BW * 4 + 15) - 6;
     const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'SPELLS'],
-      ['map', 'MAP'], ['rest', 'CAMP'], ['menu', 'MENU']];
+      ['map', 'MAP'], ['journal', 'QUESTS'], ['rest', 'CAMP'], ['menu', 'MENU']];
     btns.forEach(([id, label], i) => {
-      const bx = BX + (i % 3) * (BW + 5);
-      const by = HUD.y + 4 + Math.floor(i / 3) * (BH + 4);
+      const bx = BX + (i % 4) * (BW + 5);
+      const by = HUD.y + 4 + Math.floor(i / 4) * (BH + 4);
       Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
-      Art.hudIcon(En, id, bx + 13, by + 3, 2);
+      Art.hudIcon(En, id, bx + 9, by + 3, 2);
       const lw3 = Art.textWidth(label, 1);
       En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 2, by + BH - 14, lw3 + 4, 11, Core.idx(13, 3));
       Art.textCentred(En, bx + BW / 2, by + BH - 13, label, Core.idx(0, 15), 1);
@@ -184,7 +184,13 @@ const UI = (() => {
       }
       if (live) reg(id, vx, y, bw, bh, id);
     };
-    verb('act', 'USE', !fighting, 0);
+    // USE IS ALWAYS LIVE. Making it conditional on "no enemy nearby" locked the player out of every
+    // building in a town where monsters roam: a veteran stood on the exact tile that had opened the
+    // tavern ten minutes earlier, pressed the same button, and got "Dorn hits the Grey Wolf for 4"
+    // because a rat had wandered within twelve units. "You are wounded, you run for the temple, and
+    // the temple stops existing because a rat followed you." A verb that vanishes when you need it
+    // most is worse than no verb.
+    verb('use', 'USE', true, 0);
     verb('act', 'ATK', fighting, 1);
     verb('cast', 'CAST', fighting, 2);
     verb('wait', 'WAIT', fighting, 3);
@@ -380,12 +386,15 @@ const UI = (() => {
     const sel = g.selectedItem;
     if (sel !== null && ch.pack[sel]) {
       const st = ch.pack[sel];
-      Art.panel(En, f.x + 14, f.y + f.h - 62, f.w - 28, 48, 4, true);
-      Art.text(En, f.x + 22, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
+      // The detail bar starts where the paperdoll column ENDS. Spanning the full panel width put
+      // it straight over the BOOTS well and half of BELT, so selecting an item hid two slots.
+      const dx0 = f.x + 240;
+      Art.panel(En, dx0, f.y + f.h - 62, f.x + f.w - 14 - dx0, 48, 4, true);
+      Art.text(En, dx0 + 8, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
       const it = Items.def(st);
       const line = (it.dmg ? 'Dmg ' + it.dmg.n + 'd' + it.dmg.sides + (it.dmg.plus ? '+' + it.dmg.plus : '') + '  ' : '') +
         (it.ac ? 'AC ' + it.ac + '  ' : '') + (it.heal ? 'Heals ' + it.heal + '  ' : '') + 'Value ' + Items.unitValue(st) + 'g each';
-      Art.text(En, f.x + 22, f.y + f.h - 36, line, Core.idx(0, 12), 2);
+      Art.text(En, dx0 + 8, f.y + f.h - 36, line, Core.idx(0, 12), 2);
       // USE is the verb the game was missing entirely: eight healing potions the party could not
       // drink, offered only EQUIP and DROP.
       const usable = it && (it.kind === 'potion' || it.kind === 'food' || (it.kind === 'tool' && it.light));
@@ -544,6 +553,54 @@ const UI = (() => {
     En.rect(f.x + 380, ly + 2, 10, 10, Core.idx(13, 14)); Art.text(En, f.x + 396, ly, 'DOOR', Core.idx(0, 12), 2);
   }
 
+  // A QUEST JOURNAL. There was none: "the only way to read your quest is to walk back across town
+  // to the Captain." MM6 had Quests, Notes and Autonotes and they carried the campaign; a party RPG
+  // whose objectives live only in the head of the man who gave them is not navigable.
+  function journal(g) {
+    const En = E();
+    const f = screenFrame('QUEST JOURNAL', 720, 440);
+    const ids = World.QUEST_IDS.filter((q) => g.party.quests[q]);
+    if (!ids.length) {
+      Art.text(En, f.x + 26, f.inner + 30, 'No quests yet.', Core.idx(13, 13), 2);
+      Art.text(En, f.x + 26, f.inner + 56, 'Townspeople stand around the plaza. Walk up to one', Core.idx(0, 12), 2);
+      Art.text(En, f.x + 26, f.inner + 78, 'and press USE.', Core.idx(0, 12), 2);
+      return;
+    }
+    // Active first, then finished, because the one you are doing is the one you opened this for.
+    const order = ids.slice().sort((a, b) => (g.party.quests[a].state) - (g.party.quests[b].state));
+    let y = f.inner + 16;
+    for (const qid of order) {
+      if (y > f.y + f.h - 70) break;
+      const q = World.QUESTS[qid], st = g.party.quests[qid];
+      const done = st.state === 2;
+      Art.panel(En, f.x + 20, y, f.w - 40, 62, 4, true);
+      Art.text(En, f.x + 28, y + 4, q.name.toUpperCase(), Core.idx(13, done ? 9 : 15), 2);
+      const region = World.REGIONS[q.region];
+      // Word-wrapped, not sliced. Cutting at a fixed character count breaks mid-word, and this is
+      // the prose that tells a player why they are walking somewhere.
+      const words = q.text.split(' ');
+      let line = '', ln = 0;
+      for (const w of words) {
+        if (line && (line + ' ' + w).length > 70) {
+          Art.text(En, f.x + 28, y + 24 + ln * 12, line, Core.idx(0, done ? 7 : 13), 1);
+          line = w; ln++;
+          if (ln > 1) break;
+        } else line = line ? line + ' ' + w : w;
+      }
+      if (ln <= 1 && line) Art.text(En, f.x + 28, y + 24 + ln * 12, line, Core.idx(0, done ? 7 : 13), 1);
+      // What, precisely, is still owed.
+      let need = '';
+      if (done) need = 'DONE';
+      else if (q.need) need = 'Bring ' + (q.count || 1) + ' ' +
+        (Items.ITEMS[q.need] ? Items.ITEMS[q.need].name : q.need) +
+        '  (have ' + (g.countItem ? g.countItem(q.need) : 0) + ')';
+      else if (q.kill) need = 'Kill ' + q.kill.replace(/_/g, ' ') + (q.killIn ? ' in ' + q.killIn : '');
+      Art.text(En, f.x + 28, y + 48, need, Core.idx(done ? 6 : 13, 13), 1);
+      Art.text(En, f.x + f.w - 190, y + 48, region ? region.name : '', Core.idx(2, 12), 1);
+      y += 68;
+    }
+  }
+
   function shop(g) {
     const En = E();
     const kind = g.shopKind;
@@ -640,19 +697,21 @@ const UI = (() => {
     if (kind === 'trainer') {
       const pending = Rules.levelForXP(ch.xp) - ch.level;
       const cost = Rules.trainCost(ch.level);
-      Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
-      Art.text(En, f.x + 24, f.inner + 48, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
-      Art.text(En, f.x + 24, f.inner + 70, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
+      // Below the tab row, like every other shop screen. "Alder Level 1" was drawn on top of the
+      // ALDER/KESTA/CASS/DORN tabs and both were illegible.
+      Art.text(En, f.x + 24, f.inner + 46, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
+      Art.text(En, f.x + 24, f.inner + 70, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      Art.text(En, f.x + 24, f.inner + 92, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
       if (pending > 0) {
-        Art.button(En, f.x + 24, f.inner + 96, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
-        reg('train', f.x + 24, f.inner + 96, 260, 46, cost);
+        Art.button(En, f.x + 24, f.inner + 118, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
+        reg('train', f.x + 24, f.inner + 118, 260, 46, cost);
       }
       // Skill spending, at readable size. Twelve buttons of 1x type on a brown plate was "dim brown
       // on dim brown, and I had to squint to make out Sword 1 / Axe 0 / Spear 0".
-      Art.text(En, f.x + 24, f.inner + 150, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
+      Art.text(En, f.x + 24, f.inner + 172, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
       const learnable = Object.keys(Rules.SKILLS).filter((k) => Rules.classCap(ch.cls, k) > 0).slice(0, 12);
       learnable.forEach((k, i) => {
-        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 176 + Math.floor(i / 3) * 40;
+        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 196 + Math.floor(i / 3) * 40;
         const cur = ch.skills[k];
         Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 7).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
         reg('skillup', x, y, 172, 34, k);
@@ -848,7 +907,10 @@ const UI = (() => {
         else line = line ? line + ' ' + w : w;
       }
       if (line) Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2);
-      y = ly;
+      // A FIXED block height. A three-line blurb followed by a two-line one shifted the whole stat
+      // grid up 14 pixels, so a tap aimed at "Might +" landed on "Personality +". Nothing may move
+      // under a finger that is already reaching for it.
+      y += 3 * 18;
     }
 
     // Point buy.
@@ -878,7 +940,7 @@ const UI = (() => {
 
   // ---------------------------------------------------------------- dispatch
   const SCREENS = {
-    sheet: charSheet, inv: inventory, book: spellbook, map: automap,
+    sheet: charSheet, inv: inventory, book: spellbook, map: automap, journal,
     shop, dialogue, rest: restScreen, title, creation, menu, defeat,
   };
 

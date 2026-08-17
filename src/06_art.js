@@ -348,6 +348,32 @@ const Art = (() => {
     return t[v * S + u];
   }
 
+  const BUILDING = { 17: 1, 18: 1, 19: 1, 16: 1 };   // timber, brick, plaster, stone
+  const isBuilding = (mat) => !!BUILDING[mat];
+
+  // A lit window: a framed opening with a warm interior and a mullion cross, drawn straight into
+  // the framebuffer so the sun term never touches it. Which storeys are lit, and which of the two
+  // window columns, comes from the cell hash — so a street has some rooms awake and some not, and
+  // it is the same street every night.
+  function windowTexel(u, v, seed, storeys) {
+    const st = Math.floor(v);                        // which storey of this wall
+    if (st < 0 || st >= (storeys || 1)) return 0;
+    const fv = v - st;
+    if (fv < 0.30 || fv > 0.72) return 0;
+    // Two windows per cell face.
+    const col = u < 0.5 ? 0 : 1;
+    const fu = col ? (u - 0.5) * 2 : u * 2;
+    if (fu < 0.26 || fu > 0.74) return 0;
+    const bit = (seed >>> ((st * 2 + col) & 15)) & 1;
+    if (!bit) return 0;                              // that room is dark
+    // Frame, then glow, then a mullion cross.
+    const edge = fu < 0.32 || fu > 0.68 || fv < 0.35 || fv > 0.67;
+    if (edge) return Core.idx(4, 2);
+    if (Math.abs(fu - 0.5) < 0.035 || Math.abs(fv - 0.51) < 0.028) return Core.idx(4, 3);
+    const warm = 12 + (((u * 97 + v * 61) | 0) & 1);
+    return Core.idx(15, warm);
+  }
+
   function wallTexel(mat, u, v, face, lod) {
     const t = levelOf(mat, lod || 0);
     const S = t.size || TS, Mk = S - 1;
@@ -553,6 +579,12 @@ const Art = (() => {
     const px = (cx, cy, ramp, sh) => E.rect(x + cx * k, y + cy * k, k, k, Core.idx(ramp, sh));
     const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
 
+    if (kind === 'journal') {          // a sealed scroll with a ribbon
+      box(2, 2, 8, 9, 2, 13); box(2, 2, 8, 1, 2, 15);
+      for (let r = 0; r < 5; r++) box(3, 4 + r, 6, 1, 2, 8 + (r & 1));
+      box(1, 10, 10, 2, 4, 6); px(5, 11, 11, 12); px(6, 11, 11, 12);
+      return;
+    }
     if (kind === 'sheet') {            // a helm, visored
       box(3, 1, 6, 2, 14, 11); box(2, 3, 8, 5, 14, 9);
       box(3, 4, 6, 2, 0, 2);           // visor slit
@@ -602,7 +634,7 @@ const Art = (() => {
 
   return {
     TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
-    text, textShadow, textCentred, textCentredShadow, textWidth,
+    text, textShadow, textCentred, textCentredShadow, textWidth, isBuilding, windowTexel,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,

@@ -2130,18 +2130,24 @@ const World = (() => {
       const cx = Math.floor(x), cy = Math.floor(y);
       if (isSolid(m.cells[cy * RW + cx])) continue;
       if (matOf(m.cells[cy * RW + cx]) === MAT.water) continue;
-      if (town && Math.hypot(x - town.cx, y - town.cy) < SAFE_R) continue;
+      const fromTown = town ? Math.hypot(x - town.cx, y - town.cy) : 99;
+      if (fromTown < SAFE_R) continue;
+      // A GRADED FRONTIER. The full spawn table within a short walk of the gate killed a rested
+      // level-1 party in 8.9 seconds with nothing ever entering the frame — the region's level-3
+      // wolves were spawning where its level-1 rats belong. Inside 32 cells you meet the weakest
+      // thing in the table and nothing else.
+      const kind = fromTown < 32 ? r.spawn[0] : rng.pick(r.spawn);
       m.entities.push({
-        eid: 'e' + id + '_' + i, kind: rng.pick(r.spawn), x, y, z: H(m, x, y),
+        eid: 'e' + id + '_' + i, kind, x, y, z: H(m, x, y),
         ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x, y },
       });
     }
     // A picket of the weakest thing in the table, in the band just outside the walls, so the first
     // walk out of the gate meets SOMETHING. The first fight is the moment the game starts existing.
     if (town) {
-      for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2 + rng.float(-0.2, 0.2);
-        const d = SAFE_R + rng.float(2, 10);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + rng.float(-0.2, 0.2);
+        const d = SAFE_R + rng.float(3, 11);
         const x = town.cx + Math.cos(a) * d, y = town.cy + Math.sin(a) * d;
         const cx = Math.floor(x), cy = Math.floor(y);
         if (cx < 2 || cy < 2 || cx >= RW - 2 || cy >= RH - 2) continue;
@@ -3008,10 +3014,21 @@ const Engine = (() => {
             if (face ? dx > 0 : dy < 0) u = 1 - u;
             const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
             const lod = Art.lodFor(dist);
+            // LIT WINDOWS after dark. Both an art critic and a veteran reported the same thing from
+            // opposite directions: "not one emissive pixel" and "a market town at 23:00 with no lit
+            // window, no lantern, no warm pool". Night was a global multiply, and a global multiply
+            // is a filter, not a time of day. A window is a hole in a wall with a fire behind it,
+            // and it must ignore the sun term entirely or it goes out with everything else.
+            const lampLit = !dungeon && sun <= -1 && Art.isBuilding(mat);
+            const lampSeed = lampLit ? (Core.hashStr('win' + cx + ':' + cy + ':' + face) >>> 0) : 0;
             for (let y = top; y < ybuf; y++) {
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
+              if (lampLit) {
+                const lit = Art.windowTexel(u, v, lampSeed, storeys);
+                if (lit) { buf[y * W + px] = lit; continue; }
+              }
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
@@ -3063,8 +3080,11 @@ const Engine = (() => {
     const radius = cam.torch || 7.5;
     // A torch POOL: bright at the party's feet, near black at the edge of the radius. The previous
     // curve floored at -2, which left a whole dungeon evenly lit and blew s15 to 218/255 mean.
+    // Floor at -11, not -14. A first quest into a barrow the party could not see AT ALL — black
+    // at midnight and black at noon — is a dead end, not atmosphere. Dark enough that a torch is
+    // worth carrying; light enough that the walls exist without one.
     const t = clamp(1 - d / radius, 0, 1);
-    return Math.round(t * t * 14) - 14;
+    return Math.round(t * t * 13) - 11;
   }
 
   // ---------------------------------------------------------------- sprites
@@ -3075,7 +3095,7 @@ const Engine = (() => {
     const cosA = Math.cos(-cam.ang), sinA = Math.sin(-cam.ang);
     const tx = dxw * cosA - dyw * sinA;
     const ty = dxw * sinA + dyw * cosA;
-    if (tx < 0.25) return null;                         // behind the camera
+    if (tx < 0.25) return false;                        // behind the camera
 
     const halfFov = Math.tan(FOV_H / 2);
     const sx = VIEW.x + (VIEW.w / 2) * (1 + (ty / tx) / halfFov);
@@ -3088,12 +3108,13 @@ const Engine = (() => {
     const yFeet = horizon + (eyeZ - wz) * invD;
     const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
 
-    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return null;
+    if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return false;
 
     // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
     const lit = opts && opts.lit !== undefined ? opts.lit : 0;
     const mirror = opts && opts.mirror;
+    let drawn = 0;
     const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
     const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
     const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
@@ -3136,10 +3157,13 @@ const Engine = (() => {
         const pi = spr.data[syi * spr.w + sxi];
         if (pi === 0) continue;
         buf[y * W + x] = Core.shade(pi & 0xf0, (pi & 0x0f) + lit);
+        drawn++;
       }
     }
     clipReset();
-    return { x: x0, y: y0, w: wPix, h: hPix, dist: tx };
+    // The pixel count is the honest answer to "can the player see this?" — a sprite entirely
+    // behind a wall is z-rejected column by column and draws nothing.
+    return drawn > 6 ? { x: x0, y: y0, w: wPix, h: hPix, dist: tx, drawn } : false;
   }
 
   // Which of the 8 facings to draw, and whether to mirror. Sprites are baked for 0..180 only;
@@ -3516,6 +3540,32 @@ const Art = (() => {
     return t[v * S + u];
   }
 
+  const BUILDING = { 17: 1, 18: 1, 19: 1, 16: 1 };   // timber, brick, plaster, stone
+  const isBuilding = (mat) => !!BUILDING[mat];
+
+  // A lit window: a framed opening with a warm interior and a mullion cross, drawn straight into
+  // the framebuffer so the sun term never touches it. Which storeys are lit, and which of the two
+  // window columns, comes from the cell hash — so a street has some rooms awake and some not, and
+  // it is the same street every night.
+  function windowTexel(u, v, seed, storeys) {
+    const st = Math.floor(v);                        // which storey of this wall
+    if (st < 0 || st >= (storeys || 1)) return 0;
+    const fv = v - st;
+    if (fv < 0.30 || fv > 0.72) return 0;
+    // Two windows per cell face.
+    const col = u < 0.5 ? 0 : 1;
+    const fu = col ? (u - 0.5) * 2 : u * 2;
+    if (fu < 0.26 || fu > 0.74) return 0;
+    const bit = (seed >>> ((st * 2 + col) & 15)) & 1;
+    if (!bit) return 0;                              // that room is dark
+    // Frame, then glow, then a mullion cross.
+    const edge = fu < 0.32 || fu > 0.68 || fv < 0.35 || fv > 0.67;
+    if (edge) return Core.idx(4, 2);
+    if (Math.abs(fu - 0.5) < 0.035 || Math.abs(fv - 0.51) < 0.028) return Core.idx(4, 3);
+    const warm = 12 + (((u * 97 + v * 61) | 0) & 1);
+    return Core.idx(15, warm);
+  }
+
   function wallTexel(mat, u, v, face, lod) {
     const t = levelOf(mat, lod || 0);
     const S = t.size || TS, Mk = S - 1;
@@ -3721,6 +3771,12 @@ const Art = (() => {
     const px = (cx, cy, ramp, sh) => E.rect(x + cx * k, y + cy * k, k, k, Core.idx(ramp, sh));
     const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
 
+    if (kind === 'journal') {          // a sealed scroll with a ribbon
+      box(2, 2, 8, 9, 2, 13); box(2, 2, 8, 1, 2, 15);
+      for (let r = 0; r < 5; r++) box(3, 4 + r, 6, 1, 2, 8 + (r & 1));
+      box(1, 10, 10, 2, 4, 6); px(5, 11, 11, 12); px(6, 11, 11, 12);
+      return;
+    }
     if (kind === 'sheet') {            // a helm, visored
       box(3, 1, 6, 2, 14, 11); box(2, 3, 8, 5, 14, 9);
       box(3, 4, 6, 2, 0, 2);           // visor slit
@@ -3770,7 +3826,7 @@ const Art = (() => {
 
   return {
     TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
-    text, textShadow, textCentred, textCentredShadow, textWidth,
+    text, textShadow, textCentred, textCentredShadow, textWidth, isBuilding, windowTexel,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
@@ -4679,7 +4735,7 @@ const UI = (() => {
 
     // ---- message log
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
-    const lw = En.W - 6 - lx - (58 * 3 + 10 + 14);   // leaves room for the command bar
+    const lw = En.W - 6 - lx - (50 * 4 + 15 + 14);   // leaves room for the command bar
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
@@ -4726,14 +4782,14 @@ const UI = (() => {
     // a phone game gets fifteen minutes.
     // Three across, two down. Two columns of six left no room under the icon for its name, so the
     // labels printed over the pictograms. The 800px HUD has the width for a proper command bar.
-    const BW = 58, BH = 55, BX = En.W - (BW * 3 + 10) - 6;
+    const BW = 50, BH = 55, BX = En.W - (BW * 4 + 15) - 6;
     const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'SPELLS'],
-      ['map', 'MAP'], ['rest', 'CAMP'], ['menu', 'MENU']];
+      ['map', 'MAP'], ['journal', 'QUESTS'], ['rest', 'CAMP'], ['menu', 'MENU']];
     btns.forEach(([id, label], i) => {
-      const bx = BX + (i % 3) * (BW + 5);
-      const by = HUD.y + 4 + Math.floor(i / 3) * (BH + 4);
+      const bx = BX + (i % 4) * (BW + 5);
+      const by = HUD.y + 4 + Math.floor(i / 4) * (BH + 4);
       Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
-      Art.hudIcon(En, id, bx + 13, by + 3, 2);
+      Art.hudIcon(En, id, bx + 9, by + 3, 2);
       const lw3 = Art.textWidth(label, 1);
       En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 2, by + BH - 14, lw3 + 4, 11, Core.idx(13, 3));
       Art.textCentred(En, bx + BW / 2, by + BH - 13, label, Core.idx(0, 15), 1);
@@ -4785,7 +4841,13 @@ const UI = (() => {
       }
       if (live) reg(id, vx, y, bw, bh, id);
     };
-    verb('act', 'USE', !fighting, 0);
+    // USE IS ALWAYS LIVE. Making it conditional on "no enemy nearby" locked the player out of every
+    // building in a town where monsters roam: a veteran stood on the exact tile that had opened the
+    // tavern ten minutes earlier, pressed the same button, and got "Dorn hits the Grey Wolf for 4"
+    // because a rat had wandered within twelve units. "You are wounded, you run for the temple, and
+    // the temple stops existing because a rat followed you." A verb that vanishes when you need it
+    // most is worse than no verb.
+    verb('use', 'USE', true, 0);
     verb('act', 'ATK', fighting, 1);
     verb('cast', 'CAST', fighting, 2);
     verb('wait', 'WAIT', fighting, 3);
@@ -4981,12 +5043,15 @@ const UI = (() => {
     const sel = g.selectedItem;
     if (sel !== null && ch.pack[sel]) {
       const st = ch.pack[sel];
-      Art.panel(En, f.x + 14, f.y + f.h - 62, f.w - 28, 48, 4, true);
-      Art.text(En, f.x + 22, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
+      // The detail bar starts where the paperdoll column ENDS. Spanning the full panel width put
+      // it straight over the BOOTS well and half of BELT, so selecting an item hid two slots.
+      const dx0 = f.x + 240;
+      Art.panel(En, dx0, f.y + f.h - 62, f.x + f.w - 14 - dx0, 48, 4, true);
+      Art.text(En, dx0 + 8, f.y + f.h - 56, Items.displayName(st), Core.idx(13, 14), 2);
       const it = Items.def(st);
       const line = (it.dmg ? 'Dmg ' + it.dmg.n + 'd' + it.dmg.sides + (it.dmg.plus ? '+' + it.dmg.plus : '') + '  ' : '') +
         (it.ac ? 'AC ' + it.ac + '  ' : '') + (it.heal ? 'Heals ' + it.heal + '  ' : '') + 'Value ' + Items.unitValue(st) + 'g each';
-      Art.text(En, f.x + 22, f.y + f.h - 36, line, Core.idx(0, 12), 2);
+      Art.text(En, dx0 + 8, f.y + f.h - 36, line, Core.idx(0, 12), 2);
       // USE is the verb the game was missing entirely: eight healing potions the party could not
       // drink, offered only EQUIP and DROP.
       const usable = it && (it.kind === 'potion' || it.kind === 'food' || (it.kind === 'tool' && it.light));
@@ -5145,6 +5210,54 @@ const UI = (() => {
     En.rect(f.x + 380, ly + 2, 10, 10, Core.idx(13, 14)); Art.text(En, f.x + 396, ly, 'DOOR', Core.idx(0, 12), 2);
   }
 
+  // A QUEST JOURNAL. There was none: "the only way to read your quest is to walk back across town
+  // to the Captain." MM6 had Quests, Notes and Autonotes and they carried the campaign; a party RPG
+  // whose objectives live only in the head of the man who gave them is not navigable.
+  function journal(g) {
+    const En = E();
+    const f = screenFrame('QUEST JOURNAL', 720, 440);
+    const ids = World.QUEST_IDS.filter((q) => g.party.quests[q]);
+    if (!ids.length) {
+      Art.text(En, f.x + 26, f.inner + 30, 'No quests yet.', Core.idx(13, 13), 2);
+      Art.text(En, f.x + 26, f.inner + 56, 'Townspeople stand around the plaza. Walk up to one', Core.idx(0, 12), 2);
+      Art.text(En, f.x + 26, f.inner + 78, 'and press USE.', Core.idx(0, 12), 2);
+      return;
+    }
+    // Active first, then finished, because the one you are doing is the one you opened this for.
+    const order = ids.slice().sort((a, b) => (g.party.quests[a].state) - (g.party.quests[b].state));
+    let y = f.inner + 16;
+    for (const qid of order) {
+      if (y > f.y + f.h - 70) break;
+      const q = World.QUESTS[qid], st = g.party.quests[qid];
+      const done = st.state === 2;
+      Art.panel(En, f.x + 20, y, f.w - 40, 62, 4, true);
+      Art.text(En, f.x + 28, y + 4, q.name.toUpperCase(), Core.idx(13, done ? 9 : 15), 2);
+      const region = World.REGIONS[q.region];
+      // Word-wrapped, not sliced. Cutting at a fixed character count breaks mid-word, and this is
+      // the prose that tells a player why they are walking somewhere.
+      const words = q.text.split(' ');
+      let line = '', ln = 0;
+      for (const w of words) {
+        if (line && (line + ' ' + w).length > 70) {
+          Art.text(En, f.x + 28, y + 24 + ln * 12, line, Core.idx(0, done ? 7 : 13), 1);
+          line = w; ln++;
+          if (ln > 1) break;
+        } else line = line ? line + ' ' + w : w;
+      }
+      if (ln <= 1 && line) Art.text(En, f.x + 28, y + 24 + ln * 12, line, Core.idx(0, done ? 7 : 13), 1);
+      // What, precisely, is still owed.
+      let need = '';
+      if (done) need = 'DONE';
+      else if (q.need) need = 'Bring ' + (q.count || 1) + ' ' +
+        (Items.ITEMS[q.need] ? Items.ITEMS[q.need].name : q.need) +
+        '  (have ' + (g.countItem ? g.countItem(q.need) : 0) + ')';
+      else if (q.kill) need = 'Kill ' + q.kill.replace(/_/g, ' ') + (q.killIn ? ' in ' + q.killIn : '');
+      Art.text(En, f.x + 28, y + 48, need, Core.idx(done ? 6 : 13, 13), 1);
+      Art.text(En, f.x + f.w - 190, y + 48, region ? region.name : '', Core.idx(2, 12), 1);
+      y += 68;
+    }
+  }
+
   function shop(g) {
     const En = E();
     const kind = g.shopKind;
@@ -5241,19 +5354,21 @@ const UI = (() => {
     if (kind === 'trainer') {
       const pending = Rules.levelForXP(ch.xp) - ch.level;
       const cost = Rules.trainCost(ch.level);
-      Art.text(En, f.x + 24, f.inner + 20, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
-      Art.text(En, f.x + 24, f.inner + 48, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
-      Art.text(En, f.x + 24, f.inner + 70, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
+      // Below the tab row, like every other shop screen. "Alder Level 1" was drawn on top of the
+      // ALDER/KESTA/CASS/DORN tabs and both were illegible.
+      Art.text(En, f.x + 24, f.inner + 46, ch.name + ' — level ' + ch.level, Core.idx(13, 14), 2);
+      Art.text(En, f.x + 24, f.inner + 70, pending > 0 ? 'Ready to advance ' + pending + ' level(s)' : 'Not enough experience yet', Core.idx(pending > 0 ? 6 : 11, 12), 2);
+      Art.text(En, f.x + 24, f.inner + 92, 'XP ' + ch.xp + ' / ' + Rules.xpForLevel(ch.level + 1), Core.idx(0, 12), 2);
       if (pending > 0) {
-        Art.button(En, f.x + 24, f.inner + 96, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
-        reg('train', f.x + 24, f.inner + 96, 260, 46, cost);
+        Art.button(En, f.x + 24, f.inner + 118, 260, 46, 'TRAIN ' + cost + 'g', false, 2);
+        reg('train', f.x + 24, f.inner + 118, 260, 46, cost);
       }
       // Skill spending, at readable size. Twelve buttons of 1x type on a brown plate was "dim brown
       // on dim brown, and I had to squint to make out Sword 1 / Axe 0 / Spear 0".
-      Art.text(En, f.x + 24, f.inner + 150, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
+      Art.text(En, f.x + 24, f.inner + 172, 'SKILL POINTS: ' + ch.skillPts, Core.idx(13, 13), 2);
       const learnable = Object.keys(Rules.SKILLS).filter((k) => Rules.classCap(ch.cls, k) > 0).slice(0, 12);
       learnable.forEach((k, i) => {
-        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 176 + Math.floor(i / 3) * 40;
+        const x = f.x + 24 + (i % 3) * 180, y = f.inner + 196 + Math.floor(i / 3) * 40;
         const cur = ch.skills[k];
         Art.button(En, x, y, 172, 34, Rules.SKILLS[k].name.slice(0, 7).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
         reg('skillup', x, y, 172, 34, k);
@@ -5449,7 +5564,10 @@ const UI = (() => {
         else line = line ? line + ' ' + w : w;
       }
       if (line) Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2);
-      y = ly;
+      // A FIXED block height. A three-line blurb followed by a two-line one shifted the whole stat
+      // grid up 14 pixels, so a tap aimed at "Might +" landed on "Personality +". Nothing may move
+      // under a finger that is already reaching for it.
+      y += 3 * 18;
     }
 
     // Point buy.
@@ -5479,7 +5597,7 @@ const UI = (() => {
 
   // ---------------------------------------------------------------- dispatch
   const SCREENS = {
-    sheet: charSheet, inv: inventory, book: spellbook, map: automap,
+    sheet: charSheet, inv: inventory, book: spellbook, map: automap, journal,
     shop, dialogue, rest: restScreen, title, creation, menu, defeat,
   };
 
@@ -5516,7 +5634,9 @@ const Game = (() => {
 
   const { clamp, RNG, Clock, Log, Bus } = Core;
 
-  const AGGRO = 11;
+  // 9, not 11. Every monster inside the radius converges at once, so a wide radius means the first
+  // thing a new party meets is three wolves simultaneously rather than one.
+  const AGGRO = 9;
   const MELEE = 1.9;
   const RECOVER_MS = 16;              // one fixed timestep of recovery per frame
 
@@ -5649,6 +5769,11 @@ const Game = (() => {
         ch.equip[it.slot] = st;
       }
       ch.pack.push({ id: 'potion_heal', qty: 2, ident: true, bonus: 0, charges: 0 });
+      // TORCHES. The first quest sends the party into the Sunken Barrow, which is correctly and
+      // completely dark, and a veteran discovered there is nothing in the starting town that sells
+      // a light: "shipping the first quest into a black screen with no light source is not"
+      // faithful, it is a dead end. Every character carries three.
+      ch.pack.push({ id: 'torch', qty: 3, ident: true, bonus: 0, charges: 0 });
       recompute(ch);
       ch.hp = Rules.maxHP(ch); ch.sp = Rules.maxSP(ch);
     });
@@ -6867,6 +6992,7 @@ const Game = (() => {
     if (k === 'book') openScreen('book');
     if (k === 'map') openScreen('map');
     if (k === 'rest') openScreen('rest');
+    if (k === 'journal') openScreen('journal');
     if (k === 'esc') closeScreens();
     if (k === 'next') state.active = (state.active + 1) % 4;
     if (k === 'turnbased') toggleTurnBased();
@@ -6916,6 +7042,8 @@ const Game = (() => {
         openScreen(r.data);
         break;
       case 'act': doAct(); break;
+      // USE never attacks. It is the door/chest/NPC verb and it must work with a wolf on your heel.
+      case 'use': interact(); break;
       case 'cast': typeof r.data === 'string' ? castSpell(r.data) : openScreen('book'); break;
       case 'wait': if (state.turnBased) spendTurn(); else stepTurn(); break;
       case 'turnbased': toggleTurnBased(); break;
@@ -6959,6 +7087,7 @@ const Game = (() => {
   // ---------------------------------------------------------------- actions
   // One button, two verbs, exactly as the label says: ATK when something is in reach, USE
   // otherwise. Shared by the on-screen button and the keyboard, which used to disagree.
+  // ATK. Kept separate from USE so neither can ever take the other's slot or its meaning.
   function doAct() {
     if (state.turnBased && nearestEnemy(18)) {
       // ONE character swings, then the turn passes. That is the entire value of turn-based: the
@@ -7229,12 +7358,13 @@ const Game = (() => {
     state.seen = seen;
     state.safeToRest = safeToRest;
     state.questComplete = questComplete;
+    state.countItem = countItem;
     state.slotUsed = (i) => { try { return !!localStorage.getItem(SAVE_KEY + i); } catch (e) { return false; } };
     // The nearest hostile the party is actually facing, shaped for a nameplate. UI must never walk
     // the entity list itself; that is how a second implementation of "what counts as a foe" is born.
-    state.nearestFoe = (r) => {
-      const e = nearestEnemy(r === undefined ? 14 : r);
-      if (!e) return null;
+    state.nearestFoe = () => {
+      const e = state.drawnFoe;
+      if (!e || e.dead || e.hp <= 0) return null;
       const def = Items.MONSTERS[e.kind];
       if (!def) return null;
       return { name: def.name, hp: Math.max(0, Math.round(e.hp)), maxHp: def.hp, kind: e.kind };
@@ -7371,14 +7501,23 @@ const Game = (() => {
         : /rat|spider/.test(e.kind) ? 0.8 : /wolf/.test(e.kind) ? 1.1 : 1.8;
       list.push({ dist, spr, mirror: f.mirror,
         x: e.x, y: e.y, z: World.walkHeight(m, e.x, e.y, e.z),
-        h: Sprites.worldHeight(spr, real) });
+        h: Sprites.worldHeight(spr, real),
+        foe: (e.ally || e.charmed > Clock.t || e.enslaved > Clock.t) ? null : e });
     }
 
     list.sort((a, b) => b.dist - a.dist);
     const lit = m.kind === 'dungeon' ? 0 : Art.sunShade(1);
+    // The nameplate names what you can SEE. Deriving it from "nearest live enemy within 14" put a
+    // permanent "Grey Wolf 22/22" banner on screen that survived a full 360-degree sweep, four
+    // in-game days, a map change and a save/load, and at one point pointed at a town guard. A HUD
+    // a player stops trusting is worse than no HUD, so the banner is now a by-product of the draw:
+    // if the sprite pass actually put pixels on the screen for it, it gets a nameplate.
+    state.drawnFoe = null;
+    let bestFoe = 1e9;
     for (const s of list) {
-      Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
+      const drew = Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
         { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0), mirror: s.mirror });
+      if (drew && s.foe && s.dist < bestFoe) { bestFoe = s.dist; state.drawnFoe = s.foe; }
     }
   }
 
@@ -7634,15 +7773,22 @@ const Debug = (() => {
         y: Math.floor((clientY - r.top) / r.height * Engine.H),
       };
     };
+    // OUTSIDE THE CANVAS IS OUTSIDE THE GAME. A click in the letterbox bar was mapping to a
+    // framebuffer coordinate and firing a button: on a phone those bars are the bezel, and a game
+    // that responds to the bezel responds to the hand holding it.
+    const inFb = (p) => p.x >= 0 && p.y >= 0 && p.x < Engine.W && p.y < Engine.H;
     const down = (x, y) => {
       const p = toFb(x, y);
+      if (!inFb(p)) return;
       state.pointer.x = p.x; state.pointer.y = p.y; state.pointer.down = true;
       if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, true);
     };
     const up = (x, y) => {
       const p = toFb(x, y);
       state.pointer.down = false;
-      if (hasGame() && Game.onTap) Game.onTap(p.x, p.y, false);
+      // A release outside the canvas must still clear held movement keys, or a finger that slides
+      // off the edge leaves the party walking forever.
+      if (hasGame() && Game.onTap) Game.onTap(inFb(p) ? p.x : -1, inFb(p) ? p.y : -1, false);
     };
     // Bind EVERY input family. Pointer events alone left the game unreachable in any context that
     // dispatches touch or plain mouse events, and "the title screen ate four taps" is the worst

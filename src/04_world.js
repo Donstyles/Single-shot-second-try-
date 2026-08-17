@@ -684,18 +684,24 @@ const World = (() => {
       const cx = Math.floor(x), cy = Math.floor(y);
       if (isSolid(m.cells[cy * RW + cx])) continue;
       if (matOf(m.cells[cy * RW + cx]) === MAT.water) continue;
-      if (town && Math.hypot(x - town.cx, y - town.cy) < SAFE_R) continue;
+      const fromTown = town ? Math.hypot(x - town.cx, y - town.cy) : 99;
+      if (fromTown < SAFE_R) continue;
+      // A GRADED FRONTIER. The full spawn table within a short walk of the gate killed a rested
+      // level-1 party in 8.9 seconds with nothing ever entering the frame — the region's level-3
+      // wolves were spawning where its level-1 rats belong. Inside 32 cells you meet the weakest
+      // thing in the table and nothing else.
+      const kind = fromTown < 32 ? r.spawn[0] : rng.pick(r.spawn);
       m.entities.push({
-        eid: 'e' + id + '_' + i, kind: rng.pick(r.spawn), x, y, z: H(m, x, y),
+        eid: 'e' + id + '_' + i, kind, x, y, z: H(m, x, y),
         ang: rng.float(0, Math.PI * 2), state: 'idle', home: { x, y },
       });
     }
     // A picket of the weakest thing in the table, in the band just outside the walls, so the first
     // walk out of the gate meets SOMETHING. The first fight is the moment the game starts existing.
     if (town) {
-      for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2 + rng.float(-0.2, 0.2);
-        const d = SAFE_R + rng.float(2, 10);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + rng.float(-0.2, 0.2);
+        const d = SAFE_R + rng.float(3, 11);
         const x = town.cx + Math.cos(a) * d, y = town.cy + Math.sin(a) * d;
         const cx = Math.floor(x), cy = Math.floor(y);
         if (cx < 2 || cy < 2 || cx >= RW - 2 || cy >= RH - 2) continue;
