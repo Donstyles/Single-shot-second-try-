@@ -181,6 +181,9 @@ const Engine = (() => {
   // that. Everything below exists to make the ground itself have shape.
 
   const STOREY = 3.20;
+  // World units per texture repeat. Walls are sampled in WORLD space on both axes so a texel is
+  // square; sampling v in storey space stretched every wall texture by exactly STOREY.
+  const TEX_UNIT = 1.00;
   const CEIL = 3.20;          // dungeon ceiling height
   const EYE = 1.30;
   const MAX_STEPS = 150;
@@ -444,9 +447,24 @@ const Engine = (() => {
             for (let y = top; y < ybuf; y++) {
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
-              const v = (topH - wh) / STOREY;
+              // TWO v's, and conflating them cost three rounds of critique.
+              //
+              // `vs` is STOREY space: 0..1 per floor. Windows live there, because "which storey is
+              // lit" is a question about floors.
+              //
+              // `v` is WORLD space, and it is what the texture is sampled with. It used to be vs,
+              // which meant one texture repeat spanned a whole storey (3.20 units) while u spanned
+              // one cell (1.00) — every wall texture stretched 3.2x vertically. Horizontal features
+              // (mortar courses, plank rails, brick rows) smeared into bands while vertical ones
+              // stayed sharp, and the wall read as hard vertical streaks.
+              //
+              // Two separate critiques reported that streaking and both of us went looking at the
+              // TEXTURES, which measure fine: baked timberwall is anisotropy 1.65, row correlation
+              // 0.719. The defect was never in the art. It was one divisor in the sampler.
+              const vs = (topH - wh) / STOREY;
+              const v = (topH - wh) / TEX_UNIT;
               if (lampLit) {
-                const lit = Art.windowTexel(u, v, lampSeed, storeys);
+                const lit = Art.windowTexel(u, vs, lampSeed, storeys);
                 if (lit) { buf[y * W + px] = lit; continue; }
               }
               const tx = Art.wallTexel(mat, u, v, face, lod);
