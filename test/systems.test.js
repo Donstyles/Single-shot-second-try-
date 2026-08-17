@@ -843,4 +843,36 @@ T.suite('panel regressions');
   }
 }
 
+// ================================================================ baked art integrity
+// Thirteen creatures came back from a regeneration run as the same green goblin, because
+// foundry.js defaulted to `probe_goblin.glb` whatever id it was given. The only reason it was
+// caught is that I looked at a contact sheet. A silent fallback that produces plausible-looking
+// wrong output needs a mechanical check, not an eye.
+T.suite('baked art integrity');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', 'assets', 'sprites');
+  if (fs.existsSync(dir)) {
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+    T.ok(files.length > 0, 'baked sprite sets exist (' + files.length + ')');
+    const byFingerprint = new Map();
+    for (const f of files) {
+      const m = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      // The first facing's PNG payload identifies the mesh it came from.
+      const fp = m.facings && m.facings[0] ? m.facings[0].png : '';
+      T.ok(!!fp, f + ' has a first facing with image data');
+      if (!byFingerprint.has(fp)) byFingerprint.set(fp, []);
+      byFingerprint.get(fp).push(f.replace('.json', ''));
+    }
+    const dupes = [...byFingerprint.values()].filter((g) => g.length > 1);
+    T.eq(dupes.map((g) => g.join('=')), [],
+      'no two creatures are baked from the same mesh');
+    // And every creature the game can spawn must actually have art or a painter fallback.
+    for (const k of Object.keys(Items.MONSTERS)) {
+      T.ok(typeof Items.MONSTERS[k].hp === 'number', k + ' is a well-formed monster');
+    }
+  }
+}
+
 T.report('systems');

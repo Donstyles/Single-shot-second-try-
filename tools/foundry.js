@@ -246,8 +246,17 @@ async function bake(creatureId, glbPath, opts = {}) {
 
 async function main() {
   const id = process.argv[2] || 'goblin';
-  const glb = process.argv[3] || path.join(RAW, 'meshy', 'probe_goblin.glb');
-  if (!fs.existsSync(glb)) { console.error('no such GLB: ' + glb); process.exit(1); }
+  // Default to THIS creature's mesh. It used to default to `probe_goblin.glb` no matter which id
+  // was named, so `foundry.js skeleton` cheerfully baked a goblin and wrote it to skeleton.json.
+  // Thirteen creatures came back from a regeneration run as the same green goblin and the only
+  // reason it was caught is that I looked at the contact sheet. A silent fallback that produces
+  // plausible-looking wrong output is the worst kind of default there is.
+  const glb = process.argv[3] || path.join(RAW, 'meshy', id + '.glb');
+  if (!fs.existsSync(glb)) {
+    console.error('no such GLB: ' + path.relative(ROOT, glb));
+    console.error('generate it first:  node tools/batch.js one ' + id);
+    process.exit(1);
+  }
 
   console.log('foundry: ' + id + '  <- ' + path.relative(ROOT, glb));
   const t0 = Date.now();

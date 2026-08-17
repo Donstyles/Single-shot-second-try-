@@ -647,7 +647,19 @@
       "op": "mesh:refine",
       "credits": 10,
       "note": "01a00f7c-e47f-76b3-9e92-cf63f45d3c47"
+    },
+    {
+      "n": 109,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A towering armoured wraith-king wearing "
+    },
+    {
+      "n": 110,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00f83-60aa-709d-8c2a-3ecd049555f6"
     }
   ],
-  "spent": 842
+  "spent": 857
 }
