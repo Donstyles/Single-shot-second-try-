@@ -1092,12 +1092,34 @@ const World = (() => {
   // died. 0.36 still leaves 0.28 of clearance in a one-cell doorway.
   const BODY = 0.36;
 
+  // Trunk radii for the decor a party can physically walk into. An art critic found the camera
+  // inside a canopy — "84.7% of the viewport is a single tree, three flat greens covering 79.4% of
+  // the whole frame, and a Bandit health bar over a creature that is not in the image" — and a
+  // 78-pixel trunk bar filling a sixth of another shot. Billboards had no collision at all, so the
+  // party walked through the trunk and stood in the middle of the leaves.
+  const TRUNK = { oak: 0.62, pine: 0.55, deadtree: 0.5, ashstump: 0.45, standingstone: 0.7,
+    fountain: 1.1, stall: 0.8, campfire: 0.7, barrel: 0.4, crate: 0.45, tent: 0.9 };
+
+  function blockedByDecor(m, x, y) {
+    const list = m.decor;
+    if (!list) return false;
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const r = TRUNK[d.kind];
+      if (r === undefined) continue;
+      const dx = d.x - x, dy = d.y - y;
+      if (dx * dx + dy * dy < (r + BODY) * (r + BODY)) return true;
+    }
+    return false;
+  }
+
   function passable(m, x, y, fromZ) {
     if (!pointOk(m, x, y, fromZ)) return false;
     // Only the solid test needs the body radius. Height and water are sampled continuously and
     // already vary smoothly, so probing them at the rim would just make slopes unclimbable.
     if (blockedSolid(m, x + BODY, y, fromZ) || blockedSolid(m, x - BODY, y, fromZ)
       || blockedSolid(m, x, y + BODY, fromZ) || blockedSolid(m, x, y - BODY, fromZ)) return false;
+    if (blockedByDecor(m, x, y)) return false;
     return true;
   }
 

@@ -432,11 +432,14 @@ const RUNNER = `(() => {
       // Kill it through the game's own combat, and see whether the campaign ends.
       window.__game.teleport(boss.x - 1.2, boss.y, 0);
       window.__game.heal(999);
+      // The ATK button and nothing else. If this needs a direct partyAttack() call to pass, the
+      // button does not work and the test would be lying about the game being finishable.
       for (let i = 0; i < 4000 && !boss.dead; i++) {
         Game.doAct();
         for (const c of P().members) c.recovery = 0;
         if (i % 40 === 0) window.__game.heal(999);
       }
+      out.bossHp = boss.hp;
       out.bossDead = !!boss.dead;
       out.killed = P().quests.q_crown.killed;
       out.complete = Game.questComplete('q_crown');

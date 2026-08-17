@@ -2538,12 +2538,34 @@ const World = (() => {
   // died. 0.36 still leaves 0.28 of clearance in a one-cell doorway.
   const BODY = 0.36;
 
+  // Trunk radii for the decor a party can physically walk into. An art critic found the camera
+  // inside a canopy — "84.7% of the viewport is a single tree, three flat greens covering 79.4% of
+  // the whole frame, and a Bandit health bar over a creature that is not in the image" — and a
+  // 78-pixel trunk bar filling a sixth of another shot. Billboards had no collision at all, so the
+  // party walked through the trunk and stood in the middle of the leaves.
+  const TRUNK = { oak: 0.62, pine: 0.55, deadtree: 0.5, ashstump: 0.45, standingstone: 0.7,
+    fountain: 1.1, stall: 0.8, campfire: 0.7, barrel: 0.4, crate: 0.45, tent: 0.9 };
+
+  function blockedByDecor(m, x, y) {
+    const list = m.decor;
+    if (!list) return false;
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const r = TRUNK[d.kind];
+      if (r === undefined) continue;
+      const dx = d.x - x, dy = d.y - y;
+      if (dx * dx + dy * dy < (r + BODY) * (r + BODY)) return true;
+    }
+    return false;
+  }
+
   function passable(m, x, y, fromZ) {
     if (!pointOk(m, x, y, fromZ)) return false;
     // Only the solid test needs the body radius. Height and water are sampled continuously and
     // already vary smoothly, so probing them at the rim would just make slopes unclimbable.
     if (blockedSolid(m, x + BODY, y, fromZ) || blockedSolid(m, x - BODY, y, fromZ)
       || blockedSolid(m, x, y + BODY, fromZ) || blockedSolid(m, x, y - BODY, fromZ)) return false;
+    if (blockedByDecor(m, x, y)) return false;
     return true;
   }
 
@@ -3118,6 +3140,11 @@ const Engine = (() => {
     const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
 
     if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return false;
+    // NEAR-CLIP a billboard that has swallowed the camera. Collision keeps the party out of a tree
+    // trunk, but a canopy is wider than its trunk and a camera under one still fills the frame with
+    // flat green. Anything spanning more than 78% of the viewport at arm's length is not scenery
+    // any more, it is a wall the player cannot see past, so drop it and let them see the world.
+    if (opts && opts.cullNear && tx < 1.6 && wPix > VIEW.w * 0.78) return false;
 
     // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
@@ -6412,6 +6439,12 @@ const Game = (() => {
         state.keys[k] = false; state.keyLatch[k] = 0;
       }
       state.acted = state.party.members.map(() => false);
+      // A ROUND STARTS FRESH. Turn-based freezes every timer including recovery, so entering it
+      // while a character was mid-swing left them permanently unable to act — and because the round
+      // only ends when everyone HAS acted, the round could never end either. A frozen world plus a
+      // timer that only thaws at end of round is a combat softlock, and a regression test walked
+      // straight into it.
+      for (const c of state.party.members) c.recovery = 0;
       state.tbRound = 1;
       state.active = nextToAct();
       Log.push('Turn-based. The world holds its breath.', 'sys');
@@ -6423,7 +6456,7 @@ const Game = (() => {
 
   function canActNow(i) {
     const c = state.party.members[i];
-    return Rules.canAct(c) && !state.acted[i];
+    return Rules.canAct(c) && !state.acted[i] && c.recovery <= 0;
   }
 
   function nextToAct() {
@@ -6441,6 +6474,14 @@ const Game = (() => {
     const anyLeft = state.party.members.some((c, i) => canActNow(i));
     if (anyLeft) { state.active = nextToAct(); return; }
     endTurnRound();
+  }
+
+  // Nobody left who CAN act ends the round on its own, so a party that is all recovering, asleep or
+  // unconscious is never stuck waiting for a turn none of them can take.
+  function reapDeadRound() {
+    if (!state.turnBased || !state.party) return;
+    const anyLeft = state.party.members.some((c, i) => canActNow(i));
+    if (!anyLeft && state.acted.some(Boolean) === false) endTurnRound();
   }
 
   function endTurnRound() {
@@ -7508,7 +7549,11 @@ const Game = (() => {
       else spendTurn();
       return true;
     }
-    if (state.combat.active && nearestEnemy(18)) {
+    // The world decides, not a cached flag. `combat.active` is recomputed once per update from
+    // whether anything is alerted, so it lags reality by a frame and can be stale for longer if the
+    // simulation is paused — which meant ATK could silently fall through to "interact with the
+    // scenery" while a boss stood a cell away. If something is in reach, the button hits it.
+    if (nearestEnemy(MELEE + 1.2)) {
       // Real time commits the WHOLE party, the way MM6's Attack did. Swinging one character at a
       // time while the other three stand idle is not a combat system.
       let any = false, why = null;
@@ -7832,6 +7877,7 @@ const Game = (() => {
     // way MM6 charges you for stepping while the world is stopped.
     if (state.turnBased) {
       decayLatches(dt);
+      reapDeadRound();
       if (keyDown('fwd') || keyDown('back') || keyDown('turnL') || keyDown('turnR')) stepInTurn();
       checkDefeat();
       return;
@@ -7900,7 +7946,8 @@ const Game = (() => {
       if (d.kind === 'questitem' && d.taken) continue;
       const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
+      list.push({ dist, cullNear: true,
+        spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
         z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
         h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
     }
@@ -7936,7 +7983,8 @@ const Game = (() => {
     let bestFoe = 1e9;
     for (const s of list) {
       const drew = Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
-        { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0), mirror: s.mirror });
+        { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0),
+          mirror: s.mirror, cullNear: s.cullNear });
       if (drew && s.foe && s.dist < bestFoe) { bestFoe = s.dist; state.drawnFoe = s.foe; }
     }
   }

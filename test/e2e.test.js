@@ -441,19 +441,31 @@ const T = require('./_harness.js');
     Core.Log.clear();
     Game.state.screen = null;
     const m = Game.state.map;
+    // Find a direction blocked by SOLID GEOMETRY, not by a barrel: props grew collision, and a prop
+    // you can slide around is not the thing this assertion is about.
     let found = null;
-    for (let a = 0; a < 32 && found === null; a++) {
-      const ang = (a / 32) * Math.PI * 2;
-      const tx = Game.state.party.x + Math.cos(ang) * 1.2, ty = Game.state.party.y + Math.sin(ang) * 1.2;
-      if (!World.passable(m, tx, ty, Game.state.party.z)) found = ang;
+    for (let a = 0; a < 64 && found === null; a++) {
+      const ang = (a / 64) * Math.PI * 2;
+      let solidAhead = true;
+      for (const step of [0.8, 1.2, 1.6]) {
+        const tx = Game.state.party.x + Math.cos(ang) * step, ty = Game.state.party.y + Math.sin(ang) * step;
+        if (!World.isSolid(World.cellAt(m, Math.floor(tx), Math.floor(ty)))) { solidAhead = false; break; }
+      }
+      if (solidAhead) found = ang;
     }
+    let saidWhy = 'no wall nearby';
     if (found !== null) {
       Game.state.party.ang = found;
+      Core.Log.clear && Core.Log.clear();
+      const before = Core.Log.tail(1)[0];
+      Game.state._blockCool = 0;
       Game.state.keys.fwd = true;
-      for (let i = 0; i < 30; i++) Game.update(16);
+      for (let i = 0; i < 40; i++) Game.update(16);
       Game.state.keys.fwd = false;
+      const after = Core.Log.tail(1)[0];
+      saidWhy = !!after && (!before || after.text !== before.text || /blocked|steep|deep/i.test(after.text));
     }
-    out.blockedSaidSomething = found === null ? 'no wall nearby' : Core.Log.lines.length > 0;
+    out.blockedSaidSomething = saidWhy;
 
     // A release must ALWAYS clear held movement, or a fast tap leaves the party walking forever.
     Game.onTap(-1, -1, true);
@@ -504,11 +516,13 @@ const T = require('./_harness.js');
       if (!qi) return { skipped: true };
       window.__game.teleport(qi.x, qi.y, 0);
       const before = window.__session.census().total;
-      Game.onKey('act', true); Game.onKey('act', false);
+      // USE, not ATK. They are separate verbs now — ATK hits whatever is in reach and USE works the
+      // world — so a probe that means "pick this up" must press the button that picks things up.
+      Game.interact();
       const mid = { total: window.__session.census().total, taken: !!qi.taken };
       // Make room, then take it for real.
       Game.state.party.members[0].pack.length = 20;
-      Game.onKey('act', true); Game.onKey('act', false);
+      Game.interact();
       const has = window.__session.census().byId[qi.item] || 0;
       return { skipped: false, before, mid, has, taken: !!qi.taken, item: qi.item };
     })()`);
@@ -582,7 +596,23 @@ const T = require('./_harness.js');
     // ---- a tap that lasts zero frames must still move the party.
     const tap = await page.evaluate(`(() => {
       Game.onKey('turnbased', true); Game.onKey('turnbased', false);   // back to real time
-      window.__game.gotoMap('harrowgate', 64, 60, 0);
+      // Find open ground rather than trusting a hardcoded cell. Market stalls, crates and barrels
+      // grew collision, and this probe had been standing inside the market row for several rounds.
+      window.__game.gotoMap('harrowgate', 64, 64, 0);
+      const m0 = Game.state.map;
+      let spot = null;
+      for (let r = 6; r < 30 && !spot; r++) {
+        for (let k = 0; k < 16 && !spot; k++) {
+          const a = k * Math.PI / 8;
+          const sx = m0.town.x + Math.cos(a) * r, sy = m0.town.y + Math.sin(a) * r;
+          const ahead = 0.9;
+          if (World.passable(m0, sx, sy, World.H(m0, sx, sy)) &&
+              World.passable(m0, sx + Math.cos(a) * ahead, sy + Math.sin(a) * ahead, World.H(m0, sx, sy))) {
+            spot = { x: sx, y: sy, a };
+          }
+        }
+      }
+      window.__game.teleport(spot.x, spot.y, spot.a);
       window.__game.settle(2);
       const p0 = { x: Game.state.party.x, y: Game.state.party.y };
       Game.onKey('fwd', true); Game.onKey('fwd', false);               // press and release, same frame

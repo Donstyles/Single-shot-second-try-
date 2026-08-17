@@ -493,6 +493,12 @@ const Game = (() => {
         state.keys[k] = false; state.keyLatch[k] = 0;
       }
       state.acted = state.party.members.map(() => false);
+      // A ROUND STARTS FRESH. Turn-based freezes every timer including recovery, so entering it
+      // while a character was mid-swing left them permanently unable to act — and because the round
+      // only ends when everyone HAS acted, the round could never end either. A frozen world plus a
+      // timer that only thaws at end of round is a combat softlock, and a regression test walked
+      // straight into it.
+      for (const c of state.party.members) c.recovery = 0;
       state.tbRound = 1;
       state.active = nextToAct();
       Log.push('Turn-based. The world holds its breath.', 'sys');
@@ -504,7 +510,7 @@ const Game = (() => {
 
   function canActNow(i) {
     const c = state.party.members[i];
-    return Rules.canAct(c) && !state.acted[i];
+    return Rules.canAct(c) && !state.acted[i] && c.recovery <= 0;
   }
 
   function nextToAct() {
@@ -522,6 +528,14 @@ const Game = (() => {
     const anyLeft = state.party.members.some((c, i) => canActNow(i));
     if (anyLeft) { state.active = nextToAct(); return; }
     endTurnRound();
+  }
+
+  // Nobody left who CAN act ends the round on its own, so a party that is all recovering, asleep or
+  // unconscious is never stuck waiting for a turn none of them can take.
+  function reapDeadRound() {
+    if (!state.turnBased || !state.party) return;
+    const anyLeft = state.party.members.some((c, i) => canActNow(i));
+    if (!anyLeft && state.acted.some(Boolean) === false) endTurnRound();
   }
 
   function endTurnRound() {
@@ -1589,7 +1603,11 @@ const Game = (() => {
       else spendTurn();
       return true;
     }
-    if (state.combat.active && nearestEnemy(18)) {
+    // The world decides, not a cached flag. `combat.active` is recomputed once per update from
+    // whether anything is alerted, so it lags reality by a frame and can be stale for longer if the
+    // simulation is paused — which meant ATK could silently fall through to "interact with the
+    // scenery" while a boss stood a cell away. If something is in reach, the button hits it.
+    if (nearestEnemy(MELEE + 1.2)) {
       // Real time commits the WHOLE party, the way MM6's Attack did. Swinging one character at a
       // time while the other three stand idle is not a combat system.
       let any = false, why = null;
@@ -1913,6 +1931,7 @@ const Game = (() => {
     // way MM6 charges you for stepping while the world is stopped.
     if (state.turnBased) {
       decayLatches(dt);
+      reapDeadRound();
       if (keyDown('fwd') || keyDown('back') || keyDown('turnL') || keyDown('turnR')) stepInTurn();
       checkDefeat();
       return;
@@ -1981,7 +2000,8 @@ const Game = (() => {
       if (d.kind === 'questitem' && d.taken) continue;
       const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
+      list.push({ dist, cullNear: true,
+        spr: Sprites.decor(d.kind, d.shop === undefined ? d.variant : d.shop), x: d.x, y: d.y,
         z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
         h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
     }
@@ -2017,7 +2037,8 @@ const Game = (() => {
     let bestFoe = 1e9;
     for (const s of list) {
       const drew = Engine.drawSprite(cam, s.spr, s.x, s.y, s.z, s.h,
-        { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0), mirror: s.mirror });
+        { lit: lit + (m.kind === 'dungeon' ? Engine.dungeonLight(cam, s.x, s.y, m) : 0),
+          mirror: s.mirror, cullNear: s.cullNear });
       if (drew && s.foe && s.dist < bestFoe) { bestFoe = s.dist; state.drawnFoe = s.foe; }
     }
   }

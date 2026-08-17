@@ -512,6 +512,11 @@ const Engine = (() => {
     const x0 = Math.round(sx - wPix / 2), y0 = Math.round(yFeet - hPix);
 
     if (x0 + wPix < VIEW.x || x0 > VIEW.x + VIEW.w) return false;
+    // NEAR-CLIP a billboard that has swallowed the camera. Collision keeps the party out of a tree
+    // trunk, but a canopy is wider than its trunk and a camera under one still fills the frame with
+    // flat green. Anything spanning more than 78% of the viewport at arm's length is not scenery
+    // any more, it is a wall the player cannot see past, so drop it and let them see the world.
+    if (opts && opts.cullNear && tx < 1.6 && wPix > VIEW.w * 0.78) return false;
 
     // Column-wise depth test so a sprite half-behind a wall is half-drawn, not all or nothing.
     clip(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
