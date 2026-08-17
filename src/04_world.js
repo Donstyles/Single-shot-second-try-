@@ -885,6 +885,21 @@ const World = (() => {
     m.ceilMat = { crypt: MAT.obsidian, cave: MAT.obsidian, mine: MAT.timberwall,
       forge: MAT.obsidian, ice: MAT.ice, keep: MAT.obsidian }[d.theme] || MAT.obsidian;
 
+    // A DADO. Put our barrow corridor beside the real game's and the difference is not resolution:
+    // theirs carries wood beams, brick, stone and stained glass in one frame, ours carried a single
+    // grey texture on both walls from floor to ceiling. A wall built of one material for its whole
+    // height is the thing that reads as procedural.
+    //
+    // So every dungeon wall is banded: a lower course in a CONTRASTING material with a moulding
+    // line at the transition. It costs one extra material per theme and it gives the corridor
+    // horizontal structure, which is what the eye was missing.
+    // The trim must CONTRAST with the wall, not merely differ from it. Stone trim under marble
+    // measured 64 distinct colours against the wall's own 68 — two greys are one grey. Timber under
+    // marble, and a dark plinth under ice, are the pairs that actually read.
+    m.trimMat = { crypt: MAT.brickwall, cave: MAT.rock, mine: MAT.stonewall,
+      forge: MAT.brickwall, ice: MAT.obsidian, keep: MAT.timberwall }[d.theme] || MAT.brickwall;
+    m.trimH = { crypt: 1.15, cave: 0.9, mine: 1.3, forge: 1.15, ice: 1.0, keep: 1.45 }[d.theme] || 1.15;
+
     m.cells.fill(wallMat | SOLID);
     m.storeys.fill(1);
 

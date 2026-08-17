@@ -2390,6 +2390,21 @@ const World = (() => {
     m.ceilMat = { crypt: MAT.obsidian, cave: MAT.obsidian, mine: MAT.timberwall,
       forge: MAT.obsidian, ice: MAT.ice, keep: MAT.obsidian }[d.theme] || MAT.obsidian;
 
+    // A DADO. Put our barrow corridor beside the real game's and the difference is not resolution:
+    // theirs carries wood beams, brick, stone and stained glass in one frame, ours carried a single
+    // grey texture on both walls from floor to ceiling. A wall built of one material for its whole
+    // height is the thing that reads as procedural.
+    //
+    // So every dungeon wall is banded: a lower course in a CONTRASTING material with a moulding
+    // line at the transition. It costs one extra material per theme and it gives the corridor
+    // horizontal structure, which is what the eye was missing.
+    // The trim must CONTRAST with the wall, not merely differ from it. Stone trim under marble
+    // measured 64 distinct colours against the wall's own 68 — two greys are one grey. Timber under
+    // marble, and a dark plinth under ice, are the pairs that actually read.
+    m.trimMat = { crypt: MAT.brickwall, cave: MAT.rock, mine: MAT.stonewall,
+      forge: MAT.brickwall, ice: MAT.obsidian, keep: MAT.timberwall }[d.theme] || MAT.brickwall;
+    m.trimH = { crypt: 1.15, cave: 0.9, mine: 1.3, forge: 1.15, ice: 1.0, keep: 1.45 }[d.theme] || 1.15;
+
     m.cells.fill(wallMat | SOLID);
     m.storeys.fill(1);
 
@@ -2985,6 +3000,7 @@ const Engine = (() => {
     // what makes inside feel like inside." Indoors the torch pool is the only light there is.
     const sun = dungeon ? 0 : (Art.sunShade ? Art.sunShade(light) : 0);
     const fogStart = map.fogStart, fogEnd = map.fogEnd;
+    const trimMat = map.trimMat, trimH = map.trimH || 1.15;
     // A NIGHT MIX, not just a night multiply. Shading down a ramp lowers luminance but keeps chroma
     // in proportion, and relative saturation is (max-min)/max — so darkening alone makes a scene
     // read as MORE saturated, which is what a critic measured twice (viewport ratio 1.399, sky
@@ -3168,10 +3184,20 @@ const Engine = (() => {
                 const lit = Art.windowTexel(u, vs, lampSeed, storeys);
                 if (lit) { buf[y * W + px] = lit; continue; }
               }
-              const tx = Art.wallTexel(mat, u, v, face, lod);
+              // Banded wall: a lower course of a contrasting material, with a bright moulding at
+              // the transition and a shadow just under it so the band reads as PROUD of the wall
+              // rather than as a colour change.
+              let wmat = mat, trimLight = 0;
+              if (trimMat !== undefined) {
+                const hAbove = wh - gh;
+                if (hAbove < trimH) wmat = trimMat;
+                else if (hAbove < trimH + 0.10) { wmat = trimMat; trimLight = 3; }
+                else if (hAbove < trimH + 0.20) trimLight = -2;
+              }
+              const tx = Art.wallTexel(wmat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
+              buf[y * W + px] = fogShade(tx, lightDelta + trimLight, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             ybuf = top;
           }

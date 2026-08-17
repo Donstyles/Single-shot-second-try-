@@ -987,6 +987,28 @@ const T = require('./_harness.js');
       'the sky changes when the party turns — clouds are world-locked (' + sky.turned + '/' + sky.width + ')');
     T.eq(sky.back, 0, 'and returning to the same heading gives the identical sky');
 
+    // ---- A DUNGEON WALL IS NOT ONE MATERIAL FROM FLOOR TO CEILING. Put our barrow corridor
+    // beside the real game's and theirs carries wood, brick, stone and glass in one frame while
+    // ours carried a single grey texture on both walls. Every dungeon declares a contrasting
+    // lower course, and the trim must actually contrast: stone trim under marble measured 64
+    // distinct colours against the wall's own 68, because two greys are one grey.
+    const dungeons = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      const out = [];
+      for (const id of Object.keys(Game.state.world.maps)) {
+        const m = Game.state.world.maps[id];
+        if (m.kind !== 'dungeon') continue;
+        out.push({ id, wall: m.cells ? undefined : undefined,
+                   trim: m.trimMat, trimH: m.trimH, ceil: m.ceilMat });
+      }
+      return out;
+    })()`);
+    T.ok(dungeons.length > 0, 'the world has dungeons');
+    T.eq(dungeons.filter((d) => d.trim === undefined), [],
+      'every dungeon declares a wall trim material');
+    T.eq(dungeons.filter((d) => !(d.trimH > 0.5 && d.trimH < 2.5)), [],
+      'every dungeon trim sits at a plausible dado height');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

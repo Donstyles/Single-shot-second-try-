@@ -298,6 +298,7 @@ const Engine = (() => {
     // what makes inside feel like inside." Indoors the torch pool is the only light there is.
     const sun = dungeon ? 0 : (Art.sunShade ? Art.sunShade(light) : 0);
     const fogStart = map.fogStart, fogEnd = map.fogEnd;
+    const trimMat = map.trimMat, trimH = map.trimH || 1.15;
     // A NIGHT MIX, not just a night multiply. Shading down a ramp lowers luminance but keeps chroma
     // in proportion, and relative saturation is (max-min)/max — so darkening alone makes a scene
     // read as MORE saturated, which is what a critic measured twice (viewport ratio 1.399, sky
@@ -481,10 +482,20 @@ const Engine = (() => {
                 const lit = Art.windowTexel(u, vs, lampSeed, storeys);
                 if (lit) { buf[y * W + px] = lit; continue; }
               }
-              const tx = Art.wallTexel(mat, u, v, face, lod);
+              // Banded wall: a lower course of a contrasting material, with a bright moulding at
+              // the transition and a shadow just under it so the band reads as PROUD of the wall
+              // rather than as a colour change.
+              let wmat = mat, trimLight = 0;
+              if (trimMat !== undefined) {
+                const hAbove = wh - gh;
+                if (hAbove < trimH) wmat = trimMat;
+                else if (hAbove < trimH + 0.10) { wmat = trimMat; trimLight = 3; }
+                else if (hAbove < trimH + 0.20) trimLight = -2;
+              }
+              const tx = Art.wallTexel(wmat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
+              buf[y * W + px] = fogShade(tx, lightDelta + trimLight, fog, skyBand, y, fogRow, fogJit, sx & 7, nightLut, nightQ);
             }
             ybuf = top;
           }
