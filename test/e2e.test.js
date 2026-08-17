@@ -1059,6 +1059,32 @@ const T = require('./_harness.js');
     T.eq(hostile.inv, [], 'and the game reports no invariant violations');
     T.ok(hostile.brief, 'and brief() still describes the state');
 
+    // ---- TEXT IS FITTED TO A WIDTH, NOT TO A CHARACTER COUNT. Slicing to N characters is the
+    // wrong tool for a proportional face and it shipped five visible truncations: "UNARME" for
+    // Unarmed, "LEATHE" for Leather, "Protection from F", "The Sunken", "UNCON" over a downed
+    // portrait. Six characters is not a width — SWORD and UNARMED are different sizes and the
+    // button is the same size for both.
+    const fit = await page.evaluate(`(() => {
+      const cases = [];
+      const samples = ['UNARMED 0', 'LEATHER 0', 'Protection from Fire', 'The Sunken Barrow',
+                       'UNCONSCIOUS', 'Lloyd\\'s Beacon', 'W', 'Broadsword of Warding'];
+      for (const str of samples) {
+        for (const maxW of [40, 80, 140, 200]) {
+          // Reproduce textFit's own choice and confirm the result fits.
+          let sc = 2, out = str;
+          if (Art.textWidth(str, sc) > maxW && Art.textWidth(str, sc - 1) <= maxW) sc = sc - 1;
+          if (Art.textWidth(out, sc) > maxW) {
+            while (out.length > 1 && Art.textWidth(out + '.', sc) > maxW) out = out.slice(0, -1);
+            out += '.';
+          }
+          cases.push({ str, maxW, w: Art.textWidth(out, sc), fits: Art.textWidth(out, sc) <= maxW });
+        }
+      }
+      return { total: cases.length, bad: cases.filter((c) => !c.fits) };
+    })()`);
+    T.ok(fit.total > 20, 'the fitting probe covers a real spread of strings and widths');
+    T.eq(fit.bad, [], 'every fitted string fits the width it was given');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

@@ -78,7 +78,7 @@ const UI = (() => {
       Art.text(En, x + PORTRAIT.w - Art.textWidth(lvs, 2) - 3, y + 3, lvs, Core.idx(13, 15), 2);
 
       const cond = Rules.worstCondition(ch);
-      if (cond) Art.text(En, x + 2, y + 28, cond.slice(0, 5).toUpperCase(), Core.idx(11, 13), 2);
+      if (cond) Art.textFit(En, x + 2, y + 28, cond.toUpperCase(), Core.idx(11, 13), 2, PORTRAIT.w - 4);
 
       if (interactive) reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
     });
@@ -124,7 +124,7 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
     const hh = Core.Clock.hhmm();
     Art.text(En, lx + lw - 8 - Art.textWidth(hh, 2), HUD.y + 86, hh, Core.idx(9, 12), 2);
-    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 11), Core.idx(2, 14), 2);
+    Art.textFit(En, lx + 5, HUD.y + 104, g.map.town ? g.map.town.name : g.map.name, Core.idx(2, 14), 2, 150);
     // A burning torch must be visible somewhere. "You will burn all twelve without knowing" —
     // lighting one printed a log line, consumed the item, and then nothing said it was lit or how
     // long it had left. Shortest-remaining first, and it turns red as it runs out.
@@ -329,8 +329,8 @@ const UI = (() => {
     trained.slice(0, 12).forEach((k, i) => {
       const cx = f.x + 24 + (i % 3) * 190;
       const cy = y + Math.floor(i / 3) * 22;
-      Art.text(En, cx, cy, Rules.SKILLS[k].name.slice(0, 9) + ' ' + ch.skills[k].lvl +
-        Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2);
+      Art.textFit(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl +
+        Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2, 168);
     });
   }
 
@@ -795,7 +795,7 @@ const UI = (() => {
         const gated = mast < need;
         const price = Spellcraft.scrollPrice(id);
         Art.panel(En, x, y, 226, 38, 4, true);
-        Art.text(En, x + 6, y + 4, sp.name.slice(0, 17), Core.idx(0, known ? 8 : gated ? 6 : 14), 2);
+        Art.textFit(En, x + 6, y + 4, sp.name, Core.idx(0, known ? 8 : gated ? 6 : 14), 2, 196);
         Art.text(En, x + 6, y + 22, 'T' + sp.tier + '  ' + sp.sp + ' SP', Core.idx(12, 12), 1);
         if (known) Art.text(En, x + 190, y + 12, 'KNOWN', Core.idx(6, 12), 2);
         else if (gated) Art.text(En, x + 150, y + 12, Rules.MASTERY_NAME[need].toUpperCase(), Core.idx(11, 11), 2);
@@ -828,7 +828,9 @@ const UI = (() => {
         // panel — PLATE and SHIELD were cut in half by the frame.
         const x = listX + 12 + (i % 3) * 146, y = f.inner + 170 + Math.floor(i / 3) * 40;
         const cur = ch.skills[k];
-        Art.button(En, x, y, 140, 34, Rules.SKILLS[k].name.slice(0, 6).toUpperCase() + ' ' + (cur ? cur.lvl : 0), false, 2);
+        Art.button(En, x, y, 140, 34, null, false, 2);
+        Art.textFitCentred(En, x + 70, y + 9, Rules.SKILLS[k].name.toUpperCase() + ' ' + (cur ? cur.lvl : 0),
+          Core.idx(0, 14), 2, 132);
         reg('skillup', x, y, 140, 34, k);
       });
       return;
@@ -859,7 +861,7 @@ const UI = (() => {
         En.frameRect(x + 4, y + 4, 44, 44, Core.idx(13, 9));
         En.blitScaled(Sprites.icon(it.st.id), x + 5, y + 5, 42, 42, 0);
         // displayName already reports the stack count; appending "x3" printed it twice.
-        Art.text(En, x + 54, y + 6, Items.displayName(it.st).slice(0, 18), Core.idx(0, 14), 2);
+        Art.textFit(En, x + 54, y + 6, Items.displayName(it.st), Core.idx(0, 14), 2, f.x + f.w - 30 - (x + 54));
         Art.text(En, x + 54, y + 28, it.price + 'g', Core.idx(13, 14), 2);
         Art.text(En, x + 150, y + 32, it.who.slice(0, 5), Core.idx(2, 12), 1);
         reg('sell', x, y, f.x + f.w - 20 - x, 52, i);
@@ -879,7 +881,7 @@ const UI = (() => {
       Art.panel(En, x + 4, y + 4, 44, 44, 13, true);
       En.frameRect(x + 4, y + 4, 44, 44, Core.idx(13, 9));
       En.blitScaled(Sprites.icon(st.id), x + 5, y + 5, 42, 42, 0);
-      Art.text(En, x + 54, y + 6, Items.ITEMS[st.id].name.slice(0, 18), Core.idx(0, afford ? 14 : 7), 2);
+      Art.textFit(En, x + 54, y + 6, Items.ITEMS[st.id].name, Core.idx(0, afford ? 14 : 7), 2, f.x + f.w - 30 - (x + 54));
       Art.text(En, x + 54, y + 28, price + 'g', Core.idx(13, afford ? 14 : 7), 2);
       if (!afford) Art.text(En, x + 140, y + 32, 'TOO DEAR', Core.idx(11, 11), 1);
       if (afford) reg('buy', x, y, f.x + f.w - 20 - x, 52, i);

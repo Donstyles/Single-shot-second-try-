@@ -191,6 +191,37 @@ const Art = (() => {
     return glyphPass(E, x, y, str, pi, s);
   }
 
+  // Fit a string to a WIDTH, not to a character count.
+  //
+  // Slicing to N characters is the wrong tool for a proportional face and it shipped five visible
+  // truncations: "UNARME" for Unarmed, "LEATHE" for Leather, "Protection from F", "The Sunken",
+  // "UNCON" over a downed portrait. Six characters is not a width — "SWORD" and "UNARMED" are
+  // different sizes, and the button is the same size for both.
+  //
+  // Try the asked-for size; drop one optical size if that is what it takes; only then trim, and
+  // trim by measurement with an ellipsis so the reader can see it happened.
+  function textFit(E, x, y, str, pi, scale, maxW) {
+    const s = String(str);
+    let sc = scale || 1;
+    if (textWidth(s, sc) <= maxW) return text(E, x, y, s, pi, sc);
+    if (sc > 1 && textWidth(s, sc - 1) <= maxW) return text(E, x, y, s, pi, sc - 1);
+    let cut = s;
+    while (cut.length > 1 && textWidth(cut + '.', sc) > maxW) cut = cut.slice(0, -1);
+    return text(E, x, y, cut + '.', pi, sc);
+  }
+
+  function textFitCentred(E, cx, y, str, pi, scale, maxW) {
+    const s = String(str);
+    let sc = scale || 1;
+    if (textWidth(s, sc) > maxW && sc > 1 && textWidth(s, sc - 1) <= maxW) sc = sc - 1;
+    let cut = s;
+    if (textWidth(cut, sc) > maxW) {
+      while (cut.length > 1 && textWidth(cut + '.', sc) > maxW) cut = cut.slice(0, -1);
+      cut += '.';
+    }
+    return textCentred(E, cx, y, cut, pi, sc);
+  }
+
   function textCentred(E, cx, y, str, pi, scale) {
     return text(E, Math.round(cx - textWidth(str, scale) / 2), y, str, pi, scale);
   }
@@ -965,7 +996,8 @@ const Art = (() => {
 
   return {
     TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
-    text, textShadow, textCentred, textCentredShadow, textWidth, isBuilding, windowTexel,
+    text, textShadow, textCentred, textCentredShadow, textWidth, textFit, textFitCentred,
+    isBuilding, windowTexel,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
