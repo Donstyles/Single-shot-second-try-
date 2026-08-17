@@ -502,92 +502,6 @@ const T = require('./_harness.js');
 
   // ============================================================ QA-panel regressions
   // Each of these was a run-ending defect an adversarial pass found. A fixed bug with no test is a
-  // ---------------------------------------------------------------- r15, cold first-timer
-  // Every one of these is a sentence a player who had never seen the game wrote down while
-  // putting it down. They are behaviour assertions, not rendering ones, and they never get
-  // relaxed to keep a later round green.
-  T.suite('r15 first-impression regressions');
-  {
-    // ---- The harness could not start a game at all. newParty() builds a party but leaves the
-    // TITLE screen up, and update() early-returns there, so every harness key press was a no-op
-    // against a menu. A probe hunting the movement bug below recorded 25 forward taps with zero
-    // movement and zero messages, which looks exactly like the bug it was hunting.
-    const began = await page.evaluate(`(() => {
-      const g = window.__game;
-      g.beginGame(); g.settle(1);
-      return { screen: Game.state.screen, hasParty: !!Game.state.party };
-    })()`);
-    T.eq(began.screen, null, 'beginGame() leaves the title screen');
-    T.ok(began.hasParty, 'beginGame() produces a party');
-
-    // ---- EVERY blocked press answers. "No bump, no shake, no 'the way is blocked'. I could not
-    // distinguish 'I moved' from 'I did not move', so I could not build a mental map."
-    // Measured on the build they quit: 20 blocked taps, 6 messages. The message stays rate
-    // limited so the log does not fill with one line; the view kick is not.
-    const blocked = await page.evaluate(`(() => {
-      const g = window.__game, s = Game.state;
-      g.beginGame(); g.gotoMap('harrowgate', 64, 64, 0); g.settle(1);
-      for (let i = 0; i < 40; i++) g.press('fwd', 180);   // walk until something stops us
-      let taps = 0, moved = 0, bumped = 0;
-      for (let i = 0; i < 12; i++) {
-        const bx = s.party.x, by = s.party.y;
-        s._bump = 0;
-        g.press('fwd', 180);
-        taps++;
-        if (Math.hypot(s.party.x - bx, s.party.y - by) > 0.02) moved++;
-        else if ((s._bump || 0) > 0) bumped++;
-      }
-      return { taps, moved, bumped, stuck: taps - moved };
-    })()`);
-    T.ok(blocked.stuck > 0, 'the probe actually reaches something solid');
-    T.eq(blocked.bumped, blocked.stuck, 'every blocked press kicks the view — no silent taps');
-
-    // ---- The spellbook pane may never show a school that is not in its own tab strip. A Priest
-    // was shown a SPIRIT tab listing Torch Light and Fire Bolt, because bookSchool persisted as
-    // 'fire' from a previous character and the pane read it directly.
-    const book = await page.evaluate(`(() => {
-      const g = window.__game;
-      g.beginGame(); g.settle(1);
-      const s = Game.state;
-      s.bookSchool = 'fire';                       // a school no Priest can use
-      const priest = s.party.members.findIndex((c) => Rules.classCap(c.cls, 'spirit') > 0);
-      if (priest < 0) return { skip: true };
-      s.active = priest;
-      const ch = s.party.members[priest];
-      const usable = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
-      g.screen('book'); g.settle(1);
-      const shown = usable.indexOf(s.bookSchool) >= 0 ? s.bookSchool : usable[0];
-      return { skip: false, usable, shown, fireUsable: usable.indexOf('fire') >= 0 };
-    })()`);
-    if (!book.skip) {
-      T.ok(!book.fireUsable, 'the probe character genuinely cannot use fire');
-      T.ok(book.usable.indexOf(book.shown) >= 0, 'spellbook pane shows a school from its own tabs');
-    }
-
-    // ---- A rest refusal names what it is refusing for, and a wall between you and a monster is
-    // safety. "Enemies are too close to make camp" in an empty walled town, at full health,
-    // twice, having never seen an enemy. 14 cells reaches straight through a row of buildings.
-    const camp = await page.evaluate(`(() => {
-      const g = window.__game;
-      g.beginGame(); g.gotoMap('harrowgate', 64, 64, 0); g.settle(2);
-      const s = Game.state;
-      const clear = Game.safeToRest();                 // nothing spawned nearby yet
-      g.spawn('goblin', s.party.x + 1.2, s.party.y);   // right on top of us, in the open
-      g.settle(1);
-      const blockedBy = Game.safeToRest();
-      const why = Rules.canRest(s.party, blockedBy).why || '';
-      return { clear: clear === true, blockedBy, why };
-    })()`);
-    T.ok(camp.clear, 'an empty street is safe to camp in');
-    T.eq(typeof camp.blockedBy, 'string', 'a real blocker is reported by name, not as a bare false');
-    T.ok(/is too close to make camp/.test(camp.why), 'the refusal names the monster: ' + camp.why);
-
-    // ---- The player's message log is the game's voice. A build stamp does not speak in it.
-    const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
-    T.ok(!firstLines.some((t) => /booted/i.test(t)),
-      'no debug boot line in the player log');
-  }
-
   // bug on a timer.
   T.suite('QA regressions');
   {
@@ -707,6 +621,177 @@ const T = require('./_harness.js');
       return { moved: Math.hypot(p1.x - p0.x, p1.y - p0.y) };
     })()`);
     T.ok(tap.moved > 0.05, 'a zero-duration tap still moves the party (' + tap.moved.toFixed(3) + ' cells)');
+  }
+
+  // ---------------------------------------------------------------- r15, cold first-timer
+  // Every one of these is a sentence a player who had never seen the game wrote down while
+  // putting it down. They are behaviour assertions, not rendering ones, and they never get
+  // relaxed to keep a later round green.
+  T.suite('r15 first-impression regressions');
+  {
+    // ---- The harness could not start a game at all. newParty() builds a party but leaves the
+    // TITLE screen up, and update() early-returns there, so every harness key press was a no-op
+    // against a menu. A probe hunting the movement bug below recorded 25 forward taps with zero
+    // movement and zero messages, which looks exactly like the bug it was hunting.
+    const began = await page.evaluate(`(() => {
+      const g = window.__game;
+      g.beginGame(); g.settle(1);
+      return { screen: Game.state.screen, hasParty: !!Game.state.party };
+    })()`);
+    T.eq(began.screen, null, 'beginGame() leaves the title screen');
+    T.ok(began.hasParty, 'beginGame() produces a party');
+
+    // ---- EVERY blocked press answers. "No bump, no shake, no 'the way is blocked'. I could not
+    // distinguish 'I moved' from 'I did not move', so I could not build a mental map."
+    // Measured on the build they quit: 20 blocked taps, 6 messages. The message stays rate
+    // limited so the log does not fill with one line; the view kick is not.
+    const blocked = await page.evaluate(`(() => {
+      const g = window.__game, s = Game.state;
+      g.beginGame(); g.gotoMap('harrowgate', 64, 64, 0); g.settle(1);
+      for (let i = 0; i < 40; i++) g.press('fwd', 180);   // walk until something stops us
+      let taps = 0, moved = 0, bumped = 0;
+      for (let i = 0; i < 12; i++) {
+        const bx = s.party.x, by = s.party.y;
+        s._bump = 0;
+        g.press('fwd', 180);
+        taps++;
+        if (Math.hypot(s.party.x - bx, s.party.y - by) > 0.02) moved++;
+        else if ((s._bump || 0) > 0) bumped++;
+      }
+      return { taps, moved, bumped, stuck: taps - moved };
+    })()`);
+    T.ok(blocked.stuck > 0, 'the probe actually reaches something solid');
+    T.eq(blocked.bumped, blocked.stuck, 'every blocked press kicks the view — no silent taps');
+
+    // ---- The spellbook pane may never show a school that is not in its own tab strip. A Priest
+    // was shown a SPIRIT tab listing Torch Light and Fire Bolt, because bookSchool persisted as
+    // 'fire' from a previous character and the pane read it directly.
+    const book = await page.evaluate(`(() => {
+      const g = window.__game;
+      g.beginGame(); g.settle(1);
+      const s = Game.state;
+      s.bookSchool = 'fire';                       // a school no Priest can use
+      const priest = s.party.members.findIndex((c) => Rules.classCap(c.cls, 'spirit') > 0);
+      if (priest < 0) return { skip: true };
+      s.active = priest;
+      const ch = s.party.members[priest];
+      const usable = Spellcraft.SCHOOL_IDS.filter((sc) => Rules.classCap(ch.cls, sc) > 0);
+      g.screen('book'); g.settle(1);
+      const shown = usable.indexOf(s.bookSchool) >= 0 ? s.bookSchool : usable[0];
+      return { skip: false, usable, shown, fireUsable: usable.indexOf('fire') >= 0 };
+    })()`);
+    if (!book.skip) {
+      T.ok(!book.fireUsable, 'the probe character genuinely cannot use fire');
+      T.ok(book.usable.indexOf(book.shown) >= 0, 'spellbook pane shows a school from its own tabs');
+    }
+
+    // ---- A rest refusal names what it is refusing for, and a wall between you and a monster is
+    // safety. "Enemies are too close to make camp" in an empty walled town, at full health,
+    // twice, having never seen an enemy. 14 cells reaches straight through a row of buildings.
+    const camp = await page.evaluate(`(() => {
+      const g = window.__game;
+      g.beginGame(); g.gotoMap('harrowgate', 64, 64, 0); g.settle(2);
+      const s = Game.state;
+      const clear = Game.safeToRest();                 // nothing spawned nearby yet
+      g.spawn('goblin', s.party.x + 1.2, s.party.y);   // right on top of us, in the open
+      g.settle(1);
+      const blockedBy = Game.safeToRest();
+      const why = Rules.canRest(s.party, blockedBy).why || '';
+      return { clear: clear === true, blockedBy, why };
+    })()`);
+    T.ok(camp.clear, 'an empty street is safe to camp in');
+    T.eq(typeof camp.blockedBy, 'string', 'a real blocker is reported by name, not as a bare false');
+    T.ok(/is too close to make camp/.test(camp.why), 'the refusal names the monster: ' + camp.why);
+
+    // ---- THREE WAYS TO MAKE THE GAME UNWINNABLE, all the same mistake: a gate asking the
+    // party's POCKETS instead of asking the world what has happened. r12 fixed that mistake once,
+    // for the Ashen Key gate, and left two more standing plus a third in kill credit.
+    //
+    // The rule: progress is a FACT ABOUT THE WORLD, recorded when it happens. Quests are allowed
+    // to take things away. Nothing already achieved may become un-achieved because the player did
+    // what the journal told them to do.
+
+    // Turning in "Shards of the Crown" consumes all three shards; the Ember Forge needs three to
+    // wake; exactly three exist and they are in no loot table. Turn-in first used to make the key
+    // unmakeable, both Ashkeep gates permanently barred, and the finale unreachable.
+    const shards = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      const s = Game.state;
+      h.give('crown_shard', 3);
+      s.party.quests['q_shards'] = { state: 1, killed: 0 };
+      const turned = Game.turnInQuest('q_shards');
+      return { turned, held: Game.countItem('crown_shard'),
+               gathered: !!s.party.flags['gathered:crown_shard'] };
+    })()`);
+    T.ok(shards.turned, 'the shards quest turns in');
+    T.eq(shards.held, 0, 'turn-in really does consume all three shards');
+    T.ok(shards.gathered, 'the world remembers they were gathered, so the forge still wakes');
+
+    // The Smith is in Harrowgate; the gates are two regions away. Fetch-key-then-walk-home is the
+    // NATURAL route and it paid 9,000 XP for an unwinnable save.
+    const key = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      const s = Game.state;
+      h.give('ash_key', 1);
+      s.party.quests['q_key'] = { state: 1, killed: 0 };
+      const turned = Game.turnInQuest('q_key');
+      return { turned, held: Game.countItem('ash_key'), had: !!s.party.flags['had:ash_key'] };
+    })()`);
+    T.ok(key.turned, 'the key quest turns in');
+    T.eq(key.held, 0, 'turn-in really does consume the key');
+    T.ok(key.had, 'the world remembers it was held, so a locked gate still opens');
+
+    // Nothing in the game respawns and the kill targets are unique. The old tally only counted
+    // while state === 1, so clearing the keep before speaking to the third captain left q_crown
+    // live, the boss gone, and flags.won unreachable.
+    const pre = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      const s = Game.state;
+      const q = World.QUESTS['q_crown'];
+      let where = null;
+      for (const id of Object.keys(s.world.maps)) {
+        h.gotoMap(id, 0, 0, 0); h.settle(1);
+        const lv = s.world.maps[id].live;
+        if (lv && lv.some((e) => e.kind === q.kill)) { where = id; break; }
+      }
+      if (!where) return { error: 'boss not found' };
+      h.gotoMap(where, 0, 0, 0); h.settle(1);
+      let n = 0;
+      for (const e of s.world.maps[where].live) if (e.kind === q.kill) { e.dead = true; n++; }
+      s.party.quests['q_crown'] = { state: 1, killed: 0 };   // accepted AFTER the kill
+      return { where, n, complete: Game.questComplete('q_crown') };
+    })()`);
+    T.ok(!pre.error, 'the final boss exists in the world');
+    T.ok(pre.n > 0, 'the final boss was killed before the quest was accepted');
+    T.ok(pre.complete, 'kill credit comes from the world, not a quest-time tally');
+
+    // ---- A merged stack may never exceed its cap: load() clamps, and the surplus is destroyed.
+    // Counted on the build the hunter played: 68 potions in, 50 out.
+    const stack = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      const id = 'potion_heal';
+      const cap = Items.maxStack(id);
+      const count = () => {
+        let worst = 0, total = 0;
+        for (const c of Game.state.party.members) {
+          for (const st of c.pack) if (st.id === id) { worst = Math.max(worst, st.qty || 1); total += st.qty || 1; }
+        }
+        return { worst, total };
+      };
+      // DELTA, not absolute: the party starts with potions of its own.
+      const before = count().total;
+      h.give(id, cap + 18);
+      const after = count();
+      return { cap, worst: after.worst, gained: after.total - before };
+    })()`);
+    T.ok(stack.worst <= stack.cap,
+      'no stack exceeds its cap (' + stack.worst + ' <= ' + stack.cap + ')');
+    T.eq(stack.gained, stack.cap + 18, 'every granted item survives, spread across stacks');
+
+    // ---- The player's message log is the game's voice. A build stamp does not speak in it.
+    const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
+    T.ok(!firstLines.some((t) => /booted/i.test(t)),
+      'no debug boot line in the player log');
   }
 
   await browser.close();

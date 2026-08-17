@@ -752,15 +752,35 @@ const Game = (() => {
   function giveStack(st) {
     const p = state.party;
     const cap = Items.maxStack(st.id);
-    // Stack first, then find a slot on whoever has room.
-    for (const ch of p.members) {
-      if (cap > 1) {
-        const ex = ch.pack.find((s) => s.id === st.id && (s.qty || 1) < cap);
-        if (ex) { ex.qty = (ex.qty || 1) + (st.qty || 1); return true; }
+    let left = Math.max(1, st.qty || 1);
+    // Top up existing stacks first, RESPECTING THE CAP. The merge used to add the whole incoming
+    // quantity to any stack under the cap with no clamp, so a pack could hold 68 of a 50-cap
+    // potion; load() then clamped it to 50 and the surplus was gone. Counted: 68 potions and 50
+    // pelts in, 50 and 40 out — 28 items destroyed by one save/load. Nothing in play grants a
+    // bundle today, which is the only reason it was never seen; it was a live footgun for the
+    // first piece of code that did.
+    if (cap > 1) {
+      for (const ch of p.members) {
+        for (const ex of ch.pack) {
+          if (ex.id !== st.id) continue;
+          const have = ex.qty || 1;
+          if (have >= cap) continue;
+          const take = Math.min(cap - have, left);
+          ex.qty = have + take;
+          left -= take;
+          if (left <= 0) { noteAcquired(st.id); return true; }
+        }
       }
     }
+    // Whatever did not fit into an existing stack needs slots of its own.
     for (const ch of p.members) {
-      if (ch.pack.length < 30) { ch.pack.push(st); return true; }
+      while (left > 0 && ch.pack.length < 30) {
+        const take = Math.min(cap, left);
+        ch.pack.push(left === (st.qty || 1) ? (st.qty = take, st)
+          : { id: st.id, qty: take, ident: st.ident, bonus: st.bonus || 0, charges: st.charges || 0 });
+        left -= take;
+      }
+      if (left <= 0) { noteAcquired(st.id); return true; }
     }
     Log.push('No room for ' + Items.displayName(st) + '!', 'hit');
     return false;
@@ -769,6 +789,32 @@ const Game = (() => {
   function grantItem(id, n) {
     const st = { id, qty: n || 1, ident: true, bonus: 0, charges: 0 };
     return giveStack(st) ? st : null;
+  }
+
+  // PROGRESS IS A FACT ABOUT THE WORLD, RECORDED WHEN IT HAPPENS. It is never inferred from what
+  // the party is carrying, because the game itself asks players to hand things in.
+  //
+  // r12 learned this for the Ashen Key and applied it in exactly one place — the gate — which left
+  // two more of the same bug standing, both found by an adversarial pass:
+  //
+  //   1. Turning in "Shards of the Crown" consumes all three shards. The Ember Forge needs the
+  //      party to be HOLDING three to wake. Three shards exist in the world, in no loot table.
+  //      Turn the quest in before visiting the forge and the key can never be made, both Ashkeep
+  //      gates stay barred, and the game is unwinnable. The journal tells you to do it.
+  //   2. Turning the Ashen Key in to the Smith before ever walking to a gate consumes the key with
+  //      the road still shut. The Smith is in Harrowgate and the gates are two regions away, so
+  //      fetch-key-then-walk-home is the NATURAL route, and it pays 9,000 XP for bricking the run.
+  //
+  // So: the moment something enters the party, the world remembers it did. Gates ask the memory.
+  function noteAcquired(id) {
+    const f = state.party.flags;
+    f['had:' + id] = true;
+    // And remember when a gathering requirement has ever been satisfied, so spending the set
+    // afterwards cannot un-satisfy it.
+    for (const key of Object.keys(World.QUEST_ITEM_REQUIRES)) {
+      const req = World.QUEST_ITEM_REQUIRES[key];
+      if (req.item === id && countItem(id) >= req.count) f['gathered:' + id] = true;
+    }
   }
 
   // Would this whole list fit? Simulated against a copy of the slot counts, because a two-item
@@ -835,11 +881,32 @@ const Game = (() => {
     return need === 0;
   }
 
+  // How many of this quest's target the party has killed ANYWHERE, EVER — counted from the world,
+  // not from a tally that only ticks while the quest happens to be open.
+  //
+  // The old counter incremented at kill time and only if state === 1, and nothing in the game
+  // respawns. So killing the target before accepting the quest made the quest permanently
+  // uncompletable, and an adversarial pass proved that includes q_crown: one ash_crown exists, it
+  // is in the keep, and a player who clears the keep before speaking to the third captain has an
+  // unwinnable save with no warning. Item-fetch quests were already order-independent because they
+  // ask countItem(); kill quests asked a diary instead of asking the world.
+  function killedCount(q) {
+    let n = 0;
+    const maps = state.world.maps;
+    for (const id of Object.keys(maps)) {
+      if (q.killIn && id !== q.killIn) continue;
+      const live = maps[id].live;
+      if (!live) continue;
+      for (const e of live) if (e.dead && e.kind === q.kill) n++;
+    }
+    return n;
+  }
+
   function questComplete(qid) {
     const q = World.QUESTS[qid], st = state.party.quests[qid];
     if (!q || !st || st.state !== 1) return false;
     if (q.need) return countItem(q.need) >= (q.count || 1);
-    if (q.kill) return (st.killed || 0) >= (q.count || 1);
+    if (q.kill) return killedCount(q) >= (q.count || 1);
     return false;
   }
 
@@ -985,7 +1052,8 @@ const Game = (() => {
     if (t.kind === 'questitem') {
       if (t.decor.taken) return false;
       const req = World.QUEST_ITEM_REQUIRES[t.decor.item];
-      if (req && countItem(req.item) < req.count) {
+      if (req && countItem(req.item) < req.count
+        && !state.party.flags['gathered:' + req.item]) {
         Log.push(req.why, 'info');
         return false;
       }
@@ -1049,7 +1117,9 @@ const Game = (() => {
     // became unfinishable in forty seconds. Opening a road is now a fact about the world, recorded
     // when it happens; the key is what opens it, not what holds it open.
     if (portal.locked && !state.party.flags['opened:' + portal.locked]) {
-      if (!countItem(portal.locked)) {
+      // Holding it OR ever having held it. The key is what opens the road; handing it to the man
+      // who asked for it does not close the road again.
+      if (!countItem(portal.locked) && !state.party.flags['had:' + portal.locked]) {
         Log.push('The way is barred. Something is missing.', 'info');
         return false;
       }
