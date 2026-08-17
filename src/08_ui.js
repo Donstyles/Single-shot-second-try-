@@ -229,6 +229,24 @@ const UI = (() => {
       ['bow', 0, 138], ['boots', 60, 138], ['ring1', 120, 138],
     ];
     const px0 = f.x + 24, py0 = f.inner + 40;
+
+    // A BODY behind the slots. The entire point of a paperdoll is the figure, and twelve labelled
+    // boxes in a loose cross is not one.
+    {
+      const bx = px0 + 84, by = py0 + 8;
+      const lim = (x, y, w2, h2, ramp, sh) => En.rect(x, y, w2, h2, Core.idx(ramp, sh));
+      lim(bx - 9, by - 4, 18, 18, 10, 10);          // head
+      lim(bx - 6, by + 13, 12, 5, 10, 8);           // neck
+      lim(bx - 17, by + 17, 34, 40, 4, 7);          // torso
+      lim(bx - 27, by + 20, 10, 34, 4, 6);          // arms
+      lim(bx + 17, by + 20, 10, 34, 4, 6);
+      lim(bx - 15, by + 56, 12, 40, 4, 6);          // legs
+      lim(bx + 3, by + 56, 12, 40, 4, 6);
+      lim(bx - 17, by + 95, 14, 8, 4, 5);           // feet
+      lim(bx + 3, by + 95, 14, 8, 4, 5);
+      En.frameRect(bx - 28, by - 5, 56, 110, Core.idx(0, 4));
+    }
+
     for (const [slot, ox, oy] of SLOTS) {
       const x = px0 + ox, y = py0 + oy;
       Art.panel(En, x, y, 42, 42, 4, true);
@@ -352,13 +370,31 @@ const UI = (() => {
           Math.ceil(scale), Math.ceil(scale), pi);
       }
     }
-    // Portals and the party.
+    // Only draw a door the party has actually SEEN. Markers floating in unmapped void are worse
+    // than no markers: they promise geometry that is not on the map.
     for (const p of m.portals) {
+      if (!g.seen(m.id, p.x, p.y)) continue;
       En.rect(Math.round(ox + p.x * scale) - 1, Math.round(oy + p.y * scale) - 1, 4, 4, Core.idx(13, 14));
     }
+
+    // The party marker with a REAL facing arrow. "Knowing a door is to the left on the map is
+    // useless, because I don't know which way left is."
     const pxp = Math.round(ox + g.party.x * scale), pyp = Math.round(oy + g.party.y * scale);
-    En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 14));
-    En.px(pxp + Math.round(Math.cos(g.party.ang) * 5), pyp + Math.round(Math.sin(g.party.ang) * 5), Core.idx(0, 15));
+    const ca = Math.cos(g.party.ang), sa = Math.sin(g.party.ang);
+    for (let t = 0; t <= 10; t++) {
+      const w = Math.max(0, 4 - Math.round(t * 0.4));
+      const bx = pxp + Math.round(ca * t), by = pyp + Math.round(sa * t);
+      for (let o = -w; o <= w; o++) En.px(bx + Math.round(-sa * o), by + Math.round(ca * o), Core.idx(11, 14));
+    }
+    En.rect(pxp - 2, pyp - 2, 5, 5, Core.idx(11, 15));
+
+    // Compass rose, so the arrow means something.
+    const cxp = f.x + f.w - 54, cyp = f.inner + 6;
+    En.frameRect(cxp - 18, cyp - 6, 40, 40, Core.idx(13, 9));
+    Art.textCentred(En, cxp + 2, cyp - 4, 'N', Core.idx(13, 14), 2);
+    Art.textCentred(En, cxp + 2, cyp + 20, 'S', Core.idx(13, 10), 2);
+    Art.text(En, cxp - 16, cyp + 8, 'W', Core.idx(13, 10), 2);
+    Art.text(En, cxp + 12, cyp + 8, 'E', Core.idx(13, 10), 2);
 
     // Legend, because eight unexplained yellow dots in empty brown is not a map.
     const ly = f.y + f.h - 30;
@@ -530,9 +566,16 @@ const UI = (() => {
       for (let y = h; y < 480; y++) En.px(x, y, Core.shade(7 << 4, clamp(8 - Math.round((y - h) / 30), 1, 12)));
     }
 
-    Art.panel(En, 120, 60, 400, 96, 13, false);
-    Art.textCentred(En, 320, 78, 'THORNMARCH', Core.idx(13, 15), 4);
-    Art.textCentred(En, 320, 122, 'THE ASHEN CROWN', Core.idx(13, 12), 2);
+    // A carved wordmark, not a panel. Drop shadow, dark bevel, bright face, and a rule beneath —
+    // so the logo cannot be mistaken for a third button.
+    Art.textCentred(En, 322, 66, 'THORNMARCH', Core.idx(0, 1), 5);
+    Art.textCentred(En, 320, 64, 'THORNMARCH', Core.idx(13, 6), 5);
+    Art.textCentred(En, 319, 63, 'THORNMARCH', Core.idx(13, 15), 5);
+    const tw = Art.textWidth('THORNMARCH', 5);
+    En.hline(320 - tw / 2, 112, tw, Core.idx(13, 11));
+    En.hline(320 - tw / 2, 114, tw, Core.idx(13, 5));
+    Art.textCentred(En, 321, 127, 'THE ASHEN CROWN', Core.idx(0, 1), 2);
+    Art.textCentred(En, 320, 126, 'THE ASHEN CROWN', Core.idx(13, 13), 2);
 
     Art.button(En, 200, 250, 240, 56, 'NEW GAME', false, 3);
     reg('newgame', 200, 250, 240, 56, 1);

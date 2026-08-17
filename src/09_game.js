@@ -1482,7 +1482,7 @@ const Game = (() => {
       if (d.kind === 'questitem' && d.taken) continue;
       const dist = Math.hypot(d.x - cam.x, d.y - cam.y);
       if (dist > m.fogEnd) continue;
-      list.push({ dist, spr: Sprites.decor(d.kind), x: d.x, y: d.y,
+      list.push({ dist, spr: Sprites.decor(d.kind, d.shop), x: d.x, y: d.y,
         z: m.kind === 'dungeon' ? 0 : World.H(m, d.x, d.y),
         h: Sprites.DECOR_HEIGHT[d.kind] || 2 });
     }

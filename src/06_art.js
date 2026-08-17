@@ -372,7 +372,10 @@ const Art = (() => {
   // surface without any asset being generated twice.
   function sunShade(mapLight) {
     const d = Clock.daylight();
-    const base = Math.round(lerp(-5, 2, d));
+    // FLOOR at -3, not -5. A first-time player hit true black at midnight with no light source and
+    // could not tell a night cycle from a crash. Night should be dark and navigable — moonlight,
+    // not an absence of image.
+    const base = Math.round(lerp(-3, 2, d));
     return Math.round(base * (mapLight === undefined ? 1 : mapLight));
   }
 

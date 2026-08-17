@@ -134,11 +134,19 @@ const SCRIPT = `(() => {
     const bytes = fs.statSync(dist).size;
     T.ok(bytes <= SIZE_CEILING,
       'dist/index.html is within the 2 MB ceiling (' + (bytes / 1024 / 1024).toFixed(2) + ' MB)');
-    // The build must be REPRODUCIBLE: building twice from the same sources gives the same bytes.
-    const first = fs.readFileSync(dist);
+    // Two DISTINCT properties, which the old single check conflated into one misleading failure.
+    //   1. dist on disk is not stale with respect to src/ and art/.
+    //   2. the build is reproducible.
+    // Failing (1) while (2) holds reads as "the build is nondeterministic", which sent me hunting
+    // a phantom for ten minutes. Name them separately so the message points at the real cause.
+    const onDisk = fs.readFileSync(dist);
     build();
-    const second = fs.readFileSync(dist);
-    T.ok(Buffer.compare(first, second) === 0,
+    const fresh = fs.readFileSync(dist);
+    T.ok(Buffer.compare(onDisk, fresh) === 0,
+      'dist/index.html on disk is up to date with src/ and art/ (rebuild before capture)');
+    build();
+    const again = fs.readFileSync(dist);
+    T.ok(Buffer.compare(fresh, again) === 0,
       'building twice from the same sources produces byte-identical output');
   }
 

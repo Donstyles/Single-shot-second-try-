@@ -260,9 +260,28 @@ const Sprites = (() => {
       for (let y = h - 20; y < h; y++) for (let x = -11; x <= 11; x++) put(cx + x, y, 4, 7 - (Math.abs(x) >> 3));
       for (let x = -11; x <= 11; x++) put(cx + x, h - 20, 13, 11);
       put(cx, h - 12, 13, 13);
-    } else if (kind === 'sign') {
-      for (let y = h - 26; y < h; y++) put(cx, y, 4, 6);
-      for (let y = h - 40; y < h - 24; y++) for (let x = -10; x <= 10; x++) put(cx + x, y, 4, 9 - (Math.abs(x) >> 3));
+    } else if (kind === 'sign' || kind.indexOf('sign:') === 0) {
+      // Post and board.
+      for (let y = h - 26; y < h; y++) for (let dx = -1; dx <= 1; dx++) put(cx + dx, y, 4, 6 - Math.abs(dx));
+      for (let y = h - 42; y < h - 24; y++) for (let x = -12; x <= 12; x++) put(cx + x, y, 4, 10 - (Math.abs(x) >> 3));
+      for (let x = -12; x <= 12; x++) { put(cx + x, h - 42, 4, 12); put(cx + x, h - 25, 4, 4); }
+
+      // A PICTOGRAM, not a blank board. Three judges independently reported having to walk into
+      // every door to learn what it was; MM6 taught you a town's layout by its signs.
+      const trade = kind.indexOf(':') > 0 ? kind.split(':')[1] : null;
+      const my = h - 40;
+      const g = (gx, gy, ramp, sh) => put(cx + gx, my + gy, ramp, sh);
+      const gbox = (gx, gy, gw, gh, ramp, sh) => {
+        for (let yy = 0; yy < gh; yy++) for (let xx = 0; xx < gw; xx++) g(gx + xx, gy + yy, ramp, sh);
+      };
+      if (trade === 'weapon') { gbox(-1, 1, 2, 9, 14, 13); gbox(-4, 9, 8, 1, 13, 11); gbox(-1, 10, 2, 3, 4, 7); }
+      else if (trade === 'armour') { gbox(-4, 2, 8, 9, 14, 12); gbox(-6, 3, 2, 5, 14, 9); gbox(4, 3, 2, 5, 14, 9); }
+      else if (trade === 'general') { gbox(-5, 4, 10, 8, 5, 12); gbox(-2, 1, 4, 3, 5, 9); }
+      else if (trade === 'magic') { gbox(-1, 2, 2, 11, 4, 8); gbox(-4, 0, 8, 3, 12, 13); }
+      else if (trade === 'temple') { gbox(-1, 0, 2, 13, 0, 15); gbox(-5, 4, 10, 2, 0, 15); }
+      else if (trade === 'tavern') { gbox(-4, 4, 8, 8, 13, 12); gbox(4, 5, 3, 4, 13, 9); gbox(-4, 2, 8, 2, 2, 14); }
+      else if (trade === 'trainer') { gbox(-5, 5, 10, 2, 14, 13); gbox(-3, 2, 2, 8, 4, 7); gbox(1, 2, 2, 8, 4, 7); }
+      else if (trade === 'guild') { gbox(-4, 1, 8, 10, 12, 10); gbox(-1, 4, 2, 4, 13, 14); }
     } else if (kind === 'stump') {
       for (let y = h - 12; y < h; y++) for (let x = -6; x <= 6; x++) put(cx + x, y, 4, 7);
     } else if (kind === 'questitem') {
@@ -288,9 +307,10 @@ const Sprites = (() => {
     return { w, h, data: out };
   }
 
-  function decor(kind) {
-    const k = 'd:' + kind;
-    if (!cache[k]) cache[k] = paintDecor(kind);
+  function decor(kind, variant) {
+    const key = variant ? kind + ':' + variant : kind;
+    const k = 'd:' + key;
+    if (!cache[k]) cache[k] = paintDecor(key);
     return cache[k];
   }
 

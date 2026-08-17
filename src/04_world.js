@@ -782,8 +782,11 @@ const World = (() => {
           x: host.town.x + 2.5 + host.npcs.length, y: host.town.y + 3.5, z: H(host, host.town.x, host.town.y) });
         continue;
       }
-      m.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid,
-        x: m.town.x + 1.5 + m.npcs.length * 1.6, y: m.town.y + 2.5, z: H(m, m.town.x, m.town.y) });
+      // Ring the plaza rather than crowding the spawn point. A giver standing inside the party's
+      // interact radius fired a quest modal before the player had seen the world at all.
+      const a = (m.npcs.length / 6) * Math.PI * 2 + 0.4;
+      const nx = m.town.x + Math.cos(a) * 5.5, ny = m.town.y + Math.sin(a) * 5.5;
+      m.npcs.push({ id: 'npc_' + qid, role: q.giver, quest: qid, x: nx, y: ny, z: H(m, nx, ny) });
     }
 
     return { seed: RNG.seed, maps, regions: REGIONS, dungeons: DUNGEONS, quests: QUESTS };
