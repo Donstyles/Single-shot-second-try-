@@ -1132,6 +1132,48 @@ const T = require('./_harness.js');
     T.ok(tile.identical < 80,
       'the sky does not repeat on a fixed pitch (' + tile.identical.toFixed(1) + '% identical at 16px)');
 
+    // ---- THE PAPERDOLL WEARS WHAT THE SLOTS SHOW. It was drawn in one fixed brown ramp whatever
+    // was equipped, so a character in chain mail carrying a sword stood there naked while the
+    // ARMOUR and WEAPON wells beside them displayed both items — "a direct on-screen
+    // contradiction, visible in a single glance." The figure samples each equipped item's own
+    // icon, so the doll and the well cannot disagree.
+    const doll = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.settle(1);
+      // Independent of whatever earlier suites left behind: one of them reclasses member 0 to
+      // mage to reach the water-school spells, and this block runs after it.
+      Game.state.active = 0;
+      const ch = Game.state.party.members[0];
+      ch.cls = 'knight';
+      const ramps = (bare) => {
+        for (const k of Object.keys(ch.equip)) delete ch.equip[k];
+        if (!bare) {
+          for (const [slot, id] of [['armour', 'chain_mail'], ['helm', 'iron_helm'],
+                                    ['boots', 'boots_plate'], ['weapon', 'long_sword']]) {
+            if (Items.ITEMS[id]) ch.equip[slot] = { id, qty: 1, ident: true, bonus: 0, charges: 0 };
+          }
+        }
+        Game.state.screen = 'inv'; h.settle(2); h.redraw();
+        // Hash the figure's own column so the assertion is about the DOLL, not the wells beside it.
+        // The figure's own box, found by diffing a bare render against an equipped one rather
+        // than guessed: x 51-223, y 126-314.
+        let hash = 0, ink = 0;
+        for (let y = 126; y <= 314; y++) {
+          for (let x = 51; x <= 223; x++) {
+            const pi = Engine.buf[y * Engine.W + x];
+            hash = (hash * 31 + pi) >>> 0;
+            if (pi) ink++;
+          }
+        }
+        return { hash, ink };
+      };
+      const bare = ramps(true);
+      const kitted = ramps(false);
+      return { bare, kitted };
+    })()`);
+    T.ok(doll.bare.ink > 0, 'the paperdoll figure is drawn at all');
+    T.ok(doll.kitted.hash !== doll.bare.hash,
+      'the figure changes when the character is equipped');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

@@ -640,6 +640,15 @@ const Engine = (() => {
           const under = buf[yy * W + xx];
           // Core: hard. Rim: soft. Both stay in the ground's own ramp so the shadow is a shade of
           // the surface rather than a grey blob painted on top of it.
+          //
+          // A critic reported one sprite planted at 31% darkening and another floating at 3.7% in
+          // the SAME frame, and proposed that a fixed shade step buys less on dark ground because
+          // the palette's shadow terminus compresses the low shades. I rebuilt this as a
+          // proportional blend on that basis, then measured both rules across sixteen ground
+          // colours — and the premise is false. The shade step gives 34% to 66%, and it darkens
+          // MORE on dark ground, not less; the blend was flatter but weaker at the dark end (23%).
+          // So this stays. Whatever produced 3.7% in that frame, it was not this arithmetic, and
+          // I could not reproduce the sample.
           const edge = (dx * dx) / (span * span + 0.01) + (dy * dy) / (shH * shH + 0.01);
           buf[yy * W + xx] = Core.shade(under & 0xf0, (under & 0x0f) - (edge > 0.55 ? 2 : 4));
         }

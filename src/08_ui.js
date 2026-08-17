@@ -329,8 +329,10 @@ const UI = (() => {
     trained.slice(0, 12).forEach((k, i) => {
       const cx = f.x + 24 + (i % 3) * 190;
       const cy = y + Math.floor(i / 3) * 22;
-      Art.textFit(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl +
-        Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2, 168);
+      // "Sword 1N" — the rank letter had fused to the rank number, measured at a 2px gap identical
+      // to the letter-spacing inside "Sword", so it read as one token "1N".
+      Art.textFit(En, cx, cy, Rules.SKILLS[k].name + ' ' + ch.skills[k].lvl + ' '
+        + Rules.MASTERY_NAME[ch.skills[k].mastery].slice(0, 1), Core.idx(0, 13), 2, 168);
     });
   }
 
@@ -367,24 +369,69 @@ const UI = (() => {
     {
       const bx = px0 + 23 + CW / 2, by = py0 + 12;
       const S = 2.2;                                 // the figure fills the gap between the columns
-      const lim = (x, y, w2, h2, sh) => En.rect(Math.round(bx + x * S), Math.round(by + y * S),
-        Math.round(w2 * S), Math.round(h2 * S), Core.idx(4, sh));
+
+      // THE DOLL WEARS WHAT THE SLOTS SHOW. It was drawn in one fixed brown ramp regardless of
+      // equipment, so a character in plate and carrying a sword stood there naked while the ARMOUR
+      // and WEAPON wells beside them displayed both items. A critic called it what it is: "a
+      // direct on-screen contradiction, visible in a single glance."
+      //
+      // The ramp for each region is sampled from the EQUIPPED ITEM'S OWN ICON — the same art the
+      // slot is showing — so the figure and the well cannot disagree about what is worn.
+      const rampOfItem = (st) => {
+        if (!st) return null;
+        const ic = Sprites.icon(st.id);
+        if (!ic) return null;
+        const tally = new Map();
+        for (let i = 0; i < ic.data.length; i++) {
+          const pi = ic.data[i];
+          if (!pi) continue;
+          const r = (pi >> 4) & 0xf;
+          // RAMP 0 IS THE OUTLINE, not the material. Every icon is drawn with a near-black keyline,
+          // and on a long sword that keyline outvoted the steel 111 to 100 — so the figure would
+          // have held a black bar. Vote on colour, not on the line around it.
+          if (r === 0) continue;
+          tally.set(r, (tally.get(r) || 0) + 1);
+        }
+        let best = null, bn = 0;
+        for (const [r, n] of tally) if (n > bn) { bn = n; best = r; }
+        return best;
+      };
+      const SKIN = 4;
+      const bodyRamp = rampOfItem(ch.equip.armour) || SKIN;
+      const legRamp = rampOfItem(ch.equip.armour) || SKIN;
+      const headRamp = rampOfItem(ch.equip.helm) || SKIN;
+      const bootRamp = rampOfItem(ch.equip.boots) || SKIN;
+      const armRamp = rampOfItem(ch.equip.gaunt) || SKIN;
+      const lim = (x, y, w2, h2, sh, rp) => En.rect(Math.round(bx + x * S), Math.round(by + y * S),
+        Math.round(w2 * S), Math.round(h2 * S), Core.idx(rp === undefined ? SKIN : rp, sh));
       // A recessed alcove for the figure to stand in.
       En.rect(bx - 52, by - 6, 104, 296, Core.idx(0, 2));
       En.frameRect(bx - 52, by - 6, 104, 296, Core.idx(13, 7));
-      lim(-8, 0, 16, 17, 9);                        // head
-      lim(-5, 16, 10, 5, 7);                        // neck
-      lim(-15, 20, 30, 38, 8);                      // torso
-      lim(-24, 23, 9, 32, 5);                       // arms, set back from the torso
-      lim(15, 23, 9, 32, 4);
-      lim(-13, 57, 11, 38, 6);                      // legs
-      lim(2, 57, 11, 38, 5);
-      lim(-15, 94, 13, 7, 3);                       // feet
-      lim(2, 94, 13, 7, 3);
-      lim(-7, 2, 14, 6, 6);                         // hair line, so the head has a top
+      lim(-8, 0, 16, 17, 9, SKIN);                  // head (face stays skin)
+      lim(-5, 16, 10, 5, 7, SKIN);                  // neck
+      lim(-15, 20, 30, 38, 8, bodyRamp);            // torso
+      lim(-24, 23, 9, 32, 5, armRamp);              // arms, set back from the torso
+      lim(15, 23, 9, 32, 4, armRamp);
+      lim(-13, 57, 11, 38, 6, legRamp);             // legs
+      lim(2, 57, 11, 38, 5, legRamp);
+      lim(-15, 94, 13, 7, 3, bootRamp);             // feet
+      lim(2, 94, 13, 7, 3, bootRamp);
+      lim(-7, 2, 14, 6, 6, headRamp);               // helm or hair line
+      // A weapon in the right hand and a shield on the left arm, when carried. Without these the
+      // two slots a player looks at most are the two the figure ignores.
+      if (ch.equip.weapon) {
+        const wr = rampOfItem(ch.equip.weapon) || 13;
+        lim(25, 8, 4, 46, 12, wr);                  // blade
+        lim(22, 50, 10, 4, 9, wr);                  // crossguard
+      }
+      if (ch.equip.offhand) {
+        const sr = rampOfItem(ch.equip.offhand) || 1;
+        lim(-34, 30, 14, 22, 10, sr);
+        lim(-32, 34, 10, 14, 7, sr);
+      }
       // A light from the upper left, so the figure has a form rather than being a flat cutout.
-      En.rect(Math.round(bx - 15 * S), Math.round(by + 20 * S), Math.round(6 * S), Math.round(38 * S), Core.idx(4, 11));
-      En.rect(Math.round(bx - 8 * S), Math.round(by), Math.round(6 * S), Math.round(17 * S), Core.idx(4, 12));
+      En.rect(Math.round(bx - 15 * S), Math.round(by + 20 * S), Math.round(6 * S), Math.round(38 * S), Core.idx(bodyRamp, 11));
+      En.rect(Math.round(bx - 8 * S), Math.round(by), Math.round(6 * S), Math.round(17 * S), Core.idx(SKIN, 12));
     }
 
     for (const [slot, ox, oy, label] of SLOTS) {
@@ -397,11 +444,15 @@ const UI = (() => {
       En.hline(x, y + 45, 46, Core.idx(13, 8)); En.vline(x + 45, y, 46, Core.idx(13, 8));
       En.frameRect(x - 1, y - 1, 48, 48, Core.idx(13, it ? 12 : 7));
       if (it) En.blitScaled(Sprites.icon(it.id), x + 3, y + 3, 40, 40, 0);
-      // A knocked-out plate behind the label. At 1x on a textured panel the glyphs lost strokes —
-      // a critic read AMULET as "FMULCT", GLOVES as "FLNUFS" and CLOAK as "C ?K".
+      // The label sits INSIDE its own well, along the bottom edge.
+      //
+      // At y + 46 it landed exactly on the border line between this box and the one beneath it,
+      // splitting both outlines: a critic found CLOAK cutting the top edge of the ARMOUR box,
+      // ARMOUR cutting the top of WEAPON, "the same on all ten", and read it as text bleeding
+      // through the panel. A caption belongs to one box or the other, never to the seam.
       const lw2 = Art.textWidth(label, 1);
-      En.rect(Math.round(x + 23 - lw2 / 2) - 2, y + 46, lw2 + 4, 10, Core.idx(0, 2));
-      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 13), 1);
+      En.rect(Math.round(x + 23 - lw2 / 2) - 2, y + 34, lw2 + 4, 10, Core.idx(0, 1));
+      Art.textCentred(En, x + 23, y + 35, label, Core.idx(13, it ? 15 : 13), 1);
       reg('equip', x, y, 46, 46, slot);
     }
 
