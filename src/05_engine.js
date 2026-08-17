@@ -188,6 +188,23 @@ const Engine = (() => {
   const bandY0 = new Int16Array(16);
   const bandY1 = new Int16Array(16);
 
+  // Fade a texel toward the sky by moving its SHADE, and only dither across the narrow band where
+  // the ramp finally gives out. A full-frame checkerboard is a screen door, not haze.
+  function fogShade(texel, light, fog, skyBand, y, fogRow, fogJit) {
+    const ramp = texel & 0xf0;
+    const shade = (texel & 0x0f) + light;
+    if (!skyBand || fog <= 0.02) return Core.shade(ramp, shade);
+    const skyPi = skyBand[y - VIEW.y];
+    if (fog >= 0.90) return skyPi;
+    const skyShade = skyPi & 0x0f;
+    // Walk the shade toward the sky's brightness. Most of the fade happens here, in-ramp.
+    const lerped = Math.round(shade + (skyShade - shade) * fog);
+    if (fog < 0.62) return Core.shade(ramp, lerped);
+    // Crossover: dither between the faded surface and the sky over ~0.28 of the range only.
+    const t = (fog - 0.62) / 0.28;
+    return (t > FOG_BAYER[fogRow + (y & 7)] + fogJit) ? skyPi : Core.shade(ramp, lerped);
+  }
+
   function render3D(cam, world) {
     const map = cam.map;
     if (!map) { testCard(); return; }
@@ -256,10 +273,10 @@ const Engine = (() => {
         const fogJit = (((sx * 1103515245 + s * 12345) >>> 16) & 31) / 512;
 
         // ---- ground / water surface
+        const isWater = mat === World.MAT.water;
+        const surfH = isWater ? map.sea : gh;
         const yG = (horizon + (eyeZ - gh) * invD) | 0;
         if (!solid && yG < ybuf) {
-          const isWater = mat === World.MAT.water;
-          const surfH = isWater ? map.sea : gh;
           const yS = isWater ? ((horizon + (eyeZ - surfH) * invD) | 0) : yG;
           const top = yS < VIEW.y ? VIEW.y : yS;
           if (top < ybuf) {
@@ -288,7 +305,7 @@ const Engine = (() => {
             if (bot > ytop) {
               const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
               const light = dungeonLight(cam, wx, wy, map) - 4;
-              for (let y = ytop; y < bot; y++) buf[y * W + px] = Core.shade(ct & 0xf0, (ct & 0x0f) + light);
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit);
               ytop = bot;
             }
           }
@@ -311,15 +328,13 @@ const Engine = (() => {
             const lightDelta = sun - (face ? 1 : 0) + (dungeon ? dungeonLight(cam, wx, wy, map) : 0);
             const lod = Art.lodFor(dist);
             for (let y = top; y < ybuf; y++) {
-              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
               const v = (topH - wh) / STOREY;
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + lightDelta);
+              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit);
             }
             ybuf = top;
           }
@@ -346,11 +361,9 @@ const Engine = (() => {
               let taken = false;
               for (let k = 0; k < nBands; k++) if (y >= bandY0[k] && y < bandY1[k]) { taken = true; break; }
               if (taken) continue;
-              const t = FOG_BAYER[fogRow + (y & 7)] + fogJit;
-              if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               const wh = eyeZ - (y - horizon) / invD;
               const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
-              buf[y * W + px] = Core.shade(stx & 0xf0, (stx & 0x0f) + spanLight);
+              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;

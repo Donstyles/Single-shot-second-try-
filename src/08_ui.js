@@ -88,16 +88,16 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 106, (g.map.town ? g.map.town.name + ', ' : '') + g.map.name, Core.idx(2, 12), 1);
 
     // ---- buttons, two rows of three, each a comfortable finger target
+    // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
+    // possible way to read as placeholder tooling, and "MNU" is a debug string.
     const BX = 640 - 114, BW = 54, BH = 36;
-    const btns = [
-      ['CHR', 'sheet'], ['INV', 'inv'], ['SPL', 'book'],
-      ['MAP', 'map'], ['RST', 'rest'], ['MNU', 'menu'],
-    ];
-    btns.forEach((b, i) => {
+    const btns = ['sheet', 'inv', 'book', 'map', 'rest', 'menu'];
+    btns.forEach((id, i) => {
       const bx = BX + (i % 2) * (BW + 4);
       const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
-      Art.button(En, bx, by, BW, BH, b[0], g.pressed === b[1], 2);
-      if (interactive) reg('btn', bx, by, BW, BH, b[1]);
+      Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
+      Art.hudIcon(En, id, bx + 11, by + 6, 2);
+      if (interactive) reg('btn', bx, by, BW, BH, id);
     });
   }
 
@@ -105,7 +105,7 @@ const UI = (() => {
   // Drawn INSIDE the 3D viewport, translucent-by-dither so they never hide the world entirely.
   function drawTouchControls(g) {
     const En = E(), V = En.VIEW;
-    const S = 62, pad = 8;
+    const S = 44, pad = 4;
     const bx = V.x + pad, by = V.y + V.h - S * 2 - pad * 2;
 
     const pad4 = [
@@ -125,24 +125,26 @@ const UI = (() => {
     reg('act', ax, ay, S, S, 'act');
 
     if (g.combat.active) {
-      ghostButton(ax - S - 6, ay, S, S, 'CAST', g.pressed === 'cast');
-      reg('cast', ax - S - 6, ay, S, S, 'cast');
-      ghostButton(ax, ay - S - 6, S, S, 'WAIT', g.pressed === 'wait');
-      reg('wait', ax, ay - S - 6, S, S, 'wait');
+      ghostButton(ax - S - 4, ay, S, S, 'CST', g.pressed === 'cast');
+      reg('cast', ax - S - 4, ay, S, S, 'cast');
+      ghostButton(ax, ay - S - 4, S, S, 'WAIT', g.pressed === 'wait');
+      reg('wait', ax, ay - S - 4, S, S, 'wait');
     }
   }
 
   // A button that lets the world show through on a checker, which is how a 1998 game faked alpha.
+  // Solid, bevelled, and small. The old version was a 50% checkerboard, which was ALSO doing duty
+  // as windows, portrait backing and distance haze — one pattern doing six jobs is what you reach
+  // for when you have no art.
   function ghostButton(x, y, w, h, label, down) {
     const En = E();
-    for (let yy = y; yy < y + h; yy++) {
-      for (let xx = x; xx < x + w; xx++) {
-        if ((xx + yy) & 1) continue;
-        En.px(xx, yy, Core.idx(0, down ? 5 : 2));
-      }
-    }
-    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 9));
-    Art.textCentred(En, x + w / 2, y + (h >> 1) - 7, label, Core.idx(0, 15), 2);
+    En.rect(x, y, w, h, Core.idx(4, down ? 3 : 5));
+    En.hline(x, y, w, Core.idx(4, down ? 3 : 9));
+    En.vline(x, y, h, Core.idx(4, down ? 3 : 9));
+    En.hline(x, y + h - 1, w, Core.idx(4, down ? 9 : 2));
+    En.vline(x + w - 1, y, h, Core.idx(4, down ? 9 : 2));
+    En.frameRect(x, y, w, h, Core.idx(13, down ? 13 : 8));
+    Art.textCentred(En, x + w / 2, y + (h >> 1) - 5, label, Core.idx(13, 14), 1);
   }
 
   // ---------------------------------------------------------------- screens
@@ -192,7 +194,7 @@ const UI = (() => {
     // Stats in two columns.
     y = f.inner + 164;
     Rules.STATS.forEach((s, i) => {
-      const cx = f.x + 24 + (i % 2) * 200;
+      const cx = f.x + 24 + (i % 2) * 260;
       const cy = y + Math.floor(i / 2) * 22;
       const v = Rules.effStat(ch, s);
       const b = Rules.statBonus(v);
@@ -292,7 +294,8 @@ const UI = (() => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
-      Art.button(En, x, y, 96, 34, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), on, 2);
+      Art.button(En, x, y, 96, 34, null, on, 2);
+      Art.text(En, x + 6, y + 9, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), Core.idx(0, on ? 15 : 14), 2);
       if (!on) {
         // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
         // were invisible on a phone.

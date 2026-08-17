@@ -31,16 +31,58 @@ const Art = (() => {
     '7C14141408|081414187C|7C08040408|4854545420|043F444020|3C4040207C|1C2040201C|3C4030403C|' +
     '4428102844|0C5050503C|4464544C44|0008364100|00007F0000|0041360800|0804081008';
 
+  // Glyphs that MUST descend below the baseline, written row-major because that is the only way to
+  // author a descender legibly. Rows 0-6 are the body, rows 7-8 the tail.
+  const DESCENDERS = {
+    g: ['.....', '.....', '.###.', '#...#', '#...#', '.####', '....#', '#...#', '.###.'],
+    p: ['.....', '.....', '####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    q: ['.....', '.....', '.####', '#...#', '#...#', '.####', '....#', '....#', '....#'],
+    y: ['.....', '.....', '#...#', '#...#', '#...#', '.####', '....#', '#...#', '.###.'],
+    j: ['..#..', '.....', '..#..', '..#..', '..#..', '..#..', '..#..', '#.#..', '.##..'],
+    ',': ['.....', '.....', '.....', '.....', '.....', '.....', '..##.', '..#..', '.#...'],
+    ';': ['.....', '.....', '..##.', '..##.', '.....', '..##.', '..##.', '..#..', '.#...'],
+    // 'm' with no shoulder join reads as three separate strokes: "Thornnnarch".
+    m: ['.....', '.....', '##.##', '#.#.#', '#.#.#', '#.#.#', '#.#.#', '.....', '.....'],
+    // 'Q' needs its tail to be distinguishable from 'O' at phone size.
+    Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#', '.....', '.....'],
+  };
+
+  const GLYPH_H = 9;
+
+  // 5 columns per glyph, 9 bits each (bit 0 = top row).
   const FONT = (() => {
     const parts = FONT_HEX.replace(/\s/g, '').split('|');
-    const out = new Uint8Array(parts.length * 5);
+    const out = new Uint16Array(parts.length * 5);
     for (let i = 0; i < parts.length; i++) {
       for (let c = 0; c < 5; c++) out[i * 5 + c] = parseInt(parts[i].substr(c * 2, 2), 16) || 0;
+    }
+    // Overwrite the glyphs that need a descender or a better join.
+    for (const ch of Object.keys(DESCENDERS)) {
+      const idx = ch.charCodeAt(0) - 32;
+      const rows = DESCENDERS[ch];
+      for (let c = 0; c < 5; c++) {
+        let bits = 0;
+        for (let r = 0; r < GLYPH_H; r++) if (rows[r][c] === '#') bits |= (1 << r);
+        out[idx * 5 + c] = bits;
+      }
     }
     return out;
   })();
 
-  const CH_W = 6, CH_H = 8;   // 5px glyph + 1px gap
+  // PROPORTIONAL advance per glyph: ink width plus one column of side bearing. Fixed-pitch text is
+  // the other half of why the log read as a terminal rather than as a game.
+  const ADVANCE = (() => {
+    const adv = new Uint8Array(FONT.length / 5);
+    for (let i = 0; i < adv.length; i++) {
+      let last = -1;
+      for (let c = 0; c < 5; c++) if (FONT[i * 5 + c]) last = c;
+      // Space keeps a real width; everything else is trimmed to its ink.
+      adv[i] = last < 0 ? 3 : last + 2;
+    }
+    return adv;
+  })();
+
+  const CH_W = 6, CH_H = 10;
 
   function charCols(ch) {
     const code = ch.charCodeAt(0);
@@ -52,23 +94,34 @@ const Art = (() => {
     const s = scale || 1;
     let cx = x;
     for (let i = 0; i < str.length; i++) {
-      const o = charCols(str[i]);
-      if (o >= 0) {
+      const code = str.charCodeAt(i);
+      const gi = (code < 32 || code > 126) ? -1 : code - 32;
+      if (gi >= 0) {
+        const o = gi * 5;
         for (let c = 0; c < 5; c++) {
           const bits = FONT[o + c];
-          for (let r = 0; r < 7; r++) {
+          if (!bits) continue;
+          for (let r = 0; r < GLYPH_H; r++) {
             if (!(bits & (1 << r))) continue;
             if (s === 1) E.px(cx + c, y + r, pi);
             else E.rect(cx + c * s, y + r * s, s, s, pi);
           }
         }
-      }
-      cx += CH_W * s;
+        cx += ADVANCE[gi] * s;
+      } else cx += 4 * s;
     }
     return cx - x;
   }
 
-  const textWidth = (str, scale) => str.length * CH_W * (scale || 1);
+  function textWidth(str, scale) {
+    const s = scale || 1;
+    let w = 0;
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      w += (code < 32 || code > 126) ? 4 * s : ADVANCE[code - 32] * s;
+    }
+    return w;
+  }
 
   // Text with a 1px dark drop, which is what makes light type survive on a busy background.
   function textShadow(E, x, y, str, pi, scale) {
@@ -376,17 +429,69 @@ const Art = (() => {
     }
   }
 
+  // ---------------------------------------------------------------- hud icons
+  // Every shipped 1998 CRPG hand-painted its command bar: a helm, a pack, a book, a map. Six
+  // three-letter text labels in flat rectangles read as placeholder tooling, and "MNU" reads as a
+  // debug string. These are drawn, not typed.
+  function hudIcon(E, kind, x, y, s) {
+    const k = s || 2;
+    const px = (cx, cy, ramp, sh) => E.rect(x + cx * k, y + cy * k, k, k, Core.idx(ramp, sh));
+    const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
+
+    if (kind === 'sheet') {            // a helm, visored
+      box(3, 1, 6, 2, 14, 11); box(2, 3, 8, 5, 14, 9);
+      box(3, 4, 6, 2, 0, 2);           // visor slit
+      box(2, 8, 8, 1, 14, 6);
+      px(5, 0, 11, 12); px(6, 0, 11, 12);
+    } else if (kind === 'inv') {       // a pack with straps
+      box(2, 3, 8, 6, 4, 8); box(2, 2, 8, 1, 4, 11);
+      box(4, 0, 4, 2, 4, 6);           // flap
+      px(4, 5, 13, 12); px(7, 5, 13, 12);
+    } else if (kind === 'book') {      // an open spellbook
+      box(1, 2, 4, 7, 0, 13); box(7, 2, 4, 7, 0, 13);
+      box(5, 1, 2, 8, 4, 5);           // spine
+      px(2, 4, 12, 11); px(3, 6, 12, 11); px(8, 4, 12, 11); px(9, 6, 12, 11);
+    } else if (kind === 'map') {       // a folded map
+      box(1, 2, 10, 7, 2, 12);
+      box(4, 2, 1, 7, 2, 8); box(8, 2, 1, 7, 2, 8);   // folds
+      px(2, 4, 11, 12); px(3, 5, 11, 12); px(9, 6, 11, 12);
+    } else if (kind === 'rest') {      // a tent under a moon
+      for (let i = 0; i < 5; i++) box(6 - i, 4 + i, 1 + i * 2, 1, 4, 7 + (i & 1));
+      box(1, 9, 11, 1, 5, 5);
+      px(9, 1, 13, 14); px(10, 1, 13, 14); px(10, 2, 13, 14);
+    } else if (kind === 'menu') {      // a sealed scroll
+      box(2, 2, 8, 7, 2, 13);
+      box(2, 2, 8, 1, 2, 9); box(2, 8, 8, 1, 2, 9);
+      px(5, 5, 11, 11); px(6, 5, 11, 11); px(5, 6, 11, 11); px(6, 6, 11, 11);
+    }
+  }
+
+  // A pictorial shop sign. Blank brown planks meant a player had to walk into every door to learn
+  // what it was.
+  function shopSign(E, kind, x, y, s) {
+    const k = s || 2;
+    const box = (cx, cy, w, h, ramp, sh) => E.rect(x + cx * k, y + cy * k, w * k, h * k, Core.idx(ramp, sh));
+    if (kind === 'weapon') { box(5, 0, 2, 7, 14, 12); box(3, 6, 6, 1, 13, 10); box(5, 7, 2, 3, 4, 7); }
+    else if (kind === 'armour') { box(3, 1, 6, 7, 14, 10); box(2, 2, 1, 4, 14, 8); box(9, 2, 1, 4, 14, 8); }
+    else if (kind === 'general') { box(2, 3, 8, 6, 4, 8); box(4, 1, 4, 2, 4, 6); }
+    else if (kind === 'magic') { box(5, 1, 2, 9, 4, 6); box(3, 0, 6, 2, 12, 12); }
+    else if (kind === 'temple') { box(5, 0, 2, 10, 0, 14); box(2, 3, 8, 2, 0, 14); }
+    else if (kind === 'tavern') { box(3, 3, 6, 6, 13, 10); box(9, 4, 2, 3, 13, 8); box(3, 2, 6, 1, 0, 13); }
+    else if (kind === 'trainer') { box(2, 4, 8, 2, 14, 11); box(4, 2, 1, 6, 4, 7); box(7, 2, 1, 6, 4, 7); }
+    else if (kind === 'guild') { box(3, 1, 6, 8, 12, 9); box(5, 3, 2, 4, 13, 13); }
+  }
+
   // ---------------------------------------------------------------- animation
   let tick = 0;
   function step() { tick++; }
 
   return {
-    TS, FONT, CH_W, CH_H,
+    TS, FONT, CH_W, CH_H, GLYPH_H, ADVANCE,
     text, textShadow, textCentred, textWidth,
     makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     mipsFor, lodFor, levelOf,
     skyBand, sunShade, SKY_KEYS,
-    panel, button, gameFrame, bar, step,
+    panel, button, gameFrame, bar, step, hudIcon, shopSign,
     get tick() { return tick; },
   };
 })();

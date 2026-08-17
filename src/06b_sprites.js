@@ -190,6 +190,12 @@ const Sprites = (() => {
         const taper = trunkW + Math.round((y - trunkTop) / Math.max(1, h - trunkTop) * 1.6);
         for (let x = -taper; x <= taper; x++) put(cx + x, y, 4, clamp(8 - Math.abs(x + 1), 3, 12));
       }
+      // Root flare: without a darkened, widening base the trunk ends in a flat cut and the tree
+      // reads as floating above the ground.
+      for (let y = h - 4; y < h; y++) {
+        const flare = trunkW + 2 + (y - (h - 4));
+        for (let x = -flare; x <= flare; x++) put(cx + x, y, 5, clamp(5 - Math.abs(x) / 2, 2, 7));
+      }
       if (kind !== 'ashstump') {
         const leafRamp = kind === 'deadtree' ? 4 : 7;
         if (kind === 'pine') {
@@ -205,14 +211,24 @@ const Sprites = (() => {
             }
           }
         } else {
-          const cyy = Math.round(h * 0.30), rr = 15;
-          for (let y = -rr; y <= rr; y++) {
-            for (let x = -rr; x <= rr; x++) {
-              const dd = Math.hypot(x, y * 1.15);
-              if (dd > rr) continue;
-              if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;   // bare branches
-              put(cx + x, cyy + y, leafRamp,
-                clamp(11 - Math.round((x + rr) / (rr * 2) * 5) - Math.round((y + rr) / (rr * 2) * 2), 3, 13));
+          // Four overlapping lobes of different size, then a per-pixel noise nibble at the rim.
+          // A clean ellipse is what makes a tree read as a modern low-poly asset.
+          const cyy = Math.round(h * 0.30);
+          const lobes = [[0, 0, 13], [-8, 3, 9], [8, 2, 10], [-2, -7, 8], [4, 8, 7]];
+          for (const [ox, oy, rr] of lobes) {
+            for (let y = -rr; y <= rr; y++) {
+              for (let x = -rr; x <= rr; x++) {
+                const dd = Math.hypot(x, y * 1.12);
+                if (dd > rr) continue;
+                // Ragged rim: drop scattered pixels in the outer 22% so the edge is alpha-cut
+                // foliage rather than a geometric arc.
+                if (dd > rr * 0.78 && ((x * 7 + y * 13 + ox * 3) & 3) === 0) continue;
+                if (kind === 'deadtree' && ((x * 3 + y * 5) & 3)) continue;
+                const gx = x + ox, gy = y + oy;
+                put(cx + gx, cyy + gy, leafRamp,
+                  clamp(11 - Math.round((gx + 16) / 32 * 5) - Math.round((gy + 16) / 32 * 3)
+                    + (((gx * 5 + gy * 3) & 3) === 0 ? 1 : 0), 3, 13));
+              }
             }
           }
         }
@@ -257,11 +273,16 @@ const Sprites = (() => {
     }
 
     const out = Uint8Array.from(d);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (d[y * w + x]) continue;
-        if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
-            (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+    // Trees and shrubs get NO outline. A hard 1px rim around foliage reads as a rendered solid,
+    // which is exactly the "low-poly asset pack" tell; hard-edged props keep theirs.
+    const soft = /oak|pine|deadtree|bush|reed/.test(kind);
+    if (!soft) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (d[y * w + x]) continue;
+          if ((x > 0 && d[y * w + x - 1]) || (x < w - 1 && d[y * w + x + 1]) ||
+              (y > 0 && d[(y - 1) * w + x]) || (y < h - 1 && d[(y + 1) * w + x])) out[y * w + x] = Core.idx(0, 2);
+        }
       }
     }
     return { w, h, data: out };
@@ -340,17 +361,43 @@ const Sprites = (() => {
 
     const kind = it.kind || 'misc';
     if (kind === 'weapon') {
-      const bow = it.slot === 'bow';
-      if (bow) {
-        for (let a = -14; a <= 14; a++) {
-          const x = 10 + Math.round(Math.cos(a / 18) * 7);
-          put(x, 16 + a, 4, 8);
-        }
+      const sk = it.skill;
+      if (sk === 'bow') {
+        for (let a = -14; a <= 14; a++) put(10 + Math.round(Math.cos(a / 18) * 7), 16 + a, 4, 8);
         for (let y = 2; y < 30; y++) put(18, y, 0, 10);
-      } else {
-        for (let y = 3; y < 22; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
-        for (let x = 10; x <= 22; x++) put(x, 22, 13, 9);
-        for (let y = 23; y < 29; y++) put(16, y, 4, 7);
+      } else if (sk === 'axe') {
+        for (let y = 4; y < 29; y++) put(20, y, 4, 7);                       // haft
+        for (let y = 4; y < 16; y++) {
+          const wdt = 8 - Math.abs(y - 10);
+          for (let x = 0; x < wdt; x++) put(19 - x, y, 14, 12 - (x >> 1));   // blade
+        }
+      } else if (sk === 'mace') {
+        for (let y = 12; y < 29; y++) put(16, y, 4, 7);                      // haft
+        for (let y = 3; y < 13; y++) for (let x = -5; x <= 5; x++) {
+          if (Math.hypot(x, y - 8) > 5.4) continue;
+          put(16 + x, y, 14, 11 - Math.abs(x) / 2);                          // head
+        }
+        for (const [fx, fy] of [[-7, 8], [7, 8], [0, 1], [0, 15]]) put(16 + fx, fy, 14, 13);
+      } else if (sk === 'staff') {
+        for (let y = 1; y < 30; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 4, 8 - Math.abs(x));
+        for (let x = -4; x <= 4; x++) put(16 + x, 4, 4, 6);                   // binding
+        put(16, 1, 12, 13); put(15, 2, 12, 12); put(17, 2, 12, 12);
+      } else if (sk === 'spear') {
+        for (let y = 8; y < 30; y++) put(16, y, 4, 7);
+        for (let y = 1; y < 9; y++) {
+          const wdt = Math.max(0, 3 - Math.abs(y - 5));
+          for (let x = -wdt; x <= wdt; x++) put(16 + x, y, 14, 12 - Math.abs(x));
+        }
+      } else if (sk === 'dagger') {
+        for (let y = 8; y < 21; y++) for (let x = -1; x <= 1; x++) put(16 + x, y, 14, 12 - Math.abs(x));
+        for (let x = 12; x <= 20; x++) put(x, 21, 13, 10);
+        for (let y = 22; y < 27; y++) put(16, y, 4, 7);
+      } else {                                                                // sword
+        const long = (it.dmg && (it.dmg.n * it.dmg.sides) >= 12);
+        for (let y = long ? 2 : 6; y < 21; y++) for (let x = -2; x <= 2; x++) put(16 + x, y, 14, 11 - Math.abs(x));
+        for (let x = 9; x <= 23; x++) put(x, 21, 13, 10);                      // crossguard
+        for (let y = 22; y < 28; y++) put(16, y, 4, 7);                        // grip
+        put(16, 28, 13, 12);                                                   // pommel
       }
     } else if (kind === 'armour') {
       for (let y = 5; y < 27; y++) {
