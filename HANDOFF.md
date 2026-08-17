@@ -6,16 +6,17 @@ Current enough that a fresh session with no memory of this one loses nothing but
 ## Commands
 
 ```bash
-node build.js                                  # src/*.js -> dist/index.html (enforces 2 MB ceiling)
-node test/systems.test.js                      # pure rules + encoding
-node test/e2e.test.js                          # headless Chromium against the built artifact
-node tools/secretguard.js                      # credential scan (also a pre-commit hook)
+node build.js                    # src/*.js -> dist/index.html (enforces the 2 MB ceiling)
+node test/systems.test.js        # pure rules, encoding, baked-art integrity
+node test/e2e.test.js            # headless Chromium against the built artifact
+node test/campaign.test.js       # player-legal playthrough, including the finale
+node test/determinism.test.js    # save/load byte-identity, reproducible build
+node tools/secretguard.js        # credential scan (also a pre-commit hook)
 
-node tools/meshy.js balance                    # credits remaining
-node tools/meshy.js probe                      # one creature mesh, end to end
-node tools/meshy.js image <model> <name> [prompt]
-node tools/foundry.js <id> [glb]               # mesh -> palette sprite frames
-node tools/texbake.js <src.png> <id> [raw|blend|mirror]
+node tools/capture.js <round>    # 22 fixed shots -> critique/shots/<round>/ (refuses overwrite)
+node tools/spend.js report       # credits spent against the hard ceiling
+node tools/batch.js one <id>...  # regenerate named creature meshes
+node tools/foundry.js <id>       # mesh -> palette sprite frames
 ```
 
 Playwright: always `executablePath:'/opt/pw-browsers/chromium'`. **Never** run `playwright install`.
@@ -24,88 +25,75 @@ Playwright: always `executablePath:'/opt/pw-browsers/chromium'`. **Never** run `
 
 | Axis | State |
 |---|---|
-| Systems | Foundations solid, **not playable**. 199 systems + 26 e2e checks green. No world, no combat loop, no campaign test. |
-| Presentation | Pipelines proven on two anchors. **No world shot has ever been captured.** Nothing judged by anyone but the builder, which is worth nothing by design. |
-| Volume | Committed to 1 region (128×128) + 3 dungeons. Far short of MM6's ~30 regions. Still the axis most likely to be quietly skipped. |
+| Systems | Playable and **provably winnable**. 458 checks green: 318 systems, 84 e2e, 43 campaign, 13 determinism. |
+| Volume | 9 regions (128×128 each), 13 dungeons, 10 quests including a 5-step main chain, 99 spells across 9 schools. |
+| Presentation | Judged by four independent cold panels per round. Art critic 4/10, veteran NO-SHIP 5/10 as of r11. Both trending up; neither is close to done. |
+| Payload | `dist/index.html` ~820 KB, 40% of the 2 MB ceiling. |
+| Credits | 932 of 1000 spent. 68 held in reserve. |
 
-Built: `00_core`, `01_rules`, `02_spells`, `03_items`, `05_engine` (framebuffer only), `10_debug`
-(boot + harness). Missing: `04_world`, the heightfield march, `06_art`, `06b_sprites`, `07_audio`,
-`08_ui`, `09_game`.
+## The loop that runs this project
+
+Every round: build → four suites → `capture.js rN` → launch four cold judges against the pinned
+shots and build → write `critique/rN_disposition.md` giving **every** finding an explicit verdict
+(FIXED / ACCEPTED, QUEUED / DEFERRED WITH REASON / REFUTED WITH MEASUREMENT) → fix → repeat.
+
+The judges get no project context, no `src/`, no design documents. That is the whole value.
+
+**Never rebuild `dist/` while a judge is mid-run.** I broke this rule once and invalidated a
+four-hour veteran session; it caught the swap itself and stopped. If a rebuild is unavoidable, tell
+the judge up front to record the file size at start and end.
+
+**Findings that arrive with measurements outrank findings that arrive with adjectives** — and that
+cuts both ways. A veteran reported night as "a sky recolour, geometry pixel-identical"; measuring
+the frames showed night is already 48% of noon's luminance. The real defect underneath was the
+absence of emissive light, and that got fixed. Measure before changing anything in Core.
+
+## Scars — these are all real, and all cost time
+
+- **The foundry defaulted to `probe_goblin.glb` for every creature id**, so thirteen regenerated
+  sprites came back as the same goblin. Caught only by looking at a contact sheet. There is now a
+  systems check that fingerprints every baked sprite and fails if two share a mesh.
+- **A full pack destroyed quest items** and consumed the chest, including the endgame key.
+  Acquisition is atomic now.
+- **The guild rendered the trainer's screen**, so no magic school and no spell was purchasable
+  anywhere — 3 castable spells out of 99 at level 100.
+- **The shop charged 6–9× the displayed price** because the buy path used `value()` (whole stack)
+  while the UI used `unitValue()`. The v1 economy bug, resurfacing in the one place that takes money.
+- **`checkDefeat` sat below `update()`'s open-screen early return**, so the defeat modal could
+  neither re-arm nor stand down.
+- **USE was hidden whenever an enemy was near**, locking the player out of every building in a town
+  where monsters roam. A verb that vanishes when you need it most is worse than no verb.
+- **The ground sampled two texture repeats per cell**, aliasing into per-pixel noise at every
+  distance — measured run length 1.20 near, 1.10 at the horizon.
+- **A `rindex` on `return { w, h, data: d };` deleted `paintIcon` and `portrait`** during a scripted
+  edit. Restore from git and redo; do not pattern-match on a line that appears many times.
 
 ## Credentials
 
-Both keys live **only** in the session scratchpad at `chmod 600`, outside the repo. **The
-scratchpad does not outlive the session** — a new session must ask the user to paste them again.
+Both keys live **only** in the session scratchpad at `chmod 600`, outside the repo. **The scratchpad
+does not outlive the session** — a new session must ask the user to paste them again.
 
-- `scratchpad/openai.key` — valid, but the account returns `billing_hard_limit_reached`. Unusable
-  until the user adds credits or raises the cap. Do not retry; it is a policy state.
-- `scratchpad/meshy.key` — **working**. This is the live art path.
+- `scratchpad/meshy.key` — working. Covers both 3D and image generation.
+- `scratchpad/openai.key` — valid but `billing_hard_limit_reached`. Unusable; not a transient error.
 
 `tools/secretguard.js` scans the tree and the staged diff for 8 credential patterns and runs as a
-pre-commit hook. Never put a key in a shell command: the Claude Code permission cache records
-command strings verbatim into `.claude/settings.local.json` (gitignored, but still).
+pre-commit hook. **Never put a key in a shell command** — the Claude Code permission cache records
+command strings verbatim into `.claude/settings.local.json`.
 
-## The art pipeline (proven, measured)
-
-Meshy covers **both** halves, which was not obvious — it proxies image generation as well as 3D.
-
-**Creatures / props / paperdoll** — `tools/meshy.js probe` → `tools/foundry.js`
+## The art pipeline
 
 ```
-GLB mesh -> fixed light rig -> 5 facings (0-180, mirror the rest) -> area downsample
-         -> palette quantise -> 1px dark outline -> trim -> indexed PNG
+Meshy text-to-3D  ->  GLB  ->  fixed neutral light rig (headless three.js)
+                  ->  5 facings (0-180, mirror the rest)  ->  area downsample
+                  ->  palette quantise  ->  1px outline  ->  trim  ->  indexed PNG
 ```
 
-- 15 credits per creature (5 preview + 10 texture). ~9 s to render 5 facings.
-- **14.4 KB per creature.** 21 actors project to 0.40 MB against the 2 MB ceiling.
-  (v1 stored ONE goblin as 273 KB of JSON arrays.)
-- Emits a contact sheet and a silhouette sheet per creature. Judge the sheet, never one frame.
+Coherence comes from the **fixed rig and the shared palette**, not from the generator. 15 credits
+per creature, 14.4 KB per creature baked. The stance clause is a wary idle combat pose — never a
+T-pose, which is what an asset looks like before it is finished and which shipped for eight rounds.
 
-**Textures / portraits / sky / UI ornament** — `tools/meshy.js image` → `tools/texbake.js`
+## What is blocked, and on whom
 
-```
-1024px generation -> area downsample -> palette quantise -> seam measure -> 3x3 proof
-```
-
-- `gpt-image-2` and `nano-banana-pro` 9 credits; `nano-banana-2` 6; `nano-banana` 3.
-- The wall anchor measured seam 2.18× vertical / 1.78× horizontal against internal roughness, and
-  reads continuous at 3×3. `blend` and `mirror` repair modes exist if a later texture needs them.
-
-Credits: 3266 at last check. ~35 meshes and ~450 generations needed. **Not a constraint.**
-
-## Decisions that cost something to learn
-
-- **The rig is NEUTRAL, and the prompt preamble matches it.** Warmth is applied by the engine at
-  draw time through ramp arithmetic. Baking a warm key into an asset bakes in a time of day, so it
-  is wrong at every hour but one. Measured: warm key gave 14.6% green / 49.5% warm ramps on the
-  goblin; neutral+cool gave 22.3% / 14.3%.
-- **Exposure is a hue control.** The first rig ran the key at 3.1 and clipped all three channels,
-  collapsing green skin to warm neutral. Total incident light must stay near 1.0.
-- **The palette was innocent.** It reproduces the wall anchor to within ~4 RGB units per channel
-  (source mean 83,80,66 → baked 85,76,65) and hits mid-greens correctly. Two rounds of "the
-  palette is broken" were wrong; the cause was the rig both times. Measure before changing `Core`.
-- **`const` in a `vm` script is not a property of the context object.** The first systems run
-  destructured undefineds and every assertion passed vacuously. `test/_load.js` now fails hard if a
-  module does not define its expected global.
-- **Fix the cause, not the error check.** The foundry's strict "console errors are fatal" rule
-  fired on `/favicon.ico`; the server now answers it rather than the check being loosened.
-
-## Ordered backlog
-
-1. **R2 — `04_world.js` + the heightfield march in `05_engine.js`.** Terrain, the overhead-span
-   primitive (bridges / gate arches / aqueducts / cave mouths from one primitive), fog, sprite feet
-   snapped to `H(x,y)`. Then `06_art`, `06b_sprites`, `08_ui`, `09_game`. Terrain lands **before**
-   wiring the sprite manifest into the engine or sprite placement gets written twice.
-2. **R3 — three suites green** (add `campaign` and `determinism`), capture the full shot list into
-   `critique/shots/r0/` with the SHA, then spawn cold zero-context judges. Never brief them.
-3. **R4 — art production run.** Style anchor approved per class first, contact-sheet review per
-   class, then bulk. Wall anchor exists; portrait, icon and sky anchors do not.
-4. **Discriminator harness** — the ship gate. Build before making more art.
-5. **Content volume** — pick a region count and hold to it.
-
-## Standing rules
-
-- Commit and push at every round boundary. A round that ends without a commit may not have happened.
-- Never rebuild `dist/` while a judge agent is mid-run against it.
-- The builder may grade tests. The builder may not grade beauty.
-- Report the three verdicts separately, always. A single number lets the strong axis hide the weak.
+- **The discriminator ship gate** needs real MM6 screenshots in `critique/reference/` (gitignored,
+  measurement-only, never sent to any API, never committed). Only the user can supply them. No asset
+  rips, ever — reference is for measurement and comparison, not for shipping.
