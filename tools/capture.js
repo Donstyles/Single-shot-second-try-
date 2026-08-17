@@ -90,11 +90,17 @@ async function main() {
       const found = await page.evaluate(([m, xx, yy, aa, tt, mk]) => {
         Game.state.screen = null;
         let px = xx, py = yy, pa = aa, resolved = false;
+        let look = null;
         if (mk) {
           const l = window.__game.landmark(m, mk);
-          if (l) { px = l.x; py = l.y; pa = l.ang; resolved = true; }
+          if (l) { px = l.x; py = l.y; pa = l.ang; resolved = true; look = l; }
         }
-        window.__game.gotoMap(m, px - 0.5, py - 0.5, pa);
+        const at = window.__game.gotoMap(m, px - 0.5, py - 0.5, pa);
+        // gotoMap nudges out of geometry, so RE-AIM from wherever it actually put the camera. A
+        // pose that keeps its original angle after being moved misses its own subject.
+        if (look && look.tx !== undefined) {
+          window.__game.teleport(at.x, at.y, Math.atan2(look.ty - at.y, look.tx - at.x));
+        }
         window.__game.setTime(tt);
         return resolved;
       }, [map, x, y, ang, t, mark || null]);

@@ -330,8 +330,16 @@ const World = (() => {
   }
 
   // A bridge over a carved ravine: deck at a fixed height, ravine floor visible in the gap.
-  function landmark(m, kind, x, y, ang) {
-    m.landmarks.push({ kind, x: x + 0.5, y: y + 0.5, ang });
+  // A landmark records WHERE TO STAND and WHAT TO LOOK AT. Storing only an angle meant that when
+  // the camera had to be nudged out of geometry, it kept pointing the way it was originally aimed
+  // and missed its own subject — the "east gate at dusk" shot came back as a wall face with no
+  // gate in frame at all.
+  function landmark(m, kind, x, y, ang, tx, ty) {
+    m.landmarks.push({
+      kind, x: x + 0.5, y: y + 0.5, ang,
+      tx: tx === undefined ? undefined : tx + 0.5,
+      ty: ty === undefined ? undefined : ty + 0.5,
+    });
   }
 
   function bridge(m, x0, y0, x1, y1, deckH) {
@@ -346,19 +354,27 @@ const World = (() => {
     // Viewed from side-on and a little back, which is the only angle a bridge reads from.
     const mx = Math.round((x0 + x1) / 2), my = Math.round((y0 + y1) / 2);
     const alongY = Math.abs(y1 - y0) > Math.abs(x1 - x0);
-    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2);
+    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2, mx, my);
   }
 
   // A gate arch: solid overhead, walkable underneath. `lo` must leave the party's 1.6 headroom.
-  function gateArch(m, x, y, dir, groundH) {
+  function gateArch(m, x, y, dir, groundH, townX, townY) {
     const lo = groundH + 2.6, hi = groundH + 6.4;
     for (let w = -1; w <= 1; w++) {
       addSpan(m, x + (dir === 'ns' ? w : 0), y + (dir === 'ns' ? 0 : w), lo, hi, MAT.stonewall);
     }
     // Stand back OUTSIDE the wall and look through the opening, so the arch is the subject.
     const out = 7;
-    if (dir === 'ns') landmark(m, 'gate', x, y + out, -Math.PI / 2);
-    else landmark(m, 'gate', x + out, y, Math.PI);
+    // Stand OUTSIDE the wall, on the line from the town centre through the gate, and look back at
+    // it. Offsetting along a fixed axis instead put the camera on the wall ring itself — every one
+    // of the four gate poses resolved to an impassable cell, and the "east gate at dusk" shot came
+    // back as a stone face receding into the distance with no gate anywhere in it.
+    if (townX === undefined) return;
+    const ox = x - townX, oy = y - townY;
+    const ol = Math.hypot(ox, oy) || 1;
+    const back = out + 6;
+    const px = Math.round(x + (ox / ol) * back), py = Math.round(y + (oy / ol) * back);
+    landmark(m, 'gate', px, py, Math.atan2(y - py, x - px), x, y);
   }
 
   // A cave mouth: an overhang above a tunnel entrance, so a dungeon portal reads as a dark opening
@@ -369,7 +385,7 @@ const World = (() => {
         addSpan(m, x + dx, y + dy, groundH + 2.4, groundH + 9 + Math.abs(dx), MAT.cliff);
       }
     }
-    landmark(m, 'cave', x, y + 8, -Math.PI / 2);
+    landmark(m, 'cave', x, y + 10, -Math.PI / 2, x, y);
   }
 
   // ---------------------------------------------------------------- settlements
@@ -509,7 +525,7 @@ const World = (() => {
           setCell(m, px, py, MAT.road);
           setStoreys(m, px, py, 0);
         }
-        gateArch(m, gx, gy, dir, H(m, gx, gy));
+        gateArch(m, gx, gy, dir, H(m, gx, gy), cx, cy);
         m.decor.push({ kind: 'brazier', x: gx + 0.5, y: gy + 0.5, z: H(m, gx, gy) });
       }
       m.gates = gates.map(([x, y]) => ({ x, y }));
@@ -756,7 +772,7 @@ const World = (() => {
             z: gh2, ang: ta + Math.PI, state: 'idle', home: { x: cxp, y: cyp },
           });
         }
-        landmark(m, 'camp', cxp, cyp + 8, -Math.PI / 2);
+        landmark(m, 'camp', cxp, cyp + 9, -Math.PI / 2, cxp, cyp);
         placed = true;
       }
     }
@@ -1055,7 +1071,11 @@ const World = (() => {
   // a stone wall and the game let me stand inside it... I could not tell if I was stuck, inside a
   // building, or if the renderer had died." Keep a real body clear of solid cells.
   // 0.26 leaves 0.48 of clearance in a one-cell doorway, which is enough to walk through.
-  const BODY = 0.26;
+  // 0.36, not 0.26. At a 73-degree FOV a wall face a quarter-cell from the eye fills the entire
+  // viewport, and two cold players independently reported walking into a building and having the
+  // screen become one flat texture with no way to tell whether they were stuck or the renderer had
+  // died. 0.36 still leaves 0.28 of clearance in a one-cell doorway.
+  const BODY = 0.36;
 
   function passable(m, x, y, fromZ) {
     if (!pointOk(m, x, y, fromZ)) return false;
@@ -1092,8 +1112,25 @@ const World = (() => {
     return true;
   }
 
+  // The nearest spot with real clearance around (x, y). Used by anything that PLACES the party —
+  // a portal landing, a debug jump, a shot-list landmark. Two of the twenty-two captured shots
+  // shipped as a flat grey smear because the landmark pose resolved inside a wall, and an art
+  // critic ranked them the two weakest frames in the set for exactly that reason.
+  function clearSpot(m, x, y, z, maxR) {
+    if (passable(m, x, y, z)) return { x, y };
+    const R = maxR === undefined ? 6 : maxR;
+    for (let r = 0.5; r <= R; r += 0.5) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const nx = x + Math.cos(a) * r, ny = y + Math.sin(a) * r;
+        if (passable(m, nx, ny, z === undefined ? H(m, nx, ny) : z)) return { x: nx, y: ny };
+      }
+    }
+    return { x, y };
+  }
+
   return {
-    MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB,
+    MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB, clearSpot,
     REGIONS, REGION_IDS, DUNGEONS, DUNGEON_IDS, QUESTS, QUEST_IDS, SHOP_KINDS,
     RW, RH, neighbours,
     hash2, vnoise, fbm, ridged,

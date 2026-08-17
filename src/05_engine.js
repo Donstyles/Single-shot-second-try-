@@ -239,10 +239,12 @@ const Engine = (() => {
   // The one legitimate use of the Bayer matrix that survives: dithering the fog PARAMETER between
   // two adjacent LUT steps, so a slow gradient does not band. This dithers the blend; it does not
   // punch holes in the image.
-  function fogShade(texel, light, fog, band, y, fogRow, fogJit) {
+  function fogShade(texel, light, fog, band, y, fogRow, fogJit, phase) {
     const pi = Core.shade(texel & 0xf0, (texel & 0x0f) + light);
     if (!band || fog <= 0.01) return pi;
-    const target = band[y - VIEW.y];
+    // The band is 8 wide, dithered; a fogged surface must sample the SAME column phase as the sky
+    // it is fading into, or a far object straddling a former band seam fogs to two colours.
+    const target = band[((y - VIEW.y) << 3) | phase];
     if (fog >= 0.999) return target;
     let q = fog * (FOG_STEPS - 1) + (FOG_BAYER[fogRow + (y & 7)] + fogJit) - 0.5;
     q = q < 0 ? 0 : (q > FOG_STEPS - 1 ? FOG_STEPS - 1 : q) | 0;
@@ -255,8 +257,8 @@ const Engine = (() => {
   // leaking into a sealed dungeon", which is exactly what it was.
   let voidBandCache = null;
   function voidBand() {
-    if (!voidBandCache || voidBandCache.length !== VIEW.h) {
-      voidBandCache = new Uint8Array(VIEW.h);          // index 0 is true black
+    if (!voidBandCache || voidBandCache.length !== VIEW.h * 8) {
+      voidBandCache = new Uint8Array(VIEW.h * 8);      // index 0 is true black, same 8-wide stride
     }
     return voidBandCache;
   }
@@ -299,7 +301,8 @@ const Engine = (() => {
       // Sky first: everything the march does not cover stays sky, so a column that reaches the
       // horizon needs no separate pass.
       if (skyBand) {
-        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y];
+        const phase = sx & 7;
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y * 8 + phase];
       } else {
         for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
       }
@@ -380,7 +383,7 @@ const Engine = (() => {
               // foreground, which is the other half of why it read as a vertical curtain.
               const texel = Art.groundTexel(mat, rx, ry, map, Art.lodFor(rd));
               const rfog = clamp((rd - fogStart) / fogSpan, 0, 1);
-              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             ybuf = top;
           }
@@ -392,7 +395,7 @@ const Engine = (() => {
             if (bot > ytop) {
               const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
               const light = dungeonLight(cam, wx, wy, map) - 4;
-              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit);
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit, sx & 7);
               ytop = bot;
             }
           }
@@ -421,7 +424,7 @@ const Engine = (() => {
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             ybuf = top;
           }
@@ -450,7 +453,7 @@ const Engine = (() => {
               if (taken) continue;
               const wh = eyeZ - (y - horizon) / invD;
               const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
-              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -503,6 +506,33 @@ const Engine = (() => {
     const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
     const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
     const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
+
+    // A CONTACT SHADOW under the feet, before the sprite. Without one every creature decals onto
+    // the ground and hovers — an art critic checked the pixels directly beneath a guard's boots and
+    // found them identical to open pavement, and called it out on all 22 shots at once. This is the
+    // cheapest possible fix for the single most universal "not grounded" tell there is: darken the
+    // ground the sprite stands on, in an ellipse, in its own ramp.
+    if (!opts || !opts.noShadow) {
+      const footY = Math.round(y0 + hPix) - 1;
+      const shW = Math.max(2, Math.round(wPix * 0.42));
+      const shH = Math.max(1, Math.round(shW * 0.30));
+      const scx = Math.round(x0 + wPix / 2);
+      for (let dy = -shH; dy <= shH; dy++) {
+        const yy = footY + dy;
+        if (yy < VIEW.y || yy >= VIEW.y + VIEW.h) continue;
+        const span = Math.round(shW * Math.sqrt(Math.max(0, 1 - (dy * dy) / (shH * shH + 0.01))));
+        for (let dx = -span; dx <= span; dx++) {
+          const xx = scx + dx;
+          if (xx < VIEW.x || xx >= VIEW.x + VIEW.w) continue;
+          if (zb[xx] < tx) continue;
+          const under = buf[yy * W + xx];
+          // Core: hard. Rim: soft. Both stay in the ground's own ramp so the shadow is a shade of
+          // the surface rather than a grey blob painted on top of it.
+          const edge = (dx * dx) / (span * span + 0.01) + (dy * dy) / (shH * shH + 0.01);
+          buf[yy * W + xx] = Core.shade(under & 0xf0, (under & 0x0f) - (edge > 0.55 ? 2 : 4));
+        }
+      }
+    }
 
     for (let x = xa; x < xb; x++) {
       if (zb[x] < tx) continue;                          // occluded by geometry in this column

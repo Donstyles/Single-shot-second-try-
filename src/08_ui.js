@@ -63,8 +63,12 @@ const UI = (() => {
         Art.bar(En, x + 2, y + 79, PORTRAIT.w - 4, 9, ch.sp / spMax, 12);
         Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 80, ch.sp + "/" + spMax, Core.idx(0, 15), 1);
       } else {
-        Art.text(En, x + 2, y + 80, 'LV ' + ch.level, Core.idx(13, 12), 1);
+        // A flat plate where the SP bar would be, so the strip stays a grid rather than a ragged
+        // edge. Level goes on it, and on the casters too — printing LV only for the one character
+        // without spell points made a player assume "the others weren't levelled or weren't real".
+        En.rect(x + 2, y + 79, PORTRAIT.w - 4, 9, Core.idx(13, 3));
       }
+      Art.text(En, x + PORTRAIT.w - 20, y + 58, 'L' + ch.level, Core.idx(13, 14), 1);
 
       const cond = Rules.worstCondition(ch);
       if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
@@ -74,7 +78,7 @@ const UI = (() => {
 
     // ---- message log
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
-    const lw = 636 - lx - 118;
+    const lw = En.W - 6 - lx - (58 * 3 + 10 + 14);   // leaves room for the command bar
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
@@ -115,13 +119,23 @@ const UI = (() => {
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
     // possible way to read as placeholder tooling, and "MNU" is a debug string.
-    const BX = En.W - 118, BW = 54, BH = 36;
-    const btns = ['sheet', 'inv', 'book', 'map', 'rest', 'menu'];
-    btns.forEach((id, i) => {
-      const bx = BX + (i % 2) * (BW + 4);
-      const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
+    // Pictorial AND named. A player pressed all six to find out what they were and still could not
+    // identify two of them: "none of them is a map" — the map was there, its icon was not legible.
+    // A 1998 command bar could afford to be purely pictorial because you played it for forty hours;
+    // a phone game gets fifteen minutes.
+    // Three across, two down. Two columns of six left no room under the icon for its name, so the
+    // labels printed over the pictograms. The 800px HUD has the width for a proper command bar.
+    const BW = 58, BH = 55, BX = En.W - (BW * 3 + 10) - 6;
+    const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'SPELLS'],
+      ['map', 'MAP'], ['rest', 'CAMP'], ['menu', 'MENU']];
+    btns.forEach(([id, label], i) => {
+      const bx = BX + (i % 3) * (BW + 5);
+      const by = HUD.y + 4 + Math.floor(i / 3) * (BH + 4);
       Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
-      Art.hudIcon(En, id, bx + 11, by + 6, 2);
+      Art.hudIcon(En, id, bx + 13, by + 3, 2);
+      const lw3 = Art.textWidth(label, 1);
+      En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 2, by + BH - 14, lw3 + 4, 11, Core.idx(13, 3));
+      Art.textCentred(En, bx + BW / 2, by + BH - 13, label, Core.idx(0, 15), 1);
       if (interactive) reg('btn', bx, by, BW, BH, id);
     });
   }
@@ -153,20 +167,31 @@ const UI = (() => {
     Art.textCentred(En, L.x + L.w / 2, my - 13, 'MOVE', Core.idx(13, 10), 1);
 
     // ---- verbs, bottom of the right column
+    // FIXED SLOTS. The verbs used to be stacked from the bottom up and re-laid-out whenever combat
+    // started or ended, so ATK and USE shared a screen position: a player spamming ATK killed a rat
+    // and their next tap — same pixel, no warning — opened a tavern. Nothing may move under a
+    // thumb that is already pressing it. Every verb has one home; unavailable ones are drawn
+    // greyed rather than removed.
     const vx = R.x + 4;
-    let vy = R.y + R.h - bh - 8;
-    const verb = (id, label, on) => {
-      Art.button(En, vx, vy, bw, bh, label, g.pressed === id, 2);
-      reg(id, vx, vy, bw, bh, id);
-      vy -= bh + gap;
+    const fighting = g.combat.active || g.turnBased;
+    const slot = (i) => R.y + R.h - 8 - (i + 1) * bh - i * gap;
+    const verb = (id, label, live, row) => {
+      const y = slot(row);
+      Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2);
+      if (!live) {
+        // A dimming wash, so a dead verb reads as unavailable rather than as missing.
+        for (let yy = y + 1; yy < y + bh - 1; yy += 2) En.hline(vx + 1, yy, bw - 2, Core.idx(0, 3));
+      }
+      if (live) reg(id, vx, y, bw, bh, id);
     };
-    verb('act', g.combat.active || g.turnBased ? 'ATK' : 'USE');
-    if (g.combat.active || g.turnBased) { verb('cast', 'CAST'); verb('wait', 'WAIT'); }
-    // The MM6 key. It is always available, always visible, and says which mode you are in.
-    Art.button(En, vx, vy, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
-    reg('turnbased', vx, vy, bw, bh, 1);
-    vy -= bh + gap;
-    Art.textCentred(En, R.x + R.w / 2, vy + bh - 6, 'ACT', Core.idx(13, 10), 1);
+    verb('act', 'USE', !fighting, 0);
+    verb('act', 'ATK', fighting, 1);
+    verb('cast', 'CAST', fighting, 2);
+    verb('wait', 'WAIT', fighting, 3);
+    const ty = slot(4);
+    Art.button(En, vx, ty, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
+    reg('turnbased', vx, ty, bw, bh, 1);
+    Art.textCentred(En, R.x + R.w / 2, ty - 13, 'ACT', Core.idx(13, 10), 1);
   }
 
 
@@ -329,7 +354,11 @@ const UI = (() => {
       En.hline(x, y + 45, 46, Core.idx(13, 8)); En.vline(x + 45, y, 46, Core.idx(13, 8));
       En.frameRect(x - 1, y - 1, 48, 48, Core.idx(13, it ? 12 : 7));
       if (it) En.blitScaled(Sprites.icon(it.id), x + 3, y + 3, 40, 40, 0);
-      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 12), 1);
+      // A knocked-out plate behind the label. At 1x on a textured panel the glyphs lost strokes —
+      // a critic read AMULET as "FMULCT", GLOVES as "FLNUFS" and CLOAK as "C ?K".
+      const lw2 = Art.textWidth(label, 1);
+      En.rect(Math.round(x + 23 - lw2 / 2) - 2, y + 46, lw2 + 4, 10, Core.idx(0, 2));
+      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 13), 1);
       reg('equip', x, y, 46, 46, slot);
     }
 
@@ -383,17 +412,20 @@ const UI = (() => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
+      // ORDER MATTERS. The hatch used to be drawn AFTER the label, so its 2px-pitch scanlines ran
+      // straight through the letterforms at the same pitch as the font stroke: EARTH read "FARTH",
+      // MIND read "MINU", BODY read "BUUY". Plate first, then hatch, then a knocked-out solid
+      // panel behind the glyphs, then the glyphs.
       Art.button(En, x, y, 96, 34, null, on, 2);
-      Art.text(En, x + 6, y + 9, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), Core.idx(0, on ? 15 : 14), 2);
-      if (!on) {
-        // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
-        // were invisible on a phone.
-        En.frameRect(x, y, 96, 34, Core.idx(13, 10));
-      }
+      if (!on) En.frameRect(x, y, 96, 34, Core.idx(13, 10));
       if (cap === 0) {
         // Unavailable schools are HATCHED, not dimmed — dim is indistinguishable from unselected.
         for (let yy = y + 1; yy < y + 33; yy += 3) En.hline(x + 1, yy, 94, Core.idx(0, 3));
       }
+      const label = Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6);
+      const lw = Art.textWidth(label, 2);
+      En.rect(x + 4, y + 7, lw + 4, 20, Core.idx(13, on ? 6 : 3));
+      Art.text(En, x + 6, y + 9, label, Core.idx(0, on ? 15 : 14), 2);
       reg('school', x, y, 96, 34, s);
     });
 
@@ -529,20 +561,30 @@ const UI = (() => {
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
-      Art.text(En, f.x + 24, f.inner + 30, 'Heal and cure the whole party', Core.idx(0, 13), 2);
-      Art.text(En, f.x + 24, f.inner + 56, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 90, 200, 46, 'PAY ' + cost, false, 2);
-      reg('templeheal', f.x + 24, f.inner + 90, 200, 46, cost);
+      const ty = f.inner + 46;
+      Art.text(En, f.x + 24, ty, 'Heal and cure the whole party', Core.idx(0, 13), 2);
+      if (cost <= 0) {
+        // "Cost: 0 gold" over a "PAY 0" button is a strange thing to show a player who is unhurt.
+        Art.text(En, f.x + 24, ty + 26, 'Nobody here is hurt. Come back wounded.', Core.idx(6, 13), 2);
+        return;
+      }
+      Art.text(En, f.x + 24, ty + 26, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
+      Art.button(En, f.x + 24, ty + 60, 220, 46, 'PAY ' + cost, false, 2);
+      reg('templeheal', f.x + 24, ty + 60, 220, 46, cost);
       return;
     }
     if (kind === 'tavern') {
-      Art.text(En, f.x + 24, f.inner + 20, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 50, 200, 46, 'SLEEP', false, 2);
-      reg('tavernrest', f.x + 24, f.inner + 50, 200, 46, 10);
-      Art.text(En, f.x + 24, f.inner + 116, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 146, 200, 46, 'BUY FOOD', false, 2);
-      reg('buyfood', f.x + 24, f.inner + 146, 200, 46, 12);
-      Art.text(En, f.x + 24, f.inner + 210, 'Food: ' + g.party.food, Core.idx(2, 12), 2);
+      // Everything starts BELOW the tab row. "Rest the night 10 gold" was drawn straight through
+      // the ALDER/BREE/CASS/DORN tabs, letters on top of letters.
+      let ty = f.inner + 46;
+      Art.text(En, f.x + 24, ty, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, ty + 26, 220, 46, 'SLEEP', false, 2);
+      reg('tavernrest', f.x + 24, ty + 26, 220, 46, 10);
+      ty += 96;
+      Art.text(En, f.x + 24, ty, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, ty + 26, 220, 46, 'BUY FOOD', false, 2);
+      reg('buyfood', f.x + 24, ty + 26, 220, 46, 12);
+      Art.text(En, f.x + 24, ty + 84, 'Rations in the packs: ' + g.party.food, Core.idx(2, 13), 2);
       return;
     }
     // A GUILD teaches magic; a TRAINER teaches arms. They used to render the identical body — the
@@ -812,8 +854,11 @@ const UI = (() => {
     // Point buy.
     y += 26;
     const spent = Rules.creationCost(spec.base);
-    Art.text(En, f.x + 16, y, 'POINTS  ' + spent + ' / ' + Rules.CREATE_POINTS,
-      Core.idx(spent > Rules.CREATE_POINTS ? 11 : 6, 13), 2);
+    // "POINTS 32 / 50" is ambiguous on sight — spent, or remaining? A player had to tap + twice
+    // and watch the number move to find out. Say the number that decides what they do next.
+    const left = Rules.CREATE_POINTS - spent;
+    Art.text(En, f.x + 16, y, left + ' POINTS LEFT', Core.idx(left < 0 ? 11 : left === 0 ? 13 : 6, 14), 2);
+    Art.text(En, f.x + 200, y + 4, '(' + spent + ' of ' + Rules.CREATE_POINTS + ' spent)', Core.idx(0, 11), 1);
     y += 24;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;

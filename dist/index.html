@@ -1776,8 +1776,16 @@ const World = (() => {
   }
 
   // A bridge over a carved ravine: deck at a fixed height, ravine floor visible in the gap.
-  function landmark(m, kind, x, y, ang) {
-    m.landmarks.push({ kind, x: x + 0.5, y: y + 0.5, ang });
+  // A landmark records WHERE TO STAND and WHAT TO LOOK AT. Storing only an angle meant that when
+  // the camera had to be nudged out of geometry, it kept pointing the way it was originally aimed
+  // and missed its own subject — the "east gate at dusk" shot came back as a wall face with no
+  // gate in frame at all.
+  function landmark(m, kind, x, y, ang, tx, ty) {
+    m.landmarks.push({
+      kind, x: x + 0.5, y: y + 0.5, ang,
+      tx: tx === undefined ? undefined : tx + 0.5,
+      ty: ty === undefined ? undefined : ty + 0.5,
+    });
   }
 
   function bridge(m, x0, y0, x1, y1, deckH) {
@@ -1792,19 +1800,27 @@ const World = (() => {
     // Viewed from side-on and a little back, which is the only angle a bridge reads from.
     const mx = Math.round((x0 + x1) / 2), my = Math.round((y0 + y1) / 2);
     const alongY = Math.abs(y1 - y0) > Math.abs(x1 - x0);
-    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2);
+    landmark(m, 'bridge', alongY ? mx + 9 : mx, alongY ? my : my + 9, alongY ? Math.PI : -Math.PI / 2, mx, my);
   }
 
   // A gate arch: solid overhead, walkable underneath. `lo` must leave the party's 1.6 headroom.
-  function gateArch(m, x, y, dir, groundH) {
+  function gateArch(m, x, y, dir, groundH, townX, townY) {
     const lo = groundH + 2.6, hi = groundH + 6.4;
     for (let w = -1; w <= 1; w++) {
       addSpan(m, x + (dir === 'ns' ? w : 0), y + (dir === 'ns' ? 0 : w), lo, hi, MAT.stonewall);
     }
     // Stand back OUTSIDE the wall and look through the opening, so the arch is the subject.
     const out = 7;
-    if (dir === 'ns') landmark(m, 'gate', x, y + out, -Math.PI / 2);
-    else landmark(m, 'gate', x + out, y, Math.PI);
+    // Stand OUTSIDE the wall, on the line from the town centre through the gate, and look back at
+    // it. Offsetting along a fixed axis instead put the camera on the wall ring itself — every one
+    // of the four gate poses resolved to an impassable cell, and the "east gate at dusk" shot came
+    // back as a stone face receding into the distance with no gate anywhere in it.
+    if (townX === undefined) return;
+    const ox = x - townX, oy = y - townY;
+    const ol = Math.hypot(ox, oy) || 1;
+    const back = out + 6;
+    const px = Math.round(x + (ox / ol) * back), py = Math.round(y + (oy / ol) * back);
+    landmark(m, 'gate', px, py, Math.atan2(y - py, x - px), x, y);
   }
 
   // A cave mouth: an overhang above a tunnel entrance, so a dungeon portal reads as a dark opening
@@ -1815,7 +1831,7 @@ const World = (() => {
         addSpan(m, x + dx, y + dy, groundH + 2.4, groundH + 9 + Math.abs(dx), MAT.cliff);
       }
     }
-    landmark(m, 'cave', x, y + 8, -Math.PI / 2);
+    landmark(m, 'cave', x, y + 10, -Math.PI / 2, x, y);
   }
 
   // ---------------------------------------------------------------- settlements
@@ -1955,7 +1971,7 @@ const World = (() => {
           setCell(m, px, py, MAT.road);
           setStoreys(m, px, py, 0);
         }
-        gateArch(m, gx, gy, dir, H(m, gx, gy));
+        gateArch(m, gx, gy, dir, H(m, gx, gy), cx, cy);
         m.decor.push({ kind: 'brazier', x: gx + 0.5, y: gy + 0.5, z: H(m, gx, gy) });
       }
       m.gates = gates.map(([x, y]) => ({ x, y }));
@@ -2202,7 +2218,7 @@ const World = (() => {
             z: gh2, ang: ta + Math.PI, state: 'idle', home: { x: cxp, y: cyp },
           });
         }
-        landmark(m, 'camp', cxp, cyp + 8, -Math.PI / 2);
+        landmark(m, 'camp', cxp, cyp + 9, -Math.PI / 2, cxp, cyp);
         placed = true;
       }
     }
@@ -2501,7 +2517,11 @@ const World = (() => {
   // a stone wall and the game let me stand inside it... I could not tell if I was stuck, inside a
   // building, or if the renderer had died." Keep a real body clear of solid cells.
   // 0.26 leaves 0.48 of clearance in a one-cell doorway, which is enough to walk through.
-  const BODY = 0.26;
+  // 0.36, not 0.26. At a 73-degree FOV a wall face a quarter-cell from the eye fills the entire
+  // viewport, and two cold players independently reported walking into a building and having the
+  // screen become one flat texture with no way to tell whether they were stuck or the renderer had
+  // died. 0.36 still leaves 0.28 of clearance in a one-cell doorway.
+  const BODY = 0.36;
 
   function passable(m, x, y, fromZ) {
     if (!pointOk(m, x, y, fromZ)) return false;
@@ -2538,8 +2558,25 @@ const World = (() => {
     return true;
   }
 
+  // The nearest spot with real clearance around (x, y). Used by anything that PLACES the party —
+  // a portal landing, a debug jump, a shot-list landmark. Two of the twenty-two captured shots
+  // shipped as a flat grey smear because the landmark pose resolved inside a wall, and an art
+  // critic ranked them the two weakest frames in the set for exactly that reason.
+  function clearSpot(m, x, y, z, maxR) {
+    if (passable(m, x, y, z)) return { x, y };
+    const R = maxR === undefined ? 6 : maxR;
+    for (let r = 0.5; r <= R; r += 0.5) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const nx = x + Math.cos(a) * r, ny = y + Math.sin(a) * r;
+        if (passable(m, nx, ny, z === undefined ? H(m, nx, ny) : z)) return { x: nx, y: ny };
+      }
+    }
+    return { x, y };
+  }
+
   return {
-    MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB,
+    MAT, SOLID, isSolid, matOf, MAT_RAMP, MAX_CLIMB, clearSpot,
     REGIONS, REGION_IDS, DUNGEONS, DUNGEON_IDS, QUESTS, QUEST_IDS, SHOP_KINDS,
     RW, RH, neighbours,
     hash2, vnoise, fbm, ridged,
@@ -2793,10 +2830,12 @@ const Engine = (() => {
   // The one legitimate use of the Bayer matrix that survives: dithering the fog PARAMETER between
   // two adjacent LUT steps, so a slow gradient does not band. This dithers the blend; it does not
   // punch holes in the image.
-  function fogShade(texel, light, fog, band, y, fogRow, fogJit) {
+  function fogShade(texel, light, fog, band, y, fogRow, fogJit, phase) {
     const pi = Core.shade(texel & 0xf0, (texel & 0x0f) + light);
     if (!band || fog <= 0.01) return pi;
-    const target = band[y - VIEW.y];
+    // The band is 8 wide, dithered; a fogged surface must sample the SAME column phase as the sky
+    // it is fading into, or a far object straddling a former band seam fogs to two colours.
+    const target = band[((y - VIEW.y) << 3) | phase];
     if (fog >= 0.999) return target;
     let q = fog * (FOG_STEPS - 1) + (FOG_BAYER[fogRow + (y & 7)] + fogJit) - 0.5;
     q = q < 0 ? 0 : (q > FOG_STEPS - 1 ? FOG_STEPS - 1 : q) | 0;
@@ -2809,8 +2848,8 @@ const Engine = (() => {
   // leaking into a sealed dungeon", which is exactly what it was.
   let voidBandCache = null;
   function voidBand() {
-    if (!voidBandCache || voidBandCache.length !== VIEW.h) {
-      voidBandCache = new Uint8Array(VIEW.h);          // index 0 is true black
+    if (!voidBandCache || voidBandCache.length !== VIEW.h * 8) {
+      voidBandCache = new Uint8Array(VIEW.h * 8);      // index 0 is true black, same 8-wide stride
     }
     return voidBandCache;
   }
@@ -2853,7 +2892,8 @@ const Engine = (() => {
       // Sky first: everything the march does not cover stays sky, so a column that reaches the
       // horizon needs no separate pass.
       if (skyBand) {
-        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y];
+        const phase = sx & 7;
+        for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = skyBand[y * 8 + phase];
       } else {
         for (let y = 0; y < VIEW.h; y++) buf[(VIEW.y + y) * W + px] = Core.idx(0, 1);
       }
@@ -2934,7 +2974,7 @@ const Engine = (() => {
               // foreground, which is the other half of why it read as a vertical curtain.
               const texel = Art.groundTexel(mat, rx, ry, map, Art.lodFor(rd));
               const rfog = clamp((rd - fogStart) / fogSpan, 0, 1);
-              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(texel, baseLight, rfog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             ybuf = top;
           }
@@ -2946,7 +2986,7 @@ const Engine = (() => {
             if (bot > ytop) {
               const ct = Art.groundTexel(map.ceilMat === undefined ? mat : map.ceilMat, wx, wy, map, Art.lodFor(dist));
               const light = dungeonLight(cam, wx, wy, map) - 4;
-              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit);
+              for (let y = ytop; y < bot; y++) buf[y * W + px] = fogShade(ct, light, fog, skyBand, y, fogRow, fogJit, sx & 7);
               ytop = bot;
             }
           }
@@ -2975,7 +3015,7 @@ const Engine = (() => {
               const tx = Art.wallTexel(mat, u, v, face, lod);
               // Shade WITHIN the texel's own ramp. Re-deriving a delta from a reference texel
               // cancelled the global sun term, which is why night came out brighter than noon.
-              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(tx, lightDelta, fog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             ybuf = top;
           }
@@ -3004,7 +3044,7 @@ const Engine = (() => {
               if (taken) continue;
               const wh = eyeZ - (y - horizon) / invD;
               const stx = Art.wallTexel(sp.tex, (wx - cx), (sp.hi - wh) / STOREY, 0, spanLod);
-              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit);
+              buf[y * W + px] = fogShade(stx, spanLight, fog, skyBand, y, fogRow, fogJit, sx & 7);
             }
             if (nBands < 16) { bandY0[nBands] = a; bandY1[nBands] = b; nBands++; }
             if (zb[px] > dist) zb[px] = dist;
@@ -3057,6 +3097,33 @@ const Engine = (() => {
     const xs = spr.w / Math.max(1, wPix), ys = spr.h / Math.max(1, hPix);
     const xa = Math.max(VIEW.x, x0), xb = Math.min(VIEW.x + VIEW.w, Math.round(x0 + wPix));
     const ya = Math.max(VIEW.y, y0), yb = Math.min(VIEW.y + VIEW.h, Math.round(y0 + hPix));
+
+    // A CONTACT SHADOW under the feet, before the sprite. Without one every creature decals onto
+    // the ground and hovers — an art critic checked the pixels directly beneath a guard's boots and
+    // found them identical to open pavement, and called it out on all 22 shots at once. This is the
+    // cheapest possible fix for the single most universal "not grounded" tell there is: darken the
+    // ground the sprite stands on, in an ellipse, in its own ramp.
+    if (!opts || !opts.noShadow) {
+      const footY = Math.round(y0 + hPix) - 1;
+      const shW = Math.max(2, Math.round(wPix * 0.42));
+      const shH = Math.max(1, Math.round(shW * 0.30));
+      const scx = Math.round(x0 + wPix / 2);
+      for (let dy = -shH; dy <= shH; dy++) {
+        const yy = footY + dy;
+        if (yy < VIEW.y || yy >= VIEW.y + VIEW.h) continue;
+        const span = Math.round(shW * Math.sqrt(Math.max(0, 1 - (dy * dy) / (shH * shH + 0.01))));
+        for (let dx = -span; dx <= span; dx++) {
+          const xx = scx + dx;
+          if (xx < VIEW.x || xx >= VIEW.x + VIEW.w) continue;
+          if (zb[xx] < tx) continue;
+          const under = buf[yy * W + xx];
+          // Core: hard. Rim: soft. Both stay in the ground's own ramp so the shadow is a shade of
+          // the surface rather than a grey blob painted on top of it.
+          const edge = (dx * dx) / (span * span + 0.01) + (dy * dy) / (shH * shH + 0.01);
+          buf[yy * W + xx] = Core.shade(under & 0xf0, (under & 0x0f) - (edge > 0.55 ? 2 : 4));
+        }
+      }
+    }
 
     for (let x = xa; x < xb; x++) {
       if (zb[x] < tx) continue;                          // occluded by geometry in this column
@@ -3381,10 +3448,10 @@ const Art = (() => {
 
   // Which mip level a sample at this distance should use. Roughly one level per doubling.
   function lodFor(dist) {
-    if (dist < 6) return 0;
-    if (dist < 12) return 1;
-    if (dist < 24) return 2;
-    if (dist < 48) return 3;
+    if (dist < 10) return 0;
+    if (dist < 20) return 1;
+    if (dist < 36) return 2;
+    if (dist < 64) return 3;
     return 4;
   }
 
@@ -3432,11 +3499,20 @@ const Art = (() => {
   // ---- the two functions the march calls in its innermost loop
   // Texture scale is a WORLD measurement: two tiles per cell on the ground, one per storey on a
   // wall. `lod` picks the mip so distant samples do not alias into same-scale noise.
+  // GROUND FREQUENCY. This sampled two full texture repeats per world cell — at a 64-texel tile
+  // that is 128 texels across a cell, so a cell spanning 200 screen pixels still packed sub-pixel
+  // detail and the surface aliased into per-pixel noise at EVERY distance. An art critic measured
+  // it: mean horizontal run length 1.20 at the camera and 1.10 at the horizon, i.e. a flat field
+  // of RGB static with no scale and no perspective, "visual sandpaper" under the best sprites in
+  // the set. Half a repeat per cell gives 32 texels per cell, so magnification near the camera is
+  // real and the foreshortening the per-row cast computes is finally visible.
+  const GROUND_REPEAT = 0.5;
+
   function groundTexel(mat, wx, wy, map, lod) {
     const t = levelOf(mat, lod || 0);
     const S = t.size || TS, Mk = S - 1;
-    const u = (((wx * 2 * S) | 0) + (S << 6)) & Mk;
-    const v = (((wy * 2 * S) | 0) + (S << 6)) & Mk;
+    const u = (((wx * GROUND_REPEAT * S) | 0) + (S << 6)) & Mk;
+    const v = (((wy * GROUND_REPEAT * S) | 0) + (S << 6)) & Mk;
     return t[v * S + u];
   }
 
@@ -3480,15 +3556,27 @@ const Art = (() => {
     const k = phase + ':' + horizon;
     if (skyCache && skyKey === k) return skyCache;
 
+    // DITHERED, and 8 pixels wide. The gradient is a lerp between two shades of one ramp, and
+    // rounding it to an integer shade gives four or five values over 172 rows — which is four or
+    // five FLAT RECTANGLES with razor seams. An art critic measured them: "in s10 at x=150 the sky
+    // steps at y=24, y=59, y=94, y=129, exactly 35px apart, 465px wide, with zero dither at any
+    // boundary. No 1998 sky ever did that." They appear in eleven of twenty-two shots.
+    //
+    // The band is now indexed [row * 8 + (x & 7)], so the fractional part of the shade is resolved
+    // by an ordered threshold across the column: a boundary becomes a two-value checker a few rows
+    // deep instead of a line. This is the legitimate use of a Bayer matrix — dithering a
+    // quantisation error — as opposed to punching holes in an image with one.
     const spec = SKY_KEYS[phase] || SKY_KEYS.noon;
-    const band = new Uint8Array(E.VIEW.h);
+    const band = new Uint8Array(E.VIEW.h * 8);
+    const TH = [0.0625, 0.5625, 0.1875, 0.6875, 0.4375, 0.9375, 0.3125, 0.8125];
     for (let y = 0; y < E.VIEW.h; y++) {
-      // Gradient from zenith to horizon, then a warmer band right at the skyline.
       const t = clamp(y / Math.max(1, horizon), 0, 1);
       const ramp = t > 0.86 ? spec.hor[0] : spec.top[0];
-      const a = spec.top[1], b = spec.hor[1];
-      const sh = Math.round(lerp(a, b, t));
-      band[y] = Core.shade(ramp << 4, sh);
+      const exact = lerp(spec.top[1], spec.hor[1], t);
+      const lo = Math.floor(exact), frac = exact - lo;
+      for (let x = 0; x < 8; x++) {
+        band[y * 8 + x] = Core.shade(ramp << 4, frac > TH[(x + (y & 1) * 4) & 7] ? lo + 1 : lo);
+      }
     }
     skyCache = band; skyKey = k;
     return band;
@@ -3576,18 +3664,23 @@ const Art = (() => {
   // which a player described as "four brown squares in a diamond, each with a glyph so faint I had
   // to guess — I still don't know if < and > are turns or strafes".
   function arrowGlyph(E, cx, cy, dir, pi) {
+    // THE POINT GOES FIRST. The old construction started at its widest row and narrowed downward,
+    // so the FORWARD button carried a triangle pointing DOWN and the BACK button one pointing up.
+    // Two separate cold players had to move to find out which was which: "the top button of the
+    // MOVE pad has a triangle pointing down and moves you forward. I had to test both."
     const R = 8;
     for (let i = 0; i < R; i++) {
-      const half = R - i;
-      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2, pi);
-      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2, pi);
-      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2, pi);
-      else E.vline(cx + (R >> 1) - i, cy - half, half * 2, pi);
+      const half = i;                                  // 0 at the tip, widest at the tail
+      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
+      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
+      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2 + 1, pi);
+      else E.vline(cx + (R >> 1) - i, cy - half, half * 2 + 1, pi);
     }
-    // Turn arrows get a curved tail so they cannot be read as strafe.
+    // Turn arrows get a curved tail so they cannot be read as strafe. It must not cross the head,
+    // which is what left the stray diagonal spur a critic measured at the top corner.
     if (dir === 'left' || dir === 'right') {
       const s = dir === 'left' ? 1 : -1;
-      for (let i = 0; i < 7; i++) E.px(cx + s * (2 + i), cy - 4 + ((i * i) >> 3), pi);
+      for (let i = 0; i < 6; i++) E.px(cx + s * (5 + i), cy - 3 - ((i * i) >> 3), pi);
     }
   }
 
@@ -4571,8 +4664,12 @@ const UI = (() => {
         Art.bar(En, x + 2, y + 79, PORTRAIT.w - 4, 9, ch.sp / spMax, 12);
         Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 80, ch.sp + "/" + spMax, Core.idx(0, 15), 1);
       } else {
-        Art.text(En, x + 2, y + 80, 'LV ' + ch.level, Core.idx(13, 12), 1);
+        // A flat plate where the SP bar would be, so the strip stays a grid rather than a ragged
+        // edge. Level goes on it, and on the casters too — printing LV only for the one character
+        // without spell points made a player assume "the others weren't levelled or weren't real".
+        En.rect(x + 2, y + 79, PORTRAIT.w - 4, 9, Core.idx(13, 3));
       }
+      Art.text(En, x + PORTRAIT.w - 20, y + 58, 'L' + ch.level, Core.idx(13, 14), 1);
 
       const cond = Rules.worstCondition(ch);
       if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
@@ -4582,7 +4679,7 @@ const UI = (() => {
 
     // ---- message log
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
-    const lw = 636 - lx - 118;
+    const lw = En.W - 6 - lx - (58 * 3 + 10 + 14);   // leaves room for the command bar
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
@@ -4623,13 +4720,23 @@ const UI = (() => {
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
     // possible way to read as placeholder tooling, and "MNU" is a debug string.
-    const BX = En.W - 118, BW = 54, BH = 36;
-    const btns = ['sheet', 'inv', 'book', 'map', 'rest', 'menu'];
-    btns.forEach((id, i) => {
-      const bx = BX + (i % 2) * (BW + 4);
-      const by = HUD.y + 6 + Math.floor(i / 2) * (BH + 4);
+    // Pictorial AND named. A player pressed all six to find out what they were and still could not
+    // identify two of them: "none of them is a map" — the map was there, its icon was not legible.
+    // A 1998 command bar could afford to be purely pictorial because you played it for forty hours;
+    // a phone game gets fifteen minutes.
+    // Three across, two down. Two columns of six left no room under the icon for its name, so the
+    // labels printed over the pictograms. The 800px HUD has the width for a proper command bar.
+    const BW = 58, BH = 55, BX = En.W - (BW * 3 + 10) - 6;
+    const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'SPELLS'],
+      ['map', 'MAP'], ['rest', 'CAMP'], ['menu', 'MENU']];
+    btns.forEach(([id, label], i) => {
+      const bx = BX + (i % 3) * (BW + 5);
+      const by = HUD.y + 4 + Math.floor(i / 3) * (BH + 4);
       Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
-      Art.hudIcon(En, id, bx + 11, by + 6, 2);
+      Art.hudIcon(En, id, bx + 13, by + 3, 2);
+      const lw3 = Art.textWidth(label, 1);
+      En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 2, by + BH - 14, lw3 + 4, 11, Core.idx(13, 3));
+      Art.textCentred(En, bx + BW / 2, by + BH - 13, label, Core.idx(0, 15), 1);
       if (interactive) reg('btn', bx, by, BW, BH, id);
     });
   }
@@ -4661,20 +4768,31 @@ const UI = (() => {
     Art.textCentred(En, L.x + L.w / 2, my - 13, 'MOVE', Core.idx(13, 10), 1);
 
     // ---- verbs, bottom of the right column
+    // FIXED SLOTS. The verbs used to be stacked from the bottom up and re-laid-out whenever combat
+    // started or ended, so ATK and USE shared a screen position: a player spamming ATK killed a rat
+    // and their next tap — same pixel, no warning — opened a tavern. Nothing may move under a
+    // thumb that is already pressing it. Every verb has one home; unavailable ones are drawn
+    // greyed rather than removed.
     const vx = R.x + 4;
-    let vy = R.y + R.h - bh - 8;
-    const verb = (id, label, on) => {
-      Art.button(En, vx, vy, bw, bh, label, g.pressed === id, 2);
-      reg(id, vx, vy, bw, bh, id);
-      vy -= bh + gap;
+    const fighting = g.combat.active || g.turnBased;
+    const slot = (i) => R.y + R.h - 8 - (i + 1) * bh - i * gap;
+    const verb = (id, label, live, row) => {
+      const y = slot(row);
+      Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2);
+      if (!live) {
+        // A dimming wash, so a dead verb reads as unavailable rather than as missing.
+        for (let yy = y + 1; yy < y + bh - 1; yy += 2) En.hline(vx + 1, yy, bw - 2, Core.idx(0, 3));
+      }
+      if (live) reg(id, vx, y, bw, bh, id);
     };
-    verb('act', g.combat.active || g.turnBased ? 'ATK' : 'USE');
-    if (g.combat.active || g.turnBased) { verb('cast', 'CAST'); verb('wait', 'WAIT'); }
-    // The MM6 key. It is always available, always visible, and says which mode you are in.
-    Art.button(En, vx, vy, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
-    reg('turnbased', vx, vy, bw, bh, 1);
-    vy -= bh + gap;
-    Art.textCentred(En, R.x + R.w / 2, vy + bh - 6, 'ACT', Core.idx(13, 10), 1);
+    verb('act', 'USE', !fighting, 0);
+    verb('act', 'ATK', fighting, 1);
+    verb('cast', 'CAST', fighting, 2);
+    verb('wait', 'WAIT', fighting, 3);
+    const ty = slot(4);
+    Art.button(En, vx, ty, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
+    reg('turnbased', vx, ty, bw, bh, 1);
+    Art.textCentred(En, R.x + R.w / 2, ty - 13, 'ACT', Core.idx(13, 10), 1);
   }
 
 
@@ -4837,7 +4955,11 @@ const UI = (() => {
       En.hline(x, y + 45, 46, Core.idx(13, 8)); En.vline(x + 45, y, 46, Core.idx(13, 8));
       En.frameRect(x - 1, y - 1, 48, 48, Core.idx(13, it ? 12 : 7));
       if (it) En.blitScaled(Sprites.icon(it.id), x + 3, y + 3, 40, 40, 0);
-      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 12), 1);
+      // A knocked-out plate behind the label. At 1x on a textured panel the glyphs lost strokes —
+      // a critic read AMULET as "FMULCT", GLOVES as "FLNUFS" and CLOAK as "C ?K".
+      const lw2 = Art.textWidth(label, 1);
+      En.rect(Math.round(x + 23 - lw2 / 2) - 2, y + 46, lw2 + 4, 10, Core.idx(0, 2));
+      Art.textCentred(En, x + 23, y + 47, label, Core.idx(13, it ? 15 : 13), 1);
       reg('equip', x, y, 46, 46, slot);
     }
 
@@ -4891,17 +5013,20 @@ const UI = (() => {
       const x = f.x + 16, y = f.inner + 40 + i * 38;
       const cap = Rules.classCap(ch.cls, s);
       const on = g.bookSchool === s;
+      // ORDER MATTERS. The hatch used to be drawn AFTER the label, so its 2px-pitch scanlines ran
+      // straight through the letterforms at the same pitch as the font stroke: EARTH read "FARTH",
+      // MIND read "MINU", BODY read "BUUY". Plate first, then hatch, then a knocked-out solid
+      // panel behind the glyphs, then the glyphs.
       Art.button(En, x, y, 96, 34, null, on, 2);
-      Art.text(En, x + 6, y + 9, Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6), Core.idx(0, on ? 15 : 14), 2);
-      if (!on) {
-        // Unselected tabs must still READ. In r3 all eight sat one value step off the panel and
-        // were invisible on a phone.
-        En.frameRect(x, y, 96, 34, Core.idx(13, 10));
-      }
+      if (!on) En.frameRect(x, y, 96, 34, Core.idx(13, 10));
       if (cap === 0) {
         // Unavailable schools are HATCHED, not dimmed — dim is indistinguishable from unselected.
         for (let yy = y + 1; yy < y + 33; yy += 3) En.hline(x + 1, yy, 94, Core.idx(0, 3));
       }
+      const label = Spellcraft.SCHOOLS[s].name.toUpperCase().slice(0, 6);
+      const lw = Art.textWidth(label, 2);
+      En.rect(x + 4, y + 7, lw + 4, 20, Core.idx(13, on ? 6 : 3));
+      Art.text(En, x + 6, y + 9, label, Core.idx(0, on ? 15 : 14), 2);
       reg('school', x, y, 96, 34, s);
     });
 
@@ -5037,20 +5162,30 @@ const UI = (() => {
 
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
-      Art.text(En, f.x + 24, f.inner + 30, 'Heal and cure the whole party', Core.idx(0, 13), 2);
-      Art.text(En, f.x + 24, f.inner + 56, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 90, 200, 46, 'PAY ' + cost, false, 2);
-      reg('templeheal', f.x + 24, f.inner + 90, 200, 46, cost);
+      const ty = f.inner + 46;
+      Art.text(En, f.x + 24, ty, 'Heal and cure the whole party', Core.idx(0, 13), 2);
+      if (cost <= 0) {
+        // "Cost: 0 gold" over a "PAY 0" button is a strange thing to show a player who is unhurt.
+        Art.text(En, f.x + 24, ty + 26, 'Nobody here is hurt. Come back wounded.', Core.idx(6, 13), 2);
+        return;
+      }
+      Art.text(En, f.x + 24, ty + 26, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
+      Art.button(En, f.x + 24, ty + 60, 220, 46, 'PAY ' + cost, false, 2);
+      reg('templeheal', f.x + 24, ty + 60, 220, 46, cost);
       return;
     }
     if (kind === 'tavern') {
-      Art.text(En, f.x + 24, f.inner + 20, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 50, 200, 46, 'SLEEP', false, 2);
-      reg('tavernrest', f.x + 24, f.inner + 50, 200, 46, 10);
-      Art.text(En, f.x + 24, f.inner + 116, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, f.inner + 146, 200, 46, 'BUY FOOD', false, 2);
-      reg('buyfood', f.x + 24, f.inner + 146, 200, 46, 12);
-      Art.text(En, f.x + 24, f.inner + 210, 'Food: ' + g.party.food, Core.idx(2, 12), 2);
+      // Everything starts BELOW the tab row. "Rest the night 10 gold" was drawn straight through
+      // the ALDER/BREE/CASS/DORN tabs, letters on top of letters.
+      let ty = f.inner + 46;
+      Art.text(En, f.x + 24, ty, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, ty + 26, 220, 46, 'SLEEP', false, 2);
+      reg('tavernrest', f.x + 24, ty + 26, 220, 46, 10);
+      ty += 96;
+      Art.text(En, f.x + 24, ty, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
+      Art.button(En, f.x + 24, ty + 26, 220, 46, 'BUY FOOD', false, 2);
+      reg('buyfood', f.x + 24, ty + 26, 220, 46, 12);
+      Art.text(En, f.x + 24, ty + 84, 'Rations in the packs: ' + g.party.food, Core.idx(2, 13), 2);
       return;
     }
     // A GUILD teaches magic; a TRAINER teaches arms. They used to render the identical body — the
@@ -5320,8 +5455,11 @@ const UI = (() => {
     // Point buy.
     y += 26;
     const spent = Rules.creationCost(spec.base);
-    Art.text(En, f.x + 16, y, 'POINTS  ' + spent + ' / ' + Rules.CREATE_POINTS,
-      Core.idx(spent > Rules.CREATE_POINTS ? 11 : 6, 13), 2);
+    // "POINTS 32 / 50" is ambiguous on sight — spent, or remaining? A player had to tap + twice
+    // and watch the number move to find out. Say the number that decides what they do next.
+    const left = Rules.CREATE_POINTS - spent;
+    Art.text(En, f.x + 16, y, left + ' POINTS LEFT', Core.idx(left < 0 ? 11 : left === 0 ? 13 : 6, 14), 2);
+    Art.text(En, f.x + 200, y + 4, '(' + spent + ' of ' + Rules.CREATE_POINTS + ' spent)', Core.idx(0, 11), 1);
     y += 24;
     Rules.STATS.forEach((s, i) => {
       const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;
@@ -5552,7 +5690,10 @@ const Game = (() => {
   function gotoMap(id, x, y, ang) {
     enterMap(id);
     const p = state.party;
-    p.x = x + 0.5; p.y = y + 0.5;
+    // Never land inside geometry. Portal landings, harness jumps and shot-list landmarks all come
+    // through here, and two captured shots were nothing but the inside of a wall.
+    const spot = World.clearSpot(state.map, x + 0.5, y + 0.5);
+    p.x = spot.x; p.y = spot.y;
     p.ang = ang === undefined ? p.ang : ang;
     p.z = World.walkHeight(state.map, p.x, p.y);
     markSeen(id, p.x, p.y);
@@ -5584,20 +5725,22 @@ const Game = (() => {
     }
     // Slide along walls: try the full move, then each axis alone. Without this the party sticks on
     // every corner and the game feels broken long before anything actually is.
+    const ox = p.x, oy = p.y;
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
     else if (World.passable(m, nx, p.y, p.z)) p.x = nx;
     else if (World.passable(m, p.x, ny, p.z)) p.y = ny;
     else {
       // Say so. Silent failure is indistinguishable from a frozen renderer, and that is exactly
       // what a first-time player concluded after twenty-four presses.
-      if (Clock.t - (state._lastBlock || -99) > 2) {
-        state._lastBlock = Clock.t;
-        const h = World.H(m, nx, ny);
-        Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
-          : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
-      }
+      sayBlocked(m, nx, ny);
       return false;
     }
+    // A slide that goes almost nowhere is a block as far as the player is concerned. Reporting only
+    // the total-failure case meant twelve taps against a building produced twelve silences: "no
+    // bump, no 'you can't go that way', no sound, nothing."
+    const progress = Math.hypot(p.x - ox, p.y - oy);
+    const wanted = Math.hypot(nx - ox, ny - oy);
+    if (wanted > 0.001 && progress < wanted * 0.34) sayBlocked(m, nx, ny);
     p.z = World.walkHeight(m, p.x, p.y, p.z);
     markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
     return true;
@@ -5622,6 +5765,17 @@ const Game = (() => {
     for (const k in state.keyLatch) {
       if (state.keyLatch[k] > 0) state.keyLatch[k] = Math.max(0, state.keyLatch[k] - dt);
     }
+  }
+
+  // Say WHY, and say it often enough to be seen. Rate-limited by real frames rather than by game
+  // minutes, because the clock barely moves while a player is standing still failing to walk.
+  function sayBlocked(m, nx, ny) {
+    const p = state.party;
+    if ((state._blockCool || 0) > 0) return;
+    state._blockCool = 700;                      // ms
+    const h = World.H(m, nx, ny);
+    Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
+      : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
   }
 
   function move(dt) {
@@ -6159,7 +6313,13 @@ const Game = (() => {
         const rel = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         const dir = Math.abs(rel) < 0.6 ? 'ahead' : Math.abs(rel) > 2.5 ? 'behind you'
           : rel > 0 ? 'to your right' : 'to your left';
-        Log.push('Nothing here. A door is ' + Math.round(bd) + ' paces ' + dir + '.', 'info');
+        // In TAPS, not in cells. "A door is 7 paces ahead" followed by seven forward taps put a
+        // player somewhere the door was now "4 paces to your left", because a pace was a world
+        // cell and a tap is a fraction of one. A hint whose units do not match the button is worse
+        // than no hint: it spends the player's trust as well as their time.
+        const perTap = 3.4 * (TAP_LATCH_MS / 1000);
+        const taps = Math.max(1, Math.round(bd / perTap));
+        Log.push('Nothing here. A door is ' + taps + ' step' + (taps === 1 ? '' : 's') + ' ' + dir + '.', 'info');
       } else Log.push('Nothing here.', 'info');
       return false;
     }
@@ -7130,6 +7290,7 @@ const Game = (() => {
     Clock.advance(dt);
     move(dt);
     decayLatches(dt);
+    if (state._blockCool > 0) state._blockCool = Math.max(0, state._blockCool - dt);
 
     expireBuffs();
     const regen = buff('regen');

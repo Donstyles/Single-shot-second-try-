@@ -280,10 +280,10 @@ const Art = (() => {
 
   // Which mip level a sample at this distance should use. Roughly one level per doubling.
   function lodFor(dist) {
-    if (dist < 6) return 0;
-    if (dist < 12) return 1;
-    if (dist < 24) return 2;
-    if (dist < 48) return 3;
+    if (dist < 10) return 0;
+    if (dist < 20) return 1;
+    if (dist < 36) return 2;
+    if (dist < 64) return 3;
     return 4;
   }
 
@@ -331,11 +331,20 @@ const Art = (() => {
   // ---- the two functions the march calls in its innermost loop
   // Texture scale is a WORLD measurement: two tiles per cell on the ground, one per storey on a
   // wall. `lod` picks the mip so distant samples do not alias into same-scale noise.
+  // GROUND FREQUENCY. This sampled two full texture repeats per world cell — at a 64-texel tile
+  // that is 128 texels across a cell, so a cell spanning 200 screen pixels still packed sub-pixel
+  // detail and the surface aliased into per-pixel noise at EVERY distance. An art critic measured
+  // it: mean horizontal run length 1.20 at the camera and 1.10 at the horizon, i.e. a flat field
+  // of RGB static with no scale and no perspective, "visual sandpaper" under the best sprites in
+  // the set. Half a repeat per cell gives 32 texels per cell, so magnification near the camera is
+  // real and the foreshortening the per-row cast computes is finally visible.
+  const GROUND_REPEAT = 0.5;
+
   function groundTexel(mat, wx, wy, map, lod) {
     const t = levelOf(mat, lod || 0);
     const S = t.size || TS, Mk = S - 1;
-    const u = (((wx * 2 * S) | 0) + (S << 6)) & Mk;
-    const v = (((wy * 2 * S) | 0) + (S << 6)) & Mk;
+    const u = (((wx * GROUND_REPEAT * S) | 0) + (S << 6)) & Mk;
+    const v = (((wy * GROUND_REPEAT * S) | 0) + (S << 6)) & Mk;
     return t[v * S + u];
   }
 
@@ -379,15 +388,27 @@ const Art = (() => {
     const k = phase + ':' + horizon;
     if (skyCache && skyKey === k) return skyCache;
 
+    // DITHERED, and 8 pixels wide. The gradient is a lerp between two shades of one ramp, and
+    // rounding it to an integer shade gives four or five values over 172 rows — which is four or
+    // five FLAT RECTANGLES with razor seams. An art critic measured them: "in s10 at x=150 the sky
+    // steps at y=24, y=59, y=94, y=129, exactly 35px apart, 465px wide, with zero dither at any
+    // boundary. No 1998 sky ever did that." They appear in eleven of twenty-two shots.
+    //
+    // The band is now indexed [row * 8 + (x & 7)], so the fractional part of the shade is resolved
+    // by an ordered threshold across the column: a boundary becomes a two-value checker a few rows
+    // deep instead of a line. This is the legitimate use of a Bayer matrix — dithering a
+    // quantisation error — as opposed to punching holes in an image with one.
     const spec = SKY_KEYS[phase] || SKY_KEYS.noon;
-    const band = new Uint8Array(E.VIEW.h);
+    const band = new Uint8Array(E.VIEW.h * 8);
+    const TH = [0.0625, 0.5625, 0.1875, 0.6875, 0.4375, 0.9375, 0.3125, 0.8125];
     for (let y = 0; y < E.VIEW.h; y++) {
-      // Gradient from zenith to horizon, then a warmer band right at the skyline.
       const t = clamp(y / Math.max(1, horizon), 0, 1);
       const ramp = t > 0.86 ? spec.hor[0] : spec.top[0];
-      const a = spec.top[1], b = spec.hor[1];
-      const sh = Math.round(lerp(a, b, t));
-      band[y] = Core.shade(ramp << 4, sh);
+      const exact = lerp(spec.top[1], spec.hor[1], t);
+      const lo = Math.floor(exact), frac = exact - lo;
+      for (let x = 0; x < 8; x++) {
+        band[y * 8 + x] = Core.shade(ramp << 4, frac > TH[(x + (y & 1) * 4) & 7] ? lo + 1 : lo);
+      }
     }
     skyCache = band; skyKey = k;
     return band;
@@ -475,18 +496,23 @@ const Art = (() => {
   // which a player described as "four brown squares in a diamond, each with a glyph so faint I had
   // to guess — I still don't know if < and > are turns or strafes".
   function arrowGlyph(E, cx, cy, dir, pi) {
+    // THE POINT GOES FIRST. The old construction started at its widest row and narrowed downward,
+    // so the FORWARD button carried a triangle pointing DOWN and the BACK button one pointing up.
+    // Two separate cold players had to move to find out which was which: "the top button of the
+    // MOVE pad has a triangle pointing down and moves you forward. I had to test both."
     const R = 8;
     for (let i = 0; i < R; i++) {
-      const half = R - i;
-      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2, pi);
-      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2, pi);
-      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2, pi);
-      else E.vline(cx + (R >> 1) - i, cy - half, half * 2, pi);
+      const half = i;                                  // 0 at the tip, widest at the tail
+      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
+      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
+      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2 + 1, pi);
+      else E.vline(cx + (R >> 1) - i, cy - half, half * 2 + 1, pi);
     }
-    // Turn arrows get a curved tail so they cannot be read as strafe.
+    // Turn arrows get a curved tail so they cannot be read as strafe. It must not cross the head,
+    // which is what left the stray diagonal spur a critic measured at the top corner.
     if (dir === 'left' || dir === 'right') {
       const s = dir === 'left' ? 1 : -1;
-      for (let i = 0; i < 7; i++) E.px(cx + s * (2 + i), cy - 4 + ((i * i) >> 3), pi);
+      for (let i = 0; i < 6; i++) E.px(cx + s * (5 + i), cy - 3 - ((i * i) >> 3), pi);
     }
   }
 

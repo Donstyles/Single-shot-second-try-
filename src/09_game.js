@@ -183,7 +183,10 @@ const Game = (() => {
   function gotoMap(id, x, y, ang) {
     enterMap(id);
     const p = state.party;
-    p.x = x + 0.5; p.y = y + 0.5;
+    // Never land inside geometry. Portal landings, harness jumps and shot-list landmarks all come
+    // through here, and two captured shots were nothing but the inside of a wall.
+    const spot = World.clearSpot(state.map, x + 0.5, y + 0.5);
+    p.x = spot.x; p.y = spot.y;
     p.ang = ang === undefined ? p.ang : ang;
     p.z = World.walkHeight(state.map, p.x, p.y);
     markSeen(id, p.x, p.y);
@@ -215,20 +218,22 @@ const Game = (() => {
     }
     // Slide along walls: try the full move, then each axis alone. Without this the party sticks on
     // every corner and the game feels broken long before anything actually is.
+    const ox = p.x, oy = p.y;
     if (World.passable(m, nx, ny, p.z)) { p.x = nx; p.y = ny; }
     else if (World.passable(m, nx, p.y, p.z)) p.x = nx;
     else if (World.passable(m, p.x, ny, p.z)) p.y = ny;
     else {
       // Say so. Silent failure is indistinguishable from a frozen renderer, and that is exactly
       // what a first-time player concluded after twenty-four presses.
-      if (Clock.t - (state._lastBlock || -99) > 2) {
-        state._lastBlock = Clock.t;
-        const h = World.H(m, nx, ny);
-        Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
-          : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
-      }
+      sayBlocked(m, nx, ny);
       return false;
     }
+    // A slide that goes almost nowhere is a block as far as the player is concerned. Reporting only
+    // the total-failure case meant twelve taps against a building produced twelve silences: "no
+    // bump, no 'you can't go that way', no sound, nothing."
+    const progress = Math.hypot(p.x - ox, p.y - oy);
+    const wanted = Math.hypot(nx - ox, ny - oy);
+    if (wanted > 0.001 && progress < wanted * 0.34) sayBlocked(m, nx, ny);
     p.z = World.walkHeight(m, p.x, p.y, p.z);
     markSeen(p.map, p.x, p.y, m.kind === 'dungeon' ? 6 : 11);
     return true;
@@ -253,6 +258,17 @@ const Game = (() => {
     for (const k in state.keyLatch) {
       if (state.keyLatch[k] > 0) state.keyLatch[k] = Math.max(0, state.keyLatch[k] - dt);
     }
+  }
+
+  // Say WHY, and say it often enough to be seen. Rate-limited by real frames rather than by game
+  // minutes, because the clock barely moves while a player is standing still failing to walk.
+  function sayBlocked(m, nx, ny) {
+    const p = state.party;
+    if ((state._blockCool || 0) > 0) return;
+    state._blockCool = 700;                      // ms
+    const h = World.H(m, nx, ny);
+    Log.push(h - p.z > World.MAX_CLIMB ? 'Too steep to climb.'
+      : h < m.sea - 0.6 ? 'The water is too deep.' : 'The way is blocked.', 'info');
   }
 
   function move(dt) {
@@ -790,7 +806,13 @@ const Game = (() => {
         const rel = ((ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         const dir = Math.abs(rel) < 0.6 ? 'ahead' : Math.abs(rel) > 2.5 ? 'behind you'
           : rel > 0 ? 'to your right' : 'to your left';
-        Log.push('Nothing here. A door is ' + Math.round(bd) + ' paces ' + dir + '.', 'info');
+        // In TAPS, not in cells. "A door is 7 paces ahead" followed by seven forward taps put a
+        // player somewhere the door was now "4 paces to your left", because a pace was a world
+        // cell and a tap is a fraction of one. A hint whose units do not match the button is worse
+        // than no hint: it spends the player's trust as well as their time.
+        const perTap = 3.4 * (TAP_LATCH_MS / 1000);
+        const taps = Math.max(1, Math.round(bd / perTap));
+        Log.push('Nothing here. A door is ' + taps + ' step' + (taps === 1 ? '' : 's') + ' ' + dir + '.', 'info');
       } else Log.push('Nothing here.', 'info');
       return false;
     }
@@ -1761,6 +1783,7 @@ const Game = (() => {
     Clock.advance(dt);
     move(dt);
     decayLatches(dt);
+    if (state._blockCool > 0) state._blockCool = Math.max(0, state._blockCool - dt);
 
     expireBuffs();
     const regen = buff('regen');
