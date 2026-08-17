@@ -662,7 +662,15 @@ const UI = (() => {
       else if (q.need) need = 'Bring ' + (q.count || 1) + ' ' +
         (Items.ITEMS[q.need] ? Items.ITEMS[q.need].name : q.need) +
         '  (have ' + (g.countItem ? g.countItem(q.need) : 0) + ')';
-      else if (q.kill) need = 'Kill ' + q.kill.replace(/_/g, ' ') + (q.killIn ? ' in ' + q.killIn : '');
+      else if (q.kill) {
+        // The bestiary knows what the thing is called. Printing the internal id put "Kill
+        // ash_crown" in front of the player, in the one screen whose whole job is to say in
+        // English what the game wants.
+        const mon = (Items.MONSTERS[q.kill] && Items.MONSTERS[q.kill].name) || q.kill.replace(/_/g, ' ');
+        const where = q.killIn && World.DUNGEONS[q.killIn] ? World.DUNGEONS[q.killIn].name
+          : q.killIn && World.REGIONS[q.killIn] ? World.REGIONS[q.killIn].name : q.killIn;
+        need = 'Kill ' + mon + (where ? ' in ' + where : '');
+      }
       Art.text(En, f.x + 28, y + 48, need, Core.idx(done ? 6 : 13, 13), 1);
       Art.text(En, f.x + f.w - 190, y + 48, region ? region.name : '', Core.idx(2, 12), 1);
       y += 68;

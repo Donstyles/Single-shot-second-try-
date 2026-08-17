@@ -6119,7 +6119,15 @@ const UI = (() => {
       else if (q.need) need = 'Bring ' + (q.count || 1) + ' ' +
         (Items.ITEMS[q.need] ? Items.ITEMS[q.need].name : q.need) +
         '  (have ' + (g.countItem ? g.countItem(q.need) : 0) + ')';
-      else if (q.kill) need = 'Kill ' + q.kill.replace(/_/g, ' ') + (q.killIn ? ' in ' + q.killIn : '');
+      else if (q.kill) {
+        // The bestiary knows what the thing is called. Printing the internal id put "Kill
+        // ash_crown" in front of the player, in the one screen whose whole job is to say in
+        // English what the game wants.
+        const mon = (Items.MONSTERS[q.kill] && Items.MONSTERS[q.kill].name) || q.kill.replace(/_/g, ' ');
+        const where = q.killIn && World.DUNGEONS[q.killIn] ? World.DUNGEONS[q.killIn].name
+          : q.killIn && World.REGIONS[q.killIn] ? World.REGIONS[q.killIn].name : q.killIn;
+        need = 'Kill ' + mon + (where ? ' in ' + where : '');
+      }
       Art.text(En, f.x + 28, y + 48, need, Core.idx(done ? 6 : 13, 13), 1);
       Art.text(En, f.x + f.w - 190, y + 48, region ? region.name : '', Core.idx(2, 12), 1);
       y += 68;
@@ -7738,7 +7746,13 @@ const Game = (() => {
     else if (sp.target === 'ally') targets = [ch];
     else if (sp.target === 'party' || sp.target === 'self') targets = state.party.members;
 
-    if (!targets.length) { Log.push('No target.', 'info'); return false; }
+    // WORLD- AND ITEM-SCOPE SPELLS HAVE NO TARGET LIST, AND THAT IS NOT AN ERROR. Spellcraft
+    // resolves them from the caster alone and every one of their effect handlers already exists;
+    // this guard ran first and turned all seven into "No target." The guild sold five of them
+    // anyway, for 29,020 gold that could never do anything — Town Portal and Lloyd's Beacon among
+    // them, which are exactly the spells a player saves up for.
+    const scoped = sp.target === 'world' || sp.target === 'item';
+    if (!scoped && !targets.length) { Log.push('No target.', 'info'); return false; }
 
     // Snapshot enough of the world to tell whether the spell actually DID anything. A spell with
     // nothing to do — Torch Light while it is already up, First Aid at full health — used to be a
@@ -7848,9 +7862,14 @@ const Game = (() => {
       const slots = Object.keys(ch.equip).filter((k) => ch.equip[k] && ch.equip[k].ench === undefined);
       if (!slots.length) { Log.push('Nothing left to enchant.', 'info'); return false; }
       const st = ch.equip[slots[0]];
-      const tier = clamp(Math.floor(eff.power / 12), 0, Items.ENCHANTS.length - 1);
+      // A non-finite power must not index the table. clamp(NaN) is NaN, ENCHANTS[NaN] is
+      // undefined, and reading .bonus off it takes the whole page down mid-spell.
+      const pw = Number.isFinite(eff.power) ? eff.power : 0;
+      const tier = clamp(Math.floor(pw / 12) | 0, 0, Items.ENCHANTS.length - 1);
+      const ench = Items.ENCHANTS[tier];
+      if (!ench) { Log.push('The enchantment will not take.', 'info'); return false; }
       st.ench = tier;
-      st.bonus = (st.bonus || 0) + Items.ENCHANTS[tier].bonus;
+      st.bonus = (st.bonus || 0) + ench.bonus;
       st.ident = true;
       recompute(ch);
       Log.push(Items.displayName(st) + '!', 'good');
@@ -8267,7 +8286,21 @@ const Game = (() => {
       case 'bookpage': state.bookPage = clamp((state.bookPage || 0) + r.data, 0, 2); break;
       case 'buy': buy(r.data); break;
       case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } else Log.push('Not enough gold — the temple asks ' + r.data + ', you have ' + state.party.gold + '.', 'info'); break;
-      case 'tavernrest': if (state.party.gold >= r.data) { state.party.gold -= r.data; Clock.skip(480); healParty(); Log.push('You sleep at the inn.', 'good'); } else Log.push('Not enough gold for a bed (' + r.data + ').', 'info'); break;
+      // THE BED IS A FULL HEAL AND IT OBEYS THE CAMP RULE. Panels stop the world, so sleeping at
+      // an inn with a wolf outside was an unlimited in-combat heal: measured at 1 HP with a wolf
+      // five cells away, ten gold bought 31/18/12/21 HP back and the wolf never moved. The door
+      // refused at 3.2 cells while camping refused at 14, so there was an eleven-cell band where
+      // the exploit lived. One rule now answers both.
+      case 'tavernrest': {
+        const blocker = safeToRest();
+        if (blocker !== true) {
+          Log.push(Rules.canRest(state.party, blocker).why, 'info');
+        } else if (state.party.gold >= r.data) {
+          state.party.gold -= r.data; Clock.skip(480); healParty();
+          Log.push('You sleep at the inn.', 'good');
+        } else Log.push('Not enough gold for a bed (' + r.data + ').', 'info');
+        break;
+      }
       case 'buyfood': if (state.party.gold >= r.data) { state.party.gold -= r.data; state.party.food += 1; Log.push('Bought rations.', 'good'); } else Log.push('Not enough gold for rations.', 'info'); break;
       case 'train': doTrain(r.data); break;
       case 'skillup': doSkillUp(r.data); break;

@@ -582,7 +582,11 @@ const T = require('./_harness.js');
       const t1 = Core.Clock.t, hp1 = Game.state.party.members.map((c) => c.hp);
       const find = () => (Game.state.map.live || []).find((e) => e.eid === eid);
       const foe0 = (find() || {}).hp;
-      for (let i = 0; i < 4; i++) { Game.onKey('act', true); Game.onKey('act', false); }
+      // ENOUGH SWINGS THAT A MISS STREAK CANNOT DECIDE THE RESULT. At four this assertion was
+      // flaky: four attack rolls against AC 7 can all miss, and the suite failed on the dice
+      // roughly one run in three. The claim under test is that characters can act in turn-based,
+      // not that attacks always land.
+      for (let i = 0; i < 24; i++) { Game.onKey('act', true); Game.onKey('act', false); }
       const f1 = find();
       const foe1 = f1 ? f1.hp : 0;
       return { on: Game.state.turnBased, t0, t1, hp0, hp1, foe0, foe1, round: Game.state.tbRound };
@@ -590,7 +594,7 @@ const T = require('./_harness.js');
     T.eq(tb.on, true, 'turn-based mode engages');
     T.eq(tb.t1, tb.t0, '90 frames of turn-based advance the clock by nothing');
     T.eq(JSON.stringify(tb.hp1), JSON.stringify(tb.hp0), 'and no monster gets a free swing');
-    T.ok(tb.foe1 < tb.foe0, 'four character turns damage the enemy (' + tb.foe0 + ' -> ' + tb.foe1 + ')');
+    T.ok(tb.foe1 < tb.foe0, 'character turns damage the enemy (' + tb.foe0 + ' -> ' + tb.foe1 + ')');
     T.ok(tb.round >= 2, 'and the round rolls over once everyone has acted');
 
     // ---- a tap that lasts zero frames must still move the party.
@@ -692,7 +696,10 @@ const T = require('./_harness.js');
       const g = window.__game;
       g.beginGame(); g.gotoMap('harrowgate', 64, 64, 0); g.settle(2);
       const s = Game.state;
-      const clear = Game.safeToRest();                 // nothing spawned nearby yet
+      // Harrowgate has roaming monsters; an "empty street" has to be MADE empty, not assumed.
+      for (const e of (s.map.live || [])) e.dead = true;
+      g.settle(1);
+      const clear = Game.safeToRest();
       g.spawn('goblin', s.party.x + 1.2, s.party.y);   // right on top of us, in the open
       g.settle(1);
       const blockedBy = Game.safeToRest();
@@ -787,6 +794,73 @@ const T = require('./_harness.js');
     T.ok(stack.worst <= stack.cap,
       'no stack exceeds its cap (' + stack.worst + ' <= ' + stack.cap + ')');
     T.eq(stack.gained, stack.cap + 18, 'every granted item survives, spread across stacks');
+
+    // ---- EVERY SPELL THE GUILD SELLS MUST BE CASTABLE. castSpell built a target list and bailed
+    // with "No target." on an empty one — but world- and item-scope spells legitimately have no
+    // target list, and Spellcraft resolves them from the caster alone. Five were on sale for
+    // 29,020 gold and could never do anything, Town Portal and Lloyd's Beacon among them.
+    const scoped = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      const s = Game.state;
+      const ids = Spellcraft.SPELL_IDS.filter((id) => {
+        const t = Spellcraft.SPELLS[id].target;
+        return t === 'world' || t === 'item';
+      });
+      const dead = [];
+      for (const id of ids) {
+        const sp = Spellcraft.SPELLS[id];
+        let who = s.party.members.findIndex((c) => Rules.classCap(c.cls, sp.school) > 0);
+        if (who < 0) { s.party.members[0].cls = 'mage'; who = 0; }
+        s.active = who;
+        const ch = s.party.members[who];
+        ch.sp = 999; ch.spMax = 999; ch.recovery = 0;
+        ch.spells = ch.spells || {}; ch.spells[id] = true;
+        ch.skills = ch.skills || {};
+        ch.skills[sp.school] = { lvl: 20, mastery: 3 };
+        const n = Core.Log.lines.length;
+        Game.castSpell(id);
+        const said = Core.Log.lines.slice(n).map((l) => l.text);
+        if (said.some((t) => /No target/.test(t))) dead.push(id);
+      }
+      return { count: ids.length, dead };
+    })()`);
+    T.ok(scoped.count > 0, 'the game has world/item scope spells at all');
+    T.eq(scoped.dead, [], 'no world/item spell answers "No target."');
+
+    // ---- The inn bed is a full heal, so it obeys the CAMP rule. The door refused at 3.2 cells
+    // while camping refused at 14, leaving an eleven-cell band in which a party at 1 HP could buy
+    // a full heal for ten gold while the wolf that put them there stood still (panels stop the
+    // world). One rule answers both now.
+    const inn = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      const s = Game.state;
+      for (const e of (s.map.live || [])) e.dead = true;
+      h.settle(1);
+      for (const c of s.party.members) c.hp = 1;
+      s.party.gold = 500;
+      h.spawn('wolf', s.party.x + 5, s.party.y);     // inside camp range, outside the old door range
+      h.settle(1);
+      const blocked = Game.safeToRest();
+      const before = s.party.members.map((c) => c.hp);
+      Game.uiAction ? Game.uiAction({ a: 'tavernrest', data: 10 }) : null;
+      return { blocked, before, after: s.party.members.map((c) => c.hp), gold: s.party.gold };
+    })()`);
+    T.eq(typeof inn.blocked, 'string', 'a wolf five cells away blocks resting');
+
+    // ---- The journal speaks English. It printed "Kill ash_crown" — an internal id — in the one
+    // screen whose entire job is to say what the game wants.
+    const objectives = await page.evaluate(`(() => {
+      const out = [];
+      for (const qid of World.QUEST_IDS) {
+        const q = World.QUESTS[qid];
+        if (!q.kill) continue;
+        out.push((Items.MONSTERS[q.kill] && Items.MONSTERS[q.kill].name) || q.kill);
+      }
+      return out;
+    })()`);
+    T.ok(objectives.length > 0, 'there are kill quests to check');
+    T.eq(objectives.filter((n) => /_/.test(n)), [],
+      'no kill objective shows a raw internal id: ' + JSON.stringify(objectives));
 
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
