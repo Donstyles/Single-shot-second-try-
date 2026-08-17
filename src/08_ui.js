@@ -215,7 +215,11 @@ const UI = (() => {
       // A dead verb reads as unavailable rather than as missing. Art.button lays the checker on
       // the plate and redraws the label over it dimmed — passing the flag, not washing after.
       Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2, !live);
-      if (live) reg(id, vx, y, bw, bh, id);
+      // DATA null, NOT the verb's own id. CAST reads a string payload as a SPELL id, so passing
+      // 'cast' made the button try to cast a spell called "cast" and answer "No such spell." to a
+      // player who had just picked one out of the book. USE, ATK and WAIT ignore their payload,
+      // so nothing else was ever going to notice.
+      if (live) reg(id, vx, y, bw, bh, null);
     };
     // USE IS ALWAYS LIVE. Making it conditional on "no enemy nearby" locked the player out of every
     // building in a town where monsters roam: a veteran stood on the exact tile that had opened the
@@ -830,12 +834,44 @@ const UI = (() => {
       return;
     }
 
-    // Goods shops.
+    // Goods shops. BUY / SELL, because a shop that only takes money is not a shop.
+    // BELOW the character selector and ABOVE the list. At f.y+86 the tabs sat on exactly the row
+    // the first goods entry draws on (f.inner + 44 === f.y + 86) and the list painted over them.
+    const tabW = 92, tabY = f.inner + 40;
+    const selling = g.shopTab === 'sell';
+    Art.button(En, listX + 8, tabY, tabW, 28, 'BUY', !selling, 2);
+    reg('shoptab', listX + 8, tabY, tabW, 28, 'buy');
+    Art.button(En, listX + 8 + tabW + 6, tabY, tabW, 28, 'SELL', selling, 2);
+    reg('shoptab', listX + 8 + tabW + 6, tabY, tabW, 28, 'sell');
+
+    if (selling) {
+      const goods = Game.sellable ? Game.sellable() : [];
+      if (!goods.length) {
+        Art.text(En, listX + 14, f.inner + 90, 'Your packs are empty.', Core.idx(0, 12), 2);
+        Art.text(En, listX + 14, f.inner + 114, 'Loot sells here.', Core.idx(0, 10), 2);
+        return;
+      }
+      goods.forEach((it, i) => {
+        const x = listX + 8, y = f.inner + 78 + i * 54;
+        if (y > f.y + f.h - 60) return;
+        Art.panel(En, x, y, f.x + f.w - 20 - x, 52, 4, true);
+        Art.panel(En, x + 4, y + 4, 44, 44, 13, true);
+        En.frameRect(x + 4, y + 4, 44, 44, Core.idx(13, 9));
+        En.blitScaled(Sprites.icon(it.st.id), x + 5, y + 5, 42, 42, 0);
+        // displayName already reports the stack count; appending "x3" printed it twice.
+        Art.text(En, x + 54, y + 6, Items.displayName(it.st).slice(0, 18), Core.idx(0, 14), 2);
+        Art.text(En, x + 54, y + 28, it.price + 'g', Core.idx(13, 14), 2);
+        Art.text(En, x + 150, y + 32, it.who.slice(0, 5), Core.idx(2, 12), 1);
+        reg('sell', x, y, f.x + f.w - 20 - x, 52, i);
+      });
+      return;
+    }
+
     stock.forEach((st, i) => {
       // Bigger rows and a bigger icon on its own recessed plate. At 32px on a dark panel the
       // silhouettes had almost no contrast and the whole list read as one repeated shape: "six of
       // seven items share one icon", then "6x14 vertical sticks" a round later.
-      const x = listX + 8, y = f.inner + 44 + i * 54;
+      const x = listX + 8, y = f.inner + 78 + i * 54;
       if (y > f.y + f.h - 60) return;
       const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;

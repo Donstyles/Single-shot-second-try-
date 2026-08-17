@@ -862,6 +862,63 @@ const T = require('./_harness.js');
     T.eq(objectives.filter((n) => /_/.test(n)), [],
       'no kill objective shows a raw internal id: ' + JSON.stringify(objectives));
 
+    // ---- LOOT MUST BE CONVERTIBLE INTO MONEY. Eight shops were one-way buy lists. A veteran
+    // killed 21 monsters, collected pelts the item panel prices at "Value 35g each" plus a Club at
+    // 12g, toured every shop and could not realise a coin of it: "a lie the game tells you eight
+    // times." Quest-flagged was being conflated with unique — pelts and herb bundles are
+    // RENEWABLE (wolves drop them, patches regrow), so a surplus is loot.
+    const trade = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      h.give('wolf_pelt', 3); h.give('ash_key', 1);
+      const gold0 = Game.state.party.gold;
+      const list = Game.sellable();
+      const pelt = list.find((x) => x.st.id === 'wolf_pelt');
+      const soldPelt = pelt ? Game.sell(pelt.mi, pelt.pi) : false;
+      // and the endgame key must be refused even when addressed directly, bypassing the list
+      let km = -1, kp = -1;
+      Game.state.party.members.forEach((c, mi) => c.pack.forEach((st, pi) => {
+        if (st.id === 'ash_key') { km = mi; kp = pi; }
+      }));
+      const soldKey = km >= 0 ? Game.sell(km, kp) : 'not held';
+      return { gained: Game.state.party.gold - gold0, soldPelt, soldKey,
+               keyListed: list.some((x) => x.st.id === 'ash_key'),
+               keysLeft: Game.countItem('ash_key') };
+    })()`);
+    T.ok(trade.soldPelt, 'a renewable trade good can be sold');
+    T.ok(trade.gained > 0, 'selling actually pays (' + trade.gained + 'g)');
+    T.eq(trade.keyListed, false, 'the endgame key is not offered for sale');
+    T.eq(trade.soldKey, false, 'the endgame key is refused even when addressed directly');
+    T.eq(trade.keysLeft, 1, 'and it is still in the pack afterwards');
+
+    // ---- The HUD's CAST button must not try to cast a spell called "cast". The verb registered
+    // its own id as its payload, and the cast handler reads a string payload as a SPELL id, so a
+    // player who had just chosen a spell in the book pressed CAST and got "No such spell." twice.
+    const castBtn = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      const n = Core.Log.lines.length;
+      Game.onKey('cast', true); Game.onKey('cast', false);
+      const said = Core.Log.lines.slice(n).map((l) => l.text);
+      return { said, badSpell: said.some((t) => /No such spell/.test(t)) };
+    })()`);
+    T.eq(castBtn.badSpell, false,
+      'CAST never reports "No such spell." for itself: ' + JSON.stringify(castBtn.said));
+
+    // ---- USE picks the NEAREST, most-faced NPC. It returned whichever was first in the array:
+    // 1.02 cells from the crown captain and 2.7 from the smith opened the SMITH, twice.
+    const npc = await page.evaluate(`(() => {
+      const h = window.__game; h.beginGame(); h.gotoMap('harrowgate', 64, 64, 0); h.settle(2);
+      const s = Game.state, m = s.map;
+      if (!m.npcs || m.npcs.length < 2) return { skip: true };
+      // stand right on top of the SECOND npc in the array, with the first also in range
+      const near = m.npcs[1], far = m.npcs[0];
+      far.x = near.x + 2.6; far.y = near.y;
+      s.party.x = near.x - 0.9; s.party.y = near.y;
+      s.party.ang = 0;
+      const t = Game.interactTarget ? Game.interactTarget() : null;
+      return { skip: false, gotNearest: !!(t && t.kind === 'npc' && t.npc === near) };
+    })()`);
+    if (!npc.skip) T.ok(npc.gotNearest, 'USE opens the NPC you are standing in front of');
+
     // ---- The player's message log is the game's voice. A build stamp does not speak in it.
     const firstLines = await page.evaluate(`(() => Core.Log.lines.map((l) => l.text))()`);
     T.ok(!firstLines.some((t) => /booted/i.test(t)),

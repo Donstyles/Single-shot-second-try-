@@ -76,8 +76,8 @@ const Items = (() => {
     mine_ledger:   { name: "Foreman's Ledger",    kind: 'quest', quest: true, value: 0, tier: 0 },
     ash_key:       { name: 'Ashen Key',           kind: 'quest', quest: true, value: 0, tier: 0 },
     crown_shard:   { name: 'Shard of the Crown',  kind: 'quest', quest: true, value: 0, tier: 0 },
-    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 },
-    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 },
+    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 , trade: true},
+    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 , trade: true},
   };
 
   const ITEM_IDS = Object.keys(ITEMS);

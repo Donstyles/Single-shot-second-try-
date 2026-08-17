@@ -1344,8 +1344,8 @@ const Items = (() => {
     mine_ledger:   { name: "Foreman's Ledger",    kind: 'quest', quest: true, value: 0, tier: 0 },
     ash_key:       { name: 'Ashen Key',           kind: 'quest', quest: true, value: 0, tier: 0 },
     crown_shard:   { name: 'Shard of the Crown',  kind: 'quest', quest: true, value: 0, tier: 0 },
-    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 },
-    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 },
+    wolf_pelt:     { name: 'Grey Wolf Pelt',      kind: 'quest', quest: true, value: 35, tier: 0, stack: 8 , trade: true},
+    herb_bundle:   { name: 'Marshwort Bundle',    kind: 'quest', quest: true, value: 30, tier: 0, stack: 6 , trade: true},
   };
 
   const ITEM_IDS = Object.keys(ITEMS);
@@ -5700,7 +5700,11 @@ const UI = (() => {
       // A dead verb reads as unavailable rather than as missing. Art.button lays the checker on
       // the plate and redraws the label over it dimmed — passing the flag, not washing after.
       Art.button(En, vx, y, bw, bh, label, live && g.pressed === id, 2, !live);
-      if (live) reg(id, vx, y, bw, bh, id);
+      // DATA null, NOT the verb's own id. CAST reads a string payload as a SPELL id, so passing
+      // 'cast' made the button try to cast a spell called "cast" and answer "No such spell." to a
+      // player who had just picked one out of the book. USE, ATK and WAIT ignore their payload,
+      // so nothing else was ever going to notice.
+      if (live) reg(id, vx, y, bw, bh, null);
     };
     // USE IS ALWAYS LIVE. Making it conditional on "no enemy nearby" locked the player out of every
     // building in a town where monsters roam: a veteran stood on the exact tile that had opened the
@@ -6315,12 +6319,44 @@ const UI = (() => {
       return;
     }
 
-    // Goods shops.
+    // Goods shops. BUY / SELL, because a shop that only takes money is not a shop.
+    // BELOW the character selector and ABOVE the list. At f.y+86 the tabs sat on exactly the row
+    // the first goods entry draws on (f.inner + 44 === f.y + 86) and the list painted over them.
+    const tabW = 92, tabY = f.inner + 40;
+    const selling = g.shopTab === 'sell';
+    Art.button(En, listX + 8, tabY, tabW, 28, 'BUY', !selling, 2);
+    reg('shoptab', listX + 8, tabY, tabW, 28, 'buy');
+    Art.button(En, listX + 8 + tabW + 6, tabY, tabW, 28, 'SELL', selling, 2);
+    reg('shoptab', listX + 8 + tabW + 6, tabY, tabW, 28, 'sell');
+
+    if (selling) {
+      const goods = Game.sellable ? Game.sellable() : [];
+      if (!goods.length) {
+        Art.text(En, listX + 14, f.inner + 90, 'Your packs are empty.', Core.idx(0, 12), 2);
+        Art.text(En, listX + 14, f.inner + 114, 'Loot sells here.', Core.idx(0, 10), 2);
+        return;
+      }
+      goods.forEach((it, i) => {
+        const x = listX + 8, y = f.inner + 78 + i * 54;
+        if (y > f.y + f.h - 60) return;
+        Art.panel(En, x, y, f.x + f.w - 20 - x, 52, 4, true);
+        Art.panel(En, x + 4, y + 4, 44, 44, 13, true);
+        En.frameRect(x + 4, y + 4, 44, 44, Core.idx(13, 9));
+        En.blitScaled(Sprites.icon(it.st.id), x + 5, y + 5, 42, 42, 0);
+        // displayName already reports the stack count; appending "x3" printed it twice.
+        Art.text(En, x + 54, y + 6, Items.displayName(it.st).slice(0, 18), Core.idx(0, 14), 2);
+        Art.text(En, x + 54, y + 28, it.price + 'g', Core.idx(13, 14), 2);
+        Art.text(En, x + 150, y + 32, it.who.slice(0, 5), Core.idx(2, 12), 1);
+        reg('sell', x, y, f.x + f.w - 20 - x, 52, i);
+      });
+      return;
+    }
+
     stock.forEach((st, i) => {
       // Bigger rows and a bigger icon on its own recessed plate. At 32px on a dark panel the
       // silhouettes had almost no contrast and the whole list read as one repeated shape: "six of
       // seven items share one icon", then "6x14 vertical sticks" a round later.
-      const x = listX + 8, y = f.inner + 44 + i * 54;
+      const x = listX + 8, y = f.inner + 78 + i * 54;
       if (y > f.y + f.h - 60) return;
       const price = Rules.buyPrice(Items.unitValue(st), ch);
       const afford = g.party.gold >= price;
@@ -7522,9 +7558,20 @@ const Game = (() => {
     const p = state.party, m = state.map;
     const fx = p.x + Math.cos(p.ang) * 1.4, fy = p.y + Math.sin(p.ang) * 1.4;
 
+    // NEAREST AND MOST FACED, not first-in-the-array. This returned whichever NPC happened to be
+    // earliest in the list within 3.2 cells: a veteran standing 1.02 cells from the crown captain
+    // and 2.7 from the smith got the SMITH's dialogue, twice. A player standing on top of a quest
+    // giver must get that quest giver.
+    let bestNpc = null, bestNpcScore = 1e9;
     for (const n of m.npcs || []) {
-      if (Math.hypot(n.x - p.x, n.y - p.y) < 3.2) return { kind: 'npc', npc: n };
+      const dx = n.x - p.x, dy = n.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 3.2) continue;
+      const facing = (dx * Math.cos(p.ang) + dy * Math.sin(p.ang)) / (d || 1);
+      const score = d - facing * 0.9;
+      if (score < bestNpcScore) { bestNpcScore = score; bestNpc = n; }
     }
+    if (bestNpc) return { kind: 'npc', npc: bestNpc };
     let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
       if (d.kind !== 'chest' && d.kind !== 'questitem' && d.kind !== 'herb') continue;
@@ -8313,6 +8360,8 @@ const Game = (() => {
       case 'school': state.bookSchool = r.data; state.bookPage = 0; break;
       case 'bookpage': state.bookPage = clamp((state.bookPage || 0) + r.data, 0, 2); break;
       case 'buy': buy(r.data); break;
+      case 'shoptab': state.shopTab = r.data; break;
+      case 'sell': { const t = sellable()[r.data]; if (t) sell(t.mi, t.pi); break; }
       case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } else Log.push('Not enough gold — the temple asks ' + r.data + ', you have ' + state.party.gold + '.', 'info'); break;
       // THE BED IS A FULL HEAL AND IT OBEYS THE CAMP RULE. Panels stop the world, so sleeping at
       // an inn with a wolf outside was an unlimited in-combat heal: measured at 1 HP with a wolf
@@ -8493,6 +8542,55 @@ const Game = (() => {
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
     return true;
+  }
+
+  // SELLING. MM6's entire mid-game is hauling goblin gear back to town, and eight shops here were
+  // one-way buy lists. A veteran killed 21 monsters, collected 3 Grey Wolf Pelts the item panel
+  // prices at "Value 35g each" and a Club at 12g, toured every shop, and could not convert 105
+  // gold of stated value into a single coin. Their words: the printed value "is a lie the game
+  // tells you eight times."
+  //
+  // Equipped gear is not sellable from here — you sell what is in the pack, which is where loot
+  // goes. Quest items are never sellable, for the same reason they cannot be dropped.
+  function sell(memberIdx, packIdx) {
+    const ch = state.party.members[memberIdx];
+    if (!ch) return false;
+    const st = ch.pack[packIdx];
+    if (!st) return false;
+    const def = Items.def(st);
+    if (!def) return false;
+    // QUEST-FLAGGED IS NOT THE SAME AS UNIQUE. Wolf pelts and herb bundles are both flagged for
+    // quests and both RENEWABLE — wolves drop pelts, herb patches regrow — so a surplus is loot
+    // and the item panel prints a value for it. Refusing to trade them is what left a veteran
+    // carrying 105 gold of stated value they could never realise. The four one-shot items (the
+    // seal, the ledger, the shards, the key) exist exactly once in the world and are never
+    // sellable, for the same reason they cannot be dropped.
+    if (def.quest && !def.trade) {
+      Log.push(Items.displayName(st) + ' is not yours to sell.', 'info');
+      return false;
+    }
+    // Price ONE unit, and sell ONE unit, so a stack of nine pelts is nine transactions the player
+    // can stop halfway through. buy() takes one at a time for the same reason.
+    const price = Rules.sellPrice(Items.unitValue(st), state.party.members[state.active]);
+    const qty = st.qty || 1;
+    if (qty > 1) st.qty = qty - 1; else ch.pack.splice(packIdx, 1);
+    state.party.gold += price;
+    Log.push('Sold ' + Items.ITEMS[st.id].name + ' for ' + price + 'g.', 'good');
+    return true;
+  }
+
+  // Everything the party could sell here, flattened across all four packs.
+  function sellable() {
+    const out = [];
+    state.party.members.forEach((ch, mi) => {
+      ch.pack.forEach((st, pi) => {
+        const def = Items.def(st);
+        if (!def || (def.quest && !def.trade)) return;
+        out.push({ mi, pi, st, who: ch.name,
+          price: Rules.sellPrice(Items.unitValue(st), state.party.members[state.active]) });
+      });
+    });
+    return out;
   }
 
   function doTrain(cost) {
@@ -8902,7 +9000,7 @@ const Game = (() => {
       (state.map.live || (state.map.live = [])).push(e);
       return e;
     },
-    acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
+    acOf, seen, safeToRest, countItem, sell, sellable, interactTarget, dumpState, brief, invariants, census, debugLines,
     partyAttack, reachOf, nearestEnemy, liveEnemies,
     buy, doTrain, doAct, doLearnSpell, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
     checkDefeat, reviveAtTemple, cycleName, cycleSex, cyclePortrait, NAME_POOL,

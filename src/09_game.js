@@ -928,9 +928,20 @@ const Game = (() => {
     const p = state.party, m = state.map;
     const fx = p.x + Math.cos(p.ang) * 1.4, fy = p.y + Math.sin(p.ang) * 1.4;
 
+    // NEAREST AND MOST FACED, not first-in-the-array. This returned whichever NPC happened to be
+    // earliest in the list within 3.2 cells: a veteran standing 1.02 cells from the crown captain
+    // and 2.7 from the smith got the SMITH's dialogue, twice. A player standing on top of a quest
+    // giver must get that quest giver.
+    let bestNpc = null, bestNpcScore = 1e9;
     for (const n of m.npcs || []) {
-      if (Math.hypot(n.x - p.x, n.y - p.y) < 3.2) return { kind: 'npc', npc: n };
+      const dx = n.x - p.x, dy = n.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 3.2) continue;
+      const facing = (dx * Math.cos(p.ang) + dy * Math.sin(p.ang)) / (d || 1);
+      const score = d - facing * 0.9;
+      if (score < bestNpcScore) { bestNpcScore = score; bestNpc = n; }
     }
+    if (bestNpc) return { kind: 'npc', npc: bestNpc };
     let bestDecor = null, bestRank = 99, bestD = 3.0;
     for (const d of m.decor) {
       if (d.kind !== 'chest' && d.kind !== 'questitem' && d.kind !== 'herb') continue;
@@ -1719,6 +1730,8 @@ const Game = (() => {
       case 'school': state.bookSchool = r.data; state.bookPage = 0; break;
       case 'bookpage': state.bookPage = clamp((state.bookPage || 0) + r.data, 0, 2); break;
       case 'buy': buy(r.data); break;
+      case 'shoptab': state.shopTab = r.data; break;
+      case 'sell': { const t = sellable()[r.data]; if (t) sell(t.mi, t.pi); break; }
       case 'templeheal': if (state.party.gold >= r.data) { state.party.gold -= r.data; healParty(); Log.push('You are made whole.', 'good'); } else Log.push('Not enough gold — the temple asks ' + r.data + ', you have ' + state.party.gold + '.', 'info'); break;
       // THE BED IS A FULL HEAL AND IT OBEYS THE CAMP RULE. Panels stop the world, so sleeping at
       // an inn with a wolf outside was an unlimited in-combat heal: measured at 1 HP with a wolf
@@ -1899,6 +1912,55 @@ const Game = (() => {
     giveStack({ id: st.id, qty: 1, ident: true, bonus: 0, charges: 0 });
     Log.push('Bought ' + Items.ITEMS[st.id].name + '.', 'good');
     return true;
+  }
+
+  // SELLING. MM6's entire mid-game is hauling goblin gear back to town, and eight shops here were
+  // one-way buy lists. A veteran killed 21 monsters, collected 3 Grey Wolf Pelts the item panel
+  // prices at "Value 35g each" and a Club at 12g, toured every shop, and could not convert 105
+  // gold of stated value into a single coin. Their words: the printed value "is a lie the game
+  // tells you eight times."
+  //
+  // Equipped gear is not sellable from here — you sell what is in the pack, which is where loot
+  // goes. Quest items are never sellable, for the same reason they cannot be dropped.
+  function sell(memberIdx, packIdx) {
+    const ch = state.party.members[memberIdx];
+    if (!ch) return false;
+    const st = ch.pack[packIdx];
+    if (!st) return false;
+    const def = Items.def(st);
+    if (!def) return false;
+    // QUEST-FLAGGED IS NOT THE SAME AS UNIQUE. Wolf pelts and herb bundles are both flagged for
+    // quests and both RENEWABLE — wolves drop pelts, herb patches regrow — so a surplus is loot
+    // and the item panel prints a value for it. Refusing to trade them is what left a veteran
+    // carrying 105 gold of stated value they could never realise. The four one-shot items (the
+    // seal, the ledger, the shards, the key) exist exactly once in the world and are never
+    // sellable, for the same reason they cannot be dropped.
+    if (def.quest && !def.trade) {
+      Log.push(Items.displayName(st) + ' is not yours to sell.', 'info');
+      return false;
+    }
+    // Price ONE unit, and sell ONE unit, so a stack of nine pelts is nine transactions the player
+    // can stop halfway through. buy() takes one at a time for the same reason.
+    const price = Rules.sellPrice(Items.unitValue(st), state.party.members[state.active]);
+    const qty = st.qty || 1;
+    if (qty > 1) st.qty = qty - 1; else ch.pack.splice(packIdx, 1);
+    state.party.gold += price;
+    Log.push('Sold ' + Items.ITEMS[st.id].name + ' for ' + price + 'g.', 'good');
+    return true;
+  }
+
+  // Everything the party could sell here, flattened across all four packs.
+  function sellable() {
+    const out = [];
+    state.party.members.forEach((ch, mi) => {
+      ch.pack.forEach((st, pi) => {
+        const def = Items.def(st);
+        if (!def || (def.quest && !def.trade)) return;
+        out.push({ mi, pi, st, who: ch.name,
+          price: Rules.sellPrice(Items.unitValue(st), state.party.members[state.active]) });
+      });
+    });
+    return out;
   }
 
   function doTrain(cost) {
@@ -2308,7 +2370,7 @@ const Game = (() => {
       (state.map.live || (state.map.live = [])).push(e);
       return e;
     },
-    acOf, seen, safeToRest, countItem, dumpState, brief, invariants, census, debugLines,
+    acOf, seen, safeToRest, countItem, sell, sellable, interactTarget, dumpState, brief, invariants, census, debugLines,
     partyAttack, reachOf, nearestEnemy, liveEnemies,
     buy, doTrain, doAct, doLearnSpell, doSkillUp, equipFromPack, unequip, dropFromPack, useFromPack, usePortal, giveStack,
     checkDefeat, reviveAtTemple, cycleName, cycleSex, cyclePortrait, NAME_POOL,
