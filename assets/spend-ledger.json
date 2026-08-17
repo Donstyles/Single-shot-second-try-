@@ -83,7 +83,37 @@
       "op": "image:gpt-image-2",
       "credits": 9,
       "note": "Seamless tiling bare earth texture from "
+    },
+    {
+      "n": 15,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling dirt road texture from a"
+    },
+    {
+      "n": 16,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling gravel texture from abov"
+    },
+    {
+      "n": 17,
+      "op": "mesh:preview",
+      "credits": 5,
+      "note": "A giant sewer rat the size of a dog, mat"
+    },
+    {
+      "n": 18,
+      "op": "image:gpt-image-2",
+      "credits": 9,
+      "note": "Seamless tiling beach sand texture from "
+    },
+    {
+      "n": 19,
+      "op": "mesh:refine",
+      "credits": 10,
+      "note": "01a00ec5-759c-78f3-8ad8-736959d7a895"
     }
   ],
-  "spent": 123
+  "spent": 165
 }

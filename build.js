@@ -23,14 +23,32 @@ function modules() {
   return fs.readdirSync(SRC).filter((f) => f.endsWith('.js')).sort();
 }
 
-// Baked assets: committed, palette-quantised data. Embedded verbatim as a JSON blob the runtime
-// decodes. Absent during early rounds, which is fine — Art falls back to procedural.
+// Baked assets: committed, palette-quantised data. Embedded as base64 indexed PNGs the runtime
+// decodes for free. Absent assets simply fall back to the procedural painter, so the build never
+// depends on the art pass having run.
 function bakedAssets() {
-  const manifest = path.join(ASSETS, 'manifest.json');
-  if (!fs.existsSync(manifest)) return 'null';
-  const raw = fs.readFileSync(manifest, 'utf8');
-  JSON.parse(raw); // fail loudly on a corrupt manifest rather than shipping it
-  return raw;
+  const out = { tex: {}, sprites: {} };
+
+  const texDir = path.join(ASSETS, 'tex');
+  if (fs.existsSync(texDir)) {
+    for (const f of fs.readdirSync(texDir).sort()) {
+      if (!f.endsWith('.png')) continue;
+      out.tex[f.replace(/\.png$/, '')] = fs.readFileSync(path.join(texDir, f)).toString('base64');
+    }
+  }
+
+  const sprDir = path.join(ASSETS, 'sprites');
+  if (fs.existsSync(sprDir)) {
+    for (const f of fs.readdirSync(sprDir).sort()) {
+      if (!f.endsWith('.json')) continue;
+      const raw = fs.readFileSync(path.join(sprDir, f), 'utf8');
+      out.sprites[f.replace(/\.json$/, '')] = JSON.parse(raw);  // fail loudly on a corrupt manifest
+    }
+  }
+
+  const nTex = Object.keys(out.tex).length, nSpr = Object.keys(out.sprites).length;
+  if (nTex || nSpr) console.log('  baked: ' + nTex + ' textures, ' + nSpr + ' sprite sets');
+  return JSON.stringify(out);
 }
 
 function build() {

@@ -165,11 +165,37 @@ const Art = (() => {
     return t;
   }
 
-  // Baked textures are indexed PNGs decoded at boot. They replace the procedural version for that
-  // material and nothing else in the engine changes.
+  // Baked textures are indexed PNGs decoded at boot. They REPLACE the procedural version for that
+  // material and nothing else in the engine changes — which is the whole point of routing every
+  // texel through texFor().
   function installBaked(mat, indices, size) {
     BAKED[mat] = indices;
     BAKED[mat].size = size;
+  }
+
+  // Decode every embedded texture. Index recovery works because the build writes the game palette
+  // into each PNG's PLTE, so a decoded RGB maps back to exactly one index.
+  async function installBakedTextures(blob) {
+    if (!blob || !blob.tex) return 0;
+    let n = 0;
+    for (const name of Object.keys(blob.tex)) {
+      const mat = World.MAT[name];
+      if (mat === undefined) continue;
+      const img = new Image();
+      try {
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + blob.tex[name]; });
+      } catch (e) { continue; }
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, img.width, img.height).data;
+      const idx = new Uint8Array(img.width * img.height);
+      for (let i = 0, p = 0; i < idx.length; i++, p += 4) idx[i] = Core.palIdx(d[p], d[p + 1], d[p + 2]);
+      installBaked(mat, idx, img.width);
+      n++;
+    }
+    return n;
   }
 
   const texSize = (t) => t.size || TS;
@@ -178,17 +204,20 @@ const Art = (() => {
   function groundTexel(mat, wx, wy, map) {
     const t = texFor(mat);
     const S = texSize(t), Mk = S - 1;
-    // Ground textures repeat every 2 cells: a 1:1 mapping makes a road read as a tiled floor.
-    const u = ((wx * S / 2) | 0) & Mk;
-    const v = ((wy * S / 2) | 0) & Mk;
+    // One tile per world cell. Two cells per tile made a single blade of grass a metre across;
+    // texture scale is a WORLD measurement, not a convenience.
+    const u = ((wx * 2 * S) | 0) & Mk;
+    const v = ((wy * 2 * S) | 0) & Mk;
     return t[v * S + u];
   }
 
   function wallTexel(mat, u, v, face) {
     const t = texFor(mat);
     const S = texSize(t), Mk = S - 1;
-    const ui = ((u * S) | 0) & Mk;
-    const vi = ((v * S) | 0) & Mk;
+    // `& Mk` on a negative value does not wrap the way a modulo would, and v goes negative above
+    // the party's eye line. Bias into positive space first.
+    const ui = (((u * S) | 0) + (S << 4)) & Mk;
+    const vi = (((v * S) | 0) + (S << 4)) & Mk;
     return t[vi * S + ui];
   }
 
@@ -304,7 +333,7 @@ const Art = (() => {
   return {
     TS, FONT, CH_W, CH_H,
     text, textShadow, textCentred, textWidth,
-    makeTexture, texFor, installBaked, groundTexel, wallTexel, slopeShade,
+    makeTexture, texFor, installBaked, installBakedTextures, groundTexel, wallTexel, slopeShade,
     skyBand, sunShade, SKY_KEYS,
     panel, button, gameFrame, bar, step,
     get tick() { return tick; },

@@ -296,7 +296,7 @@ const Engine = (() => {
               if (fog > t && skyBand) { buf[y * W + px] = skyBand[y - VIEW.y]; continue; }
               // v from the screen row back to world height, so texture does not swim with distance.
               const wh = eyeZ - (y - horizon) / invD;
-              const v = clamp((topH - wh) / span, 0, 0.999);
+              const v = (topH - wh) / STOREY;
               const tx = Art.wallTexel(mat, u, v, face);
               buf[y * W + px] = Core.shade(tx & 0xf0, (tx & 0x0f) + baseShade - (texel & 0x0f));
             }

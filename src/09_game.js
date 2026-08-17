@@ -1230,9 +1230,21 @@ const Game = (() => {
       try { newParty(defaultSpec()); } catch (e) { state.lastError = e.message; }
     }
     state.screen = 'title';
-    if (typeof Sprites !== 'undefined' && typeof window !== 'undefined' && window.__BAKED__) {
-      Sprites.installBaked(window.__BAKED__);
-      Sprites.prepareBaked().then((r) => { Sprites.BAKED.__ready = r; }).catch(() => {});
+    // Baked art replaces the procedural painters where it exists. Failures are RECORDED, never
+    // swallowed: a texture that silently fails to decode looks like an art problem three stages later.
+    if (typeof window !== 'undefined' && window.__BAKED__) {
+      const blob = window.__BAKED__;
+      if (typeof Art !== 'undefined' && Art.installBakedTextures) {
+        Art.installBakedTextures(blob)
+          .then((n) => { state.bakedTextures = n; })
+          .catch((e) => { state.lastError = 'texture bake: ' + e.message; });
+      }
+      if (typeof Sprites !== 'undefined' && blob.sprites) {
+        Sprites.installBaked(blob.sprites);
+        Sprites.prepareBaked()
+          .then((r) => { Sprites.BAKED.__ready = r; state.bakedSprites = Object.keys(r).length; })
+          .catch((e) => { state.lastError = 'sprite bake: ' + e.message; });
+      }
     }
   }
 
