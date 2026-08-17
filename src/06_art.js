@@ -64,6 +64,24 @@ const Art = (() => {
     w: ['.....', '.....', '#...#', '#...#', '#.#.#', '#.#.#', '.#.#.', '.....', '.....'],
     // 'n' lost its right leg at the baseline.
     n: ['.....', '.....', '####.', '#...#', '#...#', '#...#', '#...#', '.....', '.....'],
+    // The remaining glyphs a critic read back wrong at 1x: P without its bowl is an F, S without
+    // its spine is a 3, R and B collapse into each other, and 1 without a foot is a colon.
+    P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....', '.....', '.....'],
+    R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#', '.....', '.....'],
+    B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.', '.....', '.....'],
+    S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.', '.....', '.....'],
+    C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.', '.....', '.....'],
+    G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.', '.....', '.....'],
+    L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####', '.....', '.....'],
+    T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..', '.....', '.....'],
+    Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..', '.....', '.....'],
+    K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#', '.....', '.....'],
+    E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####', '.....', '.....'],
+    F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....', '.....', '.....'],
+    D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.', '.....', '.....'],
+    I: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '#####', '.....', '.....'],
+    1: ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.', '.....', '.....'],
+    4: ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.', '.....', '.....'],
   };
 
   const GLYPH_H = 9;
@@ -109,8 +127,25 @@ const Art = (() => {
     return (code - 32) * 5;
   }
 
+  // 1x TEXT IS ALWAYS SHADOWED, and that is not a style choice.
+  //
+  // The 800x480 framebuffer is presented at 650x390 on the target phone — a 0.8125 scale with
+  // `image-rendering: pixelated`, which is NEAREST. Nearest downsampling at that ratio throws away
+  // every fifth row and column, and a one-pixel stroke that lands on a discarded column is simply
+  // gone. An art critic dumped the result: "MAP" rendered as `YY F`, "SPELLS" as `3FELLS`, "PACK"
+  // as `P^CX`, "AMULET" as `FMULCT` — the A losing its crossbar, the P losing its bowl, the S
+  // becoming a 3. The glyphs were never the problem; the survival of a 1px stroke was.
+  //
+  // A hard shadow at (+1,+1) makes every stroke two pixels thick in both axes, so a dropped column
+  // leaves the other one standing. Drawn as a separate pass under the whole string, because per
+  // glyph it would print over the previous glyph's ink.
   function text(E, x, y, str, pi, scale) {
     const s = scale || 1;
+    if (s === 1) glyphPass(E, x + 1, y + 1, str, Core.idx(0, 1), 1);
+    return glyphPass(E, x, y, str, pi, s);
+  }
+
+  function glyphPass(E, x, y, str, pi, s) {
     let cx = x;
     for (let i = 0; i < str.length; i++) {
       const code = str.charCodeAt(i);
@@ -144,8 +179,9 @@ const Art = (() => {
 
   // Text with a 1px dark drop, which is what makes light type survive on a busy background.
   function textShadow(E, x, y, str, pi, scale) {
-    text(E, x + (scale || 1), y + (scale || 1), str, Core.idx(0, 1), scale);
-    return text(E, x, y, str, pi, scale);
+    const s = scale || 1;
+    glyphPass(E, x + s, y + s, str, Core.idx(0, 1), s);
+    return glyphPass(E, x, y, str, pi, s);
   }
 
   function textCentred(E, cx, y, str, pi, scale) {
@@ -522,23 +558,38 @@ const Art = (() => {
   // which a player described as "four brown squares in a diamond, each with a glyph so faint I had
   // to guess — I still don't know if < and > are turns or strafes".
   function arrowGlyph(E, cx, cy, dir, pi) {
-    // THE POINT GOES FIRST. The old construction started at its widest row and narrowed downward,
-    // so the FORWARD button carried a triangle pointing DOWN and the BACK button one pointing up.
-    // Two separate cold players had to move to find out which was which: "the top button of the
-    // MOVE pad has a triangle pointing down and moves you forward. I had to test both."
+    // THE POINT GOES FIRST, and a TURN is a curve.
+    //
+    // Forward and back are solid triangles pointing the way they move. Left and right are ARCS with
+    // an arrowhead — a rotation glyph, not a translation one. A straight horizontal arrow reads as
+    // strafe, and a cold player spent an entire fifteen-minute session convinced the game had no
+    // way to turn around: "I pressed left eight times and ended up in a different quarter of town
+    // still facing the same direction." Measured afterwards, eight taps rotate the party 189
+    // degrees and move it exactly nowhere. The button was never broken; the picture on it was, and
+    // a control a player cannot identify is as good as one that does not work.
     const R = 8;
-    for (let i = 0; i < R; i++) {
-      const half = i;                                  // 0 at the tip, widest at the tail
-      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
-      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
-      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2 + 1, pi);
-      else E.vline(cx + (R >> 1) - i, cy - half, half * 2 + 1, pi);
+    if (dir === 'up' || dir === 'down') {
+      for (let i = 0; i < R; i++) {
+        const half = i;
+        if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
+        else E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
+      }
+      return;
     }
-    // Turn arrows get a curved tail so they cannot be read as strafe. It must not cross the head,
-    // which is what left the stray diagonal spur a critic measured at the top corner.
-    if (dir === 'left' || dir === 'right') {
-      const s = dir === 'left' ? 1 : -1;
-      for (let i = 0; i < 6; i++) E.px(cx + s * (5 + i), cy - 3 - ((i * i) >> 3), pi);
+    // A three-quarter arc, opening toward the direction of rotation.
+    const sgn = dir === 'left' ? -1 : 1;
+    for (let a = -140; a <= 110; a += 4) {
+      const t = a * Math.PI / 180;
+      const ax = Math.round(Math.cos(t) * 7) * sgn, ay = Math.round(Math.sin(t) * 7);
+      E.px(cx + ax, cy + ay, pi);
+      E.px(cx + ax, cy + ay + 1, pi);
+      E.px(cx + ax + sgn, cy + ay, pi);
+    }
+    // Arrowhead at the open end, pointing around the arc.
+    const hx = cx + Math.round(Math.cos(-140 * Math.PI / 180) * 7) * sgn;
+    const hy = cy + Math.round(Math.sin(-140 * Math.PI / 180) * 7);
+    for (let i = 0; i < 5; i++) {
+      E.hline(hx - i * sgn - (sgn < 0 ? 0 : i), hy + i, i * 2 + 1, pi);
     }
   }
 

@@ -3256,6 +3256,24 @@ const Art = (() => {
     w: ['.....', '.....', '#...#', '#...#', '#.#.#', '#.#.#', '.#.#.', '.....', '.....'],
     // 'n' lost its right leg at the baseline.
     n: ['.....', '.....', '####.', '#...#', '#...#', '#...#', '#...#', '.....', '.....'],
+    // The remaining glyphs a critic read back wrong at 1x: P without its bowl is an F, S without
+    // its spine is a 3, R and B collapse into each other, and 1 without a foot is a colon.
+    P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....', '.....', '.....'],
+    R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#', '.....', '.....'],
+    B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.', '.....', '.....'],
+    S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.', '.....', '.....'],
+    C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.', '.....', '.....'],
+    G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.', '.....', '.....'],
+    L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####', '.....', '.....'],
+    T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..', '.....', '.....'],
+    Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..', '.....', '.....'],
+    K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#', '.....', '.....'],
+    E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####', '.....', '.....'],
+    F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....', '.....', '.....'],
+    D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.', '.....', '.....'],
+    I: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '#####', '.....', '.....'],
+    1: ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.', '.....', '.....'],
+    4: ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.', '.....', '.....'],
   };
 
   const GLYPH_H = 9;
@@ -3301,8 +3319,25 @@ const Art = (() => {
     return (code - 32) * 5;
   }
 
+  // 1x TEXT IS ALWAYS SHADOWED, and that is not a style choice.
+  //
+  // The 800x480 framebuffer is presented at 650x390 on the target phone — a 0.8125 scale with
+  // `image-rendering: pixelated`, which is NEAREST. Nearest downsampling at that ratio throws away
+  // every fifth row and column, and a one-pixel stroke that lands on a discarded column is simply
+  // gone. An art critic dumped the result: "MAP" rendered as `YY F`, "SPELLS" as `3FELLS`, "PACK"
+  // as `P^CX`, "AMULET" as `FMULCT` — the A losing its crossbar, the P losing its bowl, the S
+  // becoming a 3. The glyphs were never the problem; the survival of a 1px stroke was.
+  //
+  // A hard shadow at (+1,+1) makes every stroke two pixels thick in both axes, so a dropped column
+  // leaves the other one standing. Drawn as a separate pass under the whole string, because per
+  // glyph it would print over the previous glyph's ink.
   function text(E, x, y, str, pi, scale) {
     const s = scale || 1;
+    if (s === 1) glyphPass(E, x + 1, y + 1, str, Core.idx(0, 1), 1);
+    return glyphPass(E, x, y, str, pi, s);
+  }
+
+  function glyphPass(E, x, y, str, pi, s) {
     let cx = x;
     for (let i = 0; i < str.length; i++) {
       const code = str.charCodeAt(i);
@@ -3336,8 +3371,9 @@ const Art = (() => {
 
   // Text with a 1px dark drop, which is what makes light type survive on a busy background.
   function textShadow(E, x, y, str, pi, scale) {
-    text(E, x + (scale || 1), y + (scale || 1), str, Core.idx(0, 1), scale);
-    return text(E, x, y, str, pi, scale);
+    const s = scale || 1;
+    glyphPass(E, x + s, y + s, str, Core.idx(0, 1), s);
+    return glyphPass(E, x, y, str, pi, s);
   }
 
   function textCentred(E, cx, y, str, pi, scale) {
@@ -3714,23 +3750,38 @@ const Art = (() => {
   // which a player described as "four brown squares in a diamond, each with a glyph so faint I had
   // to guess — I still don't know if < and > are turns or strafes".
   function arrowGlyph(E, cx, cy, dir, pi) {
-    // THE POINT GOES FIRST. The old construction started at its widest row and narrowed downward,
-    // so the FORWARD button carried a triangle pointing DOWN and the BACK button one pointing up.
-    // Two separate cold players had to move to find out which was which: "the top button of the
-    // MOVE pad has a triangle pointing down and moves you forward. I had to test both."
+    // THE POINT GOES FIRST, and a TURN is a curve.
+    //
+    // Forward and back are solid triangles pointing the way they move. Left and right are ARCS with
+    // an arrowhead — a rotation glyph, not a translation one. A straight horizontal arrow reads as
+    // strafe, and a cold player spent an entire fifteen-minute session convinced the game had no
+    // way to turn around: "I pressed left eight times and ended up in a different quarter of town
+    // still facing the same direction." Measured afterwards, eight taps rotate the party 189
+    // degrees and move it exactly nowhere. The button was never broken; the picture on it was, and
+    // a control a player cannot identify is as good as one that does not work.
     const R = 8;
-    for (let i = 0; i < R; i++) {
-      const half = i;                                  // 0 at the tip, widest at the tail
-      if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
-      else if (dir === 'down') E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
-      else if (dir === 'left') E.vline(cx - (R >> 1) + i, cy - half, half * 2 + 1, pi);
-      else E.vline(cx + (R >> 1) - i, cy - half, half * 2 + 1, pi);
+    if (dir === 'up' || dir === 'down') {
+      for (let i = 0; i < R; i++) {
+        const half = i;
+        if (dir === 'up') E.hline(cx - half, cy - (R >> 1) + i, half * 2 + 1, pi);
+        else E.hline(cx - half, cy + (R >> 1) - i, half * 2 + 1, pi);
+      }
+      return;
     }
-    // Turn arrows get a curved tail so they cannot be read as strafe. It must not cross the head,
-    // which is what left the stray diagonal spur a critic measured at the top corner.
-    if (dir === 'left' || dir === 'right') {
-      const s = dir === 'left' ? 1 : -1;
-      for (let i = 0; i < 6; i++) E.px(cx + s * (5 + i), cy - 3 - ((i * i) >> 3), pi);
+    // A three-quarter arc, opening toward the direction of rotation.
+    const sgn = dir === 'left' ? -1 : 1;
+    for (let a = -140; a <= 110; a += 4) {
+      const t = a * Math.PI / 180;
+      const ax = Math.round(Math.cos(t) * 7) * sgn, ay = Math.round(Math.sin(t) * 7);
+      E.px(cx + ax, cy + ay, pi);
+      E.px(cx + ax, cy + ay + 1, pi);
+      E.px(cx + ax + sgn, cy + ay, pi);
+    }
+    // Arrowhead at the open end, pointing around the arc.
+    const hx = cx + Math.round(Math.cos(-140 * Math.PI / 180) * 7) * sgn;
+    const hy = cy + Math.round(Math.sin(-140 * Math.PI / 180) * 7);
+    for (let i = 0; i < 5; i++) {
+      E.hline(hx - i * sgn - (sgn < 0 ? 0 : i), hy + i, i * 2 + 1, pi);
     }
   }
 
@@ -4783,7 +4834,10 @@ const UI = (() => {
   }
 
   const HUD = { x: 0, y: 352, w: 800, h: 128 };
-  const PORTRAIT = { w: 72, h: 88, y: 358, pitch: 78, x0: 6 };
+  // Narrower portraits buy the width the command bar needs for labels a player can actually read.
+  // 1x text does not survive the 0.8125 nearest downscale to the phone — measured, not assumed —
+  // so every label the player must read is 2x now, and 2x labels need room.
+  const PORTRAIT = { w: 64, h: 94, y: 356, pitch: 70, x0: 6 };
 
   // ---------------------------------------------------------------- hud
   function drawHUD(g, interactive) {
@@ -4800,41 +4854,45 @@ const UI = (() => {
 
       Art.panel(En, x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, active ? 13 : 4, !active);
       const p = Sprites.portrait(ch.portrait, ch.cls, ch.sex);
-      En.clip(x, y, PORTRAIT.w, 56);
-      En.blitScaled(p, x, y, PORTRAIT.w, 62, dead ? -5 : 0);
+      En.clip(x, y, PORTRAIT.w, 46);
+      En.blitScaled(p, x, y, PORTRAIT.w, 52, dead ? -5 : 0);
       En.clipReset();
 
       // Name, then HP and SP bars. The bars are the only thing a player actually reads mid-fight,
       // so they get the width.
-      Art.text(En, x + 2, y + 58, ch.name.slice(0, 8), Core.idx(0, dead ? 6 : 14), 1);
+      Art.text(En, x + 2, y + 48, ch.name.slice(0, 5), Core.idx(0, dead ? 6 : 15), 2);
       // NUMBERS on the bars. A cold player spent fifteen minutes watching two coloured bars that
       // never moved and wrote: "I could not tell what my party is doing. To learn that Alder has
       // 31/31 HP I had to open a separate full-screen sheet." A bar shows a ratio; a player needs
       // the value, and the party bar is the only thing on screen during a fight.
       const hpMax = Math.max(1, Rules.maxHP(ch));
-      Art.bar(En, x + 2, y + 68, PORTRAIT.w - 4, 9, ch.hp / hpMax, 11);
-      Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 69, ch.hp + "/" + hpMax, Core.idx(0, 15), 1);
+      Art.bar(En, x + 2, y + 66, PORTRAIT.w - 4, 13, ch.hp / hpMax, 11);
+      Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 67, ch.hp + '/' + hpMax, Core.idx(0, 15), 2);
       const spMax = Rules.maxSP(ch);
       if (spMax > 0) {
-        Art.bar(En, x + 2, y + 79, PORTRAIT.w - 4, 9, ch.sp / spMax, 12);
-        Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 80, ch.sp + "/" + spMax, Core.idx(0, 15), 1);
+        Art.bar(En, x + 2, y + 81, PORTRAIT.w - 4, 13, ch.sp / spMax, 12);
+        Art.textCentredShadow(En, x + PORTRAIT.w / 2, y + 82, ch.sp + '/' + spMax, Core.idx(0, 15), 2);
       } else {
         // A flat plate where the SP bar would be, so the strip stays a grid rather than a ragged
         // edge. Level goes on it, and on the casters too — printing LV only for the one character
         // without spell points made a player assume "the others weren't levelled or weren't real".
-        En.rect(x + 2, y + 79, PORTRAIT.w - 4, 9, Core.idx(13, 3));
+        En.rect(x + 2, y + 81, PORTRAIT.w - 4, 13, Core.idx(13, 3));
       }
-      Art.text(En, x + PORTRAIT.w - 20, y + 58, 'L' + ch.level, Core.idx(13, 14), 1);
+      // The level sits on the portrait's own corner. Beside a five-character name at 2x it had
+      // nowhere to go and printed straight through it.
+      const lvs = String(ch.level);
+      En.rect(x + PORTRAIT.w - Art.textWidth(lvs, 2) - 5, y + 2, Art.textWidth(lvs, 2) + 4, 18, Core.idx(0, 2));
+      Art.text(En, x + PORTRAIT.w - Art.textWidth(lvs, 2) - 3, y + 3, lvs, Core.idx(13, 15), 2);
 
       const cond = Rules.worstCondition(ch);
-      if (cond) Art.text(En, x + 2, y + 46, cond.slice(0, 9).toUpperCase(), Core.idx(11, 12), 1);
+      if (cond) Art.text(En, x + 2, y + 28, cond.slice(0, 5).toUpperCase(), Core.idx(11, 13), 2);
 
       if (interactive) reg('pc', x - 2, y - 2, PORTRAIT.w + 4, PORTRAIT.h + 4, i);
     });
 
     // ---- message log
     const lx = PORTRAIT.x0 + 4 * PORTRAIT.pitch + 4;
-    const lw = En.W - 6 - lx - (50 * 4 + 15 + 14);   // leaves room for the command bar
+    const lw = En.W - 6 - lx - (62 * 4 + 12 + 12);   // leaves room for the command bar
     Art.panel(En, lx, HUD.y + 6, lw, 74, 4, true);
     // Word-wrap rather than hard-truncate. Every shot in round r3 showed "Your party arri".
     const perLine = Math.floor((lw - 10) / (Art.CH_W * 2));
@@ -4873,7 +4931,7 @@ const UI = (() => {
     Art.text(En, lx + 5, HUD.y + 86, g.party.gold + 'g', Core.idx(13, 13), 2);
     const hh = Core.Clock.hhmm();
     Art.text(En, lx + lw - 8 - Art.textWidth(hh, 2), HUD.y + 86, hh, Core.idx(9, 12), 2);
-    Art.text(En, lx + 5, HUD.y + 106, (g.map.town ? g.map.town.name + ', ' : '') + g.map.name, Core.idx(2, 12), 1);
+    Art.text(En, lx + 5, HUD.y + 104, (g.map.town ? g.map.town.name : g.map.name).slice(0, 18), Core.idx(2, 14), 2);
 
     // ---- buttons, two rows of three, each a comfortable finger target
     // Pictorial, not typographic. Six three-letter text labels in flat rectangles is the fastest
@@ -4884,17 +4942,17 @@ const UI = (() => {
     // a phone game gets fifteen minutes.
     // Three across, two down. Two columns of six left no room under the icon for its name, so the
     // labels printed over the pictograms. The 800px HUD has the width for a proper command bar.
-    const BW = 50, BH = 55, BX = En.W - (BW * 4 + 15) - 6;
-    const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'SPELLS'],
-      ['map', 'MAP'], ['journal', 'QUESTS'], ['rest', 'CAMP'], ['menu', 'MENU']];
+    const BW = 62, BH = 55, BX = En.W - (BW * 4 + 12) - 4;
+    const btns = [['sheet', 'PARTY'], ['inv', 'PACK'], ['book', 'MAGIC'],
+      ['map', 'MAP'], ['journal', 'QUEST'], ['rest', 'CAMP'], ['menu', 'MENU']];
     btns.forEach(([id, label], i) => {
-      const bx = BX + (i % 4) * (BW + 5);
+      const bx = BX + (i % 4) * (BW + 4);
       const by = HUD.y + 4 + Math.floor(i / 4) * (BH + 4);
       Art.button(En, bx, by, BW, BH, null, g.pressed === id, 2);
-      Art.hudIcon(En, id, bx + 9, by + 3, 2);
-      const lw3 = Art.textWidth(label, 1);
-      En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 2, by + BH - 14, lw3 + 4, 11, Core.idx(13, 3));
-      Art.textCentred(En, bx + BW / 2, by + BH - 13, label, Core.idx(0, 15), 1);
+      Art.hudIcon(En, id, bx + 19, by + 2, 2);
+      const lw3 = Art.textWidth(label, 2);
+      En.rect(Math.round(bx + BW / 2 - lw3 / 2) - 3, by + BH - 21, lw3 + 6, 19, Core.idx(13, 3));
+      Art.textCentred(En, bx + BW / 2, by + BH - 19, label, Core.idx(0, 15), 2);
       if (interactive) reg('btn', bx, by, BW, BH, id);
     });
   }
@@ -4920,10 +4978,16 @@ const UI = (() => {
     for (const [id, x, y, w, h, glyph] of moves) {
       const down = !!g.keys[id] || (g.keyLatch && g.keyLatch[id] > 0);
       Art.button(En, x, y, w, h, null, down, 2);
-      Art.arrowGlyph(En, x + w / 2, y + h / 2, glyph, Core.idx(13, down ? 15 : 13));
+      Art.arrowGlyph(En, x + w / 2, y + h / 2 - (glyph === 'left' || glyph === 'right' ? 3 : 0),
+        glyph, Core.idx(13, down ? 15 : 13));
+      // The turn buttons say TURN. Belt and braces after a player lost a whole session to believing
+      // they were strafe controls.
+      if (glyph === 'left' || glyph === 'right') {
+        Art.textCentred(En, x + w / 2, y + h - 11, 'TURN', Core.idx(13, down ? 15 : 11), 1);
+      }
       reg('move', x, y, w, h, id);
     }
-    Art.textCentred(En, L.x + L.w / 2, my - 13, 'MOVE', Core.idx(13, 10), 1);
+    Art.textCentred(En, L.x + L.w / 2, my - 21, 'MOVE', Core.idx(13, 12), 2);
 
     // ---- verbs, bottom of the right column
     // FIXED SLOTS. The verbs used to be stacked from the bottom up and re-laid-out whenever combat
@@ -4956,7 +5020,7 @@ const UI = (() => {
     const ty = slot(4);
     Art.button(En, vx, ty, bw, bh, g.turnBased ? 'REAL' : 'TURN', g.turnBased, 2);
     reg('turnbased', vx, ty, bw, bh, 1);
-    Art.textCentred(En, R.x + R.w / 2, ty - 13, 'ACT', Core.idx(13, 10), 1);
+    Art.textCentred(En, R.x + R.w / 2, ty - 21, 'ACT', Core.idx(13, 12), 2);
   }
 
 
@@ -4970,21 +5034,21 @@ const UI = (() => {
       const name = foe.name || 'Enemy';
       const w = Math.max(150, Art.textWidth(name, 2) + 24);
       const x = V.x + ((V.w - w) >> 1), y = V.y + 6;
-      Art.panel(En, x, y, w, 34, 13, true);
+      Art.panel(En, x, y, w, 40, 13, true);
       Art.textCentred(En, x + w / 2, y + 3, name, Core.idx(0, 15), 2);
-      Art.bar(En, x + 8, y + 22, w - 16, 8, foe.hp / Math.max(1, foe.maxHp), 11);
-      Art.textCentredShadow(En, x + w / 2, y + 22, foe.hp + '/' + foe.maxHp, Core.idx(0, 15), 1);
+      Art.bar(En, x + 8, y + 21, w - 16, 14, foe.hp / Math.max(1, foe.maxHp), 11);
+      Art.textCentredShadow(En, x + w / 2, y + 21, foe.hp + '/' + foe.maxHp, Core.idx(0, 15), 2);
     }
     if (!g.turnBased) return;
     // Turn banner: whose turn, which round, and who is still to act.
-    const bw2 = 200, bx = V.x + V.w - bw2 - 6, by = V.y + 6;
-    Art.panel(En, bx, by, bw2, 40, 13, true);
+    const bw2 = 210, bx = V.x + V.w - bw2 - 6, by = V.y + 6;
+    Art.panel(En, bx, by, bw2, 46, 13, true);
     const who = g.party.members[g.active];
-    Art.text(En, bx + 8, by + 3, 'ROUND ' + (g.tbRound || 1), Core.idx(13, 13), 1);
-    Art.text(En, bx + 8, by + 15, who ? who.name.toUpperCase() + "'S TURN" : '', Core.idx(0, 15), 2);
+    Art.text(En, bx + 8, by + 2, 'ROUND ' + (g.tbRound || 1), Core.idx(13, 14), 2);
+    Art.text(En, bx + 8, by + 22, who ? who.name.toUpperCase() : '', Core.idx(0, 15), 2);
     g.party.members.forEach((c, i) => {
       const px2 = bx + bw2 - 12 - (3 - i) * 12;
-      En.rect(px2, by + 6, 8, 8, Core.idx(g.acted && g.acted[i] ? 0 : 6, g.acted && g.acted[i] ? 5 : 12));
+      En.rect(px2, by + 5, 9, 9, Core.idx(g.acted && g.acted[i] ? 0 : 6, g.acted && g.acted[i] ? 5 : 12));
     });
   }
 
@@ -5373,15 +5437,23 @@ const UI = (() => {
     // "25% content and 75% empty brown box" — three reviews, three ways of saying the same thing,
     // and all three named it the largest gap to MM6. MM6's own shops are painted 2D interiors with
     // a list of goods over them, so this is the faithful answer rather than a substitute for one.
-    Art.shopInterior(En, f.x + 8, f.inner - 34, f.w - 16, f.h - 50, kind);
+    // BELOW the title rule, and inside the frame. Painting from f.inner-34 put the room straight
+    // over the shop's own name and its close button: a player reported "a gold rule where a shop
+    // name should be and no name", and had to guess where the X was.
+    const roomY = f.y + 40, roomH = f.h - 48;
+    Art.shopInterior(En, f.x + 8, roomY, f.w - 16, roomH, kind);
     // The room stays VISIBLE. The first attempt scrimmed the whole panel and put the stock list
     // across it, which hid the painting completely and just produced a darker brown box. The goods
     // live in their own column on the right; the left third is the shop.
     const listX = f.x + Math.round(f.w * 0.34);
-    En.rect(listX, f.inner - 34, f.x + f.w - 8 - listX, f.h - 50, Core.idx(0, 2));
-    for (let y = f.inner - 34; y < f.y + f.h - 16; y += 2) En.hline(listX, y, f.x + f.w - 8 - listX, Core.idx(0, 1));
-    En.vline(listX, f.inner - 34, f.h - 50, Core.idx(13, 9));
-    En.hline(f.x + 14, f.y + 34, f.w - 28, Core.idx(13, 9));
+    En.rect(listX, roomY, f.x + f.w - 8 - listX, roomH, Core.idx(0, 2));
+    for (let y = roomY; y < roomY + roomH; y += 2) En.hline(listX, y, f.x + f.w - 8 - listX, Core.idx(0, 1));
+    En.vline(listX, roomY, roomH, Core.idx(13, 9));
+    // Redraw the title and the close button ON TOP of the room, so the room can never hide them.
+    Art.panel(En, f.x + 6, f.y + 6, f.w - 12, 34, 13, false);
+    Art.textCentred(En, f.x + f.w / 2, f.y + 12, SHOP_TITLE[kind] || kind.toUpperCase(), Core.idx(13, 15), 2);
+    Art.button(En, f.x + f.w - 52, f.y + 8, 44, 26, 'X', false, 2);
+    reg('close', f.x + f.w - 52, f.y + 8, 44, 26, 1);
     pcSelector(g, f.x + 20, f.y + 44);
     const ch = g.party.members[g.active];
     const stock = g.shopStock || [];
@@ -5398,29 +5470,31 @@ const UI = (() => {
     if (kind === 'temple') {
       const cost = g.party.members.reduce((a, c) => a + Rules.healCost(c), 0);
       const ty = f.inner + 46;
-      Art.text(En, f.x + 24, ty, 'Heal and cure the whole party', Core.idx(0, 13), 2);
+      En.rect(listX + 6, ty - 8, f.x + f.w - 20 - listX, 150, Core.idx(0, 3));
+      Art.text(En, listX + 14, ty, 'Heal and cure the party', Core.idx(0, 14), 2);
       if (cost <= 0) {
         // "Cost: 0 gold" over a "PAY 0" button is a strange thing to show a player who is unhurt.
-        Art.text(En, f.x + 24, ty + 26, 'Nobody here is hurt. Come back wounded.', Core.idx(6, 13), 2);
+        Art.text(En, listX + 14, ty + 26, 'Nobody here is hurt.', Core.idx(6, 14), 2);
         return;
       }
-      Art.text(En, f.x + 24, ty + 26, 'Cost: ' + cost + ' gold', Core.idx(13, 13), 2);
-      Art.button(En, f.x + 24, ty + 60, 220, 46, 'PAY ' + cost, false, 2);
-      reg('templeheal', f.x + 24, ty + 60, 220, 46, cost);
+      Art.text(En, listX + 14, ty + 26, 'Cost: ' + cost + ' gold', Core.idx(13, 14), 2);
+      Art.button(En, listX + 14, ty + 60, 220, 46, 'PAY ' + cost, false, 2);
+      reg('templeheal', listX + 14, ty + 60, 220, 46, cost);
       return;
     }
     if (kind === 'tavern') {
       // Everything starts BELOW the tab row. "Rest the night 10 gold" was drawn straight through
       // the ALDER/BREE/CASS/DORN tabs, letters on top of letters.
       let ty = f.inner + 46;
-      Art.text(En, f.x + 24, ty, 'Rest the night — 10 gold', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, ty + 26, 220, 46, 'SLEEP', false, 2);
-      reg('tavernrest', f.x + 24, ty + 26, 220, 46, 10);
+      En.rect(listX + 6, ty - 8, f.x + f.w - 20 - listX, 210, Core.idx(0, 3));
+      Art.text(En, listX + 14, ty, 'Rest the night — 10 gold', Core.idx(0, 14), 2);
+      Art.button(En, listX + 14, ty + 26, 220, 46, 'SLEEP', false, 2);
+      reg('tavernrest', listX + 14, ty + 26, 220, 46, 10);
       ty += 96;
-      Art.text(En, f.x + 24, ty, 'Buy rations — 12 gold each', Core.idx(0, 13), 2);
-      Art.button(En, f.x + 24, ty + 26, 220, 46, 'BUY FOOD', false, 2);
-      reg('buyfood', f.x + 24, ty + 26, 220, 46, 12);
-      Art.text(En, f.x + 24, ty + 84, 'Rations in the packs: ' + g.party.food, Core.idx(2, 13), 2);
+      Art.text(En, listX + 14, ty, 'Buy rations — 12 gold each', Core.idx(0, 14), 2);
+      Art.button(En, listX + 14, ty + 26, 220, 46, 'BUY FOOD', false, 2);
+      reg('buyfood', listX + 14, ty + 26, 220, 46, 12);
+      Art.text(En, listX + 14, ty + 84, 'Rations: ' + g.party.food, Core.idx(2, 14), 2);
       return;
     }
     // A GUILD teaches magic; a TRAINER teaches arms. They used to render the identical body — the
@@ -5639,7 +5713,7 @@ const UI = (() => {
 
   function creation(g) {
     const En = E();
-    const f = screenFrame('CREATE YOUR PARTY', 620, 452);
+    const f = screenFrame('CREATE YOUR PARTY', 660, 468);
     const slot = g.createSlot;
     const spec = g.createSpec[slot];
 
@@ -5669,42 +5743,60 @@ const UI = (() => {
     En.blitScaled(pv, f.x + 330, ny - 4, 36, 40, 0);
     Art.button(En, f.x + 372, ny, 34, 30, '>', false, 2); reg('cport', f.x + 372, ny, 34, 30, 1);
 
-    let y = f.inner + 64;
+    let y = f.y + 104;
     Art.text(En, f.x + 16, y, 'CLASS', Core.idx(13, 13), 2);
     Rules.CLASS_IDS.forEach((cid, i) => {
-      const x = f.x + 16 + (i % 3) * 130, yy = y + 22 + Math.floor(i / 3) * 40;
-      Art.button(En, x, yy, 124, 34, Rules.CLASSES[cid].name.toUpperCase(), spec.cls === cid, 2);
-      reg('cclass', x, yy, 124, 34, cid);
+      const x = f.x + 16 + (i % 3) * 138, yy = f.y + 124 + Math.floor(i / 3) * 38;
+      Art.button(En, x, yy, 132, 34, Rules.CLASSES[cid].name.toUpperCase(), spec.cls === cid, 2);
+      reg('cclass', x, yy, 132, 34, cid);
     });
 
     y += 106;
-    // Word-wrap the blurb. Slicing at a fixed character count broke it mid-word, and it is the
-    // first prose a new player reads.
+    // ONE ANCHOR, laid out from the bottom up. The stat grid, the points line, the blurb and the
+    // BEGIN button were each positioned from their own running offset, so clamping the grid to keep
+    // it clear of BEGIN drove it up into the points line, which was already sitting on the blurb.
+    // A player aiming at Speed's "+" hit BEGIN and started the game with a party they had not
+    // finished making, thirty seconds in, with no way to undo it.
+    // The budget is explicit and top-down, because every implicit running offset in this screen has
+    // collided with something at least once: the blurb with the class buttons, the points line with
+    // the stat grid, the stat grid with BEGIN.
+    // EVERY row is a fixed offset from the panel's own top. Deriving them from a running `y` is
+    // what let the blurb land on the class buttons, the points line on the stat grid, and the stat
+    // grid under BEGIN — three separate collisions, one of which started the game for a player who
+    // was aiming at Speed's "+".
+    //   title   f.y +   6 ..  40      class buttons f.y + 124 .. 196
+    //   tabs    f.y +  34 ..  68      blurb         f.y + 204 .. 240
+    //   name    f.y +  68 ..  98      points        f.y + 246 .. 264
+    //   CLASS   f.y + 104             stats         f.y + 272 .. 400
+    //                                 BEGIN         f.y + 410 .. 452   (panel is 468 tall)
+    const blurbTop = f.y + 204;
+    const pointsY = f.y + 246;
+    const gridTop = f.y + 272;
+
     {
+      // Three lines, always, whatever the class says. A blurb that changes height moves everything
+      // below it under the player's finger.
       const words = Rules.CLASSES[spec.cls].blurb.split(' ');
-      let line = '', ly = y;
+      const lines = [];
+      let line = '';
       for (const w of words) {
-        if (line && (line + ' ' + w).length > 44) { Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2); ly += 18; line = w; }
+        if (line && (line + ' ' + w).length > 58) { lines.push(line); line = w; }
         else line = line ? line + ' ' + w : w;
       }
-      if (line) Art.text(En, f.x + 16, ly, line, Core.idx(2, 15), 2);
-      // A FIXED block height. A three-line blurb followed by a two-line one shifted the whole stat
-      // grid up 14 pixels, so a tap aimed at "Might +" landed on "Personality +". Nothing may move
-      // under a finger that is already reaching for it.
-      y += 3 * 18;
+      if (line) lines.push(line);
+      lines.slice(0, 2).forEach((l, i) => Art.text(En, f.x + 16, blurbTop + i * 18, l, Core.idx(2, 15), 2));
     }
 
-    // Point buy.
-    y += 26;
     const spent = Rules.creationCost(spec.base);
-    // "POINTS 32 / 50" is ambiguous on sight — spent, or remaining? A player had to tap + twice
-    // and watch the number move to find out. Say the number that decides what they do next.
+    // "POINTS 32 / 50" is ambiguous on sight — spent, or remaining? A player had to tap + twice and
+    // watch the number move to find out. Say the number that decides what they do next.
     const left = Rules.CREATE_POINTS - spent;
-    Art.text(En, f.x + 16, y, left + ' POINTS LEFT', Core.idx(left < 0 ? 11 : left === 0 ? 13 : 6, 14), 2);
-    Art.text(En, f.x + 200, y + 4, '(' + spent + ' of ' + Rules.CREATE_POINTS + ' spent)', Core.idx(0, 11), 1);
-    y += 24;
+    Art.text(En, f.x + 16, pointsY, left + ' POINTS LEFT',
+      Core.idx(left < 0 ? 11 : left === 0 ? 13 : 6, 14), 2);
+    Art.text(En, f.x + 260, pointsY + 4, '(' + spent + ' of ' + Rules.CREATE_POINTS + ')', Core.idx(0, 12), 1);
+    y = gridTop;
     Rules.STATS.forEach((s, i) => {
-      const cx = f.x + 16 + (i % 2) * 300, cy = y + Math.floor(i / 2) * 34;
+      const cx = f.x + 16 + (i % 2) * 320, cy = y + Math.floor(i / 2) * 32;
       Art.text(En, cx, cy + 8, Rules.STAT_NAME[s].slice(0, 11), Core.idx(0, 12), 2);
       Art.button(En, cx + 148, cy, 34, 30, '-', false, 2);
       reg('statdn', cx + 148, cy, 34, 30, s);
@@ -5714,9 +5806,9 @@ const UI = (() => {
     });
 
     const errs = Rules.validateCreation({ members: g.createSpec });
-    Art.button(En, f.x + f.w - 200, f.y + f.h - 56, 180, 44, errs.length ? 'FIX ERRORS' : 'BEGIN', false, 2);
-    if (!errs.length) reg('startgame', f.x + f.w - 200, f.y + f.h - 56, 180, 44, 1);
-    if (errs.length) Art.text(En, f.x + 16, f.y + f.h - 44, errs[0].slice(0, 52), Core.idx(11, 12), 1);
+    Art.button(En, f.x + f.w - 200, f.y + 410, 180, 42, errs.length ? 'FIX ERRORS' : 'BEGIN', false, 2);
+    if (!errs.length) reg('startgame', f.x + f.w - 200, f.y + 410, 180, 42, 1);
+    if (errs.length) Art.text(En, f.x + 16, f.y + 420, errs[0].slice(0, 40), Core.idx(11, 13), 2);
   }
 
   // ---------------------------------------------------------------- dispatch
