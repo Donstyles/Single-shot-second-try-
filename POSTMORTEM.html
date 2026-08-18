@@ -1,0 +1,839 @@
+<title>Thornmarch Autopsy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ------------------------------------------------------------------ tokens
+     Light is the base. The ink is #0D0D0E because that is the game's own shadow
+     terminus -- the near-black every one of its sixteen colour ramps pulled
+     toward. The neutrals carry its blue bias. Amber is the project's own gold
+     and appears ONLY where the project speaks in its own words. */
+  :root {
+    --ground:  #E9EAEE;
+    --surface: #F5F6F8;
+    --sunken:  #DFE1E7;
+    --ink:     #0D0D0E;
+    --muted:   #596070;
+    --faint:   #7C8393;
+    --rule:    #C9CCD4;
+    --rule-hi: #A9AEBB;
+    --amber:   #8A6110;
+    --amber-bg:#F0E7D4;
+    --fail:    #96271C;
+    --fail-bg: #F6E2DF;
+
+    --c-surface: #1D74BD;   /* validated categorical set, light mode */
+    --c-sprite:  #BE7B14;
+    --c-decor:   #8A4A95;
+
+    --shadow: 0 1px 0 rgba(13,13,14,.06), 0 2px 10px rgba(13,13,14,.05);
+
+    --measure: 68ch;
+    --step--1: clamp(.80rem, .78rem + .1vw, .86rem);
+    --step-0:  clamp(1.02rem, .99rem + .16vw, 1.13rem);
+    --step-1:  clamp(1.22rem, 1.15rem + .34vw, 1.42rem);
+    --step-2:  clamp(1.5rem, 1.35rem + .72vw, 2.05rem);
+    --step-3:  clamp(2.05rem, 1.7rem + 1.7vw, 3.3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #111317;
+      --surface: #17191D;
+      --sunken:  #1E2127;
+      --ink:     #E7E9ED;
+      --muted:   #98A0AF;
+      --faint:   #767E8D;
+      --rule:    #2C3038;
+      --rule-hi: #3D434E;
+      --amber:   #D6A24A;
+      --amber-bg:#241D10;
+      --fail:    #E58374;
+      --fail-bg: #2A1614;
+
+      --c-surface: #3A87CB;  /* validated categorical set, dark mode */
+      --c-sprite:  #B37F22;
+      --c-decor:   #9B5FA8;
+
+      --shadow: 0 1px 0 rgba(0,0,0,.4), 0 2px 12px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #111317;
+    --surface: #17191D;
+    --sunken:  #1E2127;
+    --ink:     #E7E9ED;
+    --muted:   #98A0AF;
+    --faint:   #767E8D;
+    --rule:    #2C3038;
+    --rule-hi: #3D434E;
+    --amber:   #D6A24A;
+    --amber-bg:#241D10;
+    --fail:    #E58374;
+    --fail-bg: #2A1614;
+
+    --c-surface: #3A87CB;
+    --c-sprite:  #B37F22;
+    --c-decor:   #9B5FA8;
+
+    --shadow: 0 1px 0 rgba(0,0,0,.4), 0 2px 12px rgba(0,0,0,.35);
+  }
+
+  /* ------------------------------------------------------------------ base */
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: Newsreader, Georgia, "Times New Roman", serif;
+    font-size: var(--step-0);
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: var(--measure); margin: 0 auto; }
+  .wide { max-width: 62rem; margin-inline: auto; }
+
+  h1, h2, h3, .mono, .eyebrow, .chip, .fig, th { font-family: Archivo, "Helvetica Neue", Arial, sans-serif; }
+  .mono, .eyebrow, .chip, .num, code, .verdict, .plate-label, .cause-id {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  h1 {
+    font-size: var(--step-3);
+    line-height: 1.03;
+    letter-spacing: -.026em;
+    font-weight: 700;
+    margin: 0 0 .6rem;
+    text-wrap: balance;
+  }
+  h2 {
+    font-size: var(--step-2);
+    line-height: 1.14;
+    letter-spacing: -.018em;
+    font-weight: 600;
+    margin: 0 0 .5rem;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: var(--step-1);
+    line-height: 1.22;
+    letter-spacing: -.012em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+  p { margin: 0; }
+  a { color: var(--ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  strong { font-weight: 500; color: var(--ink); }
+  em { font-style: italic; }
+
+  .eyebrow {
+    font-size: .69rem;
+    font-weight: 500;
+    letter-spacing: .17em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* Sections are flex columns with gap, so no margin ever collapses or doubles. */
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+  .stack   { display: flex; flex-direction: column; gap: 1.1rem; }
+  .stack-s { display: flex; flex-direction: column; gap: .55rem; }
+  .rule { height: 1px; background: var(--rule); border: 0; margin: 0; }
+
+  /* ------------------------------------------------------------- masthead */
+  header {
+    border-bottom: 2px solid var(--ink);
+    padding: 4.5rem 0 1.6rem;
+    display: flex; flex-direction: column; gap: 1.5rem;
+  }
+  .lede {
+    font-size: var(--step-1);
+    line-height: 1.45;
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+
+  /* The instrument plate: the failing verdict, printed the way a rig prints it. */
+  .verdict-plate {
+    background: var(--surface);
+    border: 1px solid var(--rule-hi);
+    border-left: 3px solid var(--fail);
+    padding: 1.15rem 1.3rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: .35rem 1.6rem;
+    align-items: baseline;
+    box-shadow: var(--shadow);
+  }
+  .verdict-plate .big {
+    font-size: clamp(2.2rem, 1.6rem + 2.6vw, 3.4rem);
+    font-weight: 600;
+    letter-spacing: -.03em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    grid-row: span 2;
+    color: var(--fail);
+  }
+  .verdict-plate .verdict {
+    font-size: .82rem; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--fail);
+  }
+  .verdict-plate .gloss { font-size: var(--step--1); color: var(--muted); line-height: 1.5; }
+
+  /* ------------------------------------------------------------ key facts */
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+  .fact { background: var(--surface); padding: .85rem .95rem; display: flex; flex-direction: column; gap: .18rem; }
+  .fact .n {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 1.32rem; font-weight: 500; letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .fact .k { font-size: .7rem; letter-spacing: .11em; text-transform: uppercase; color: var(--faint);
+             font-family: Archivo, sans-serif; font-weight: 500; }
+
+  /* --------------------------------------------------------------- quotes */
+  blockquote {
+    margin: 0;
+    background: var(--amber-bg);
+    border-left: 3px solid var(--amber);
+    padding: 1rem 1.2rem;
+    font-size: var(--step--1);
+    line-height: 1.6;
+  }
+  blockquote .plate-label {
+    display: block;
+    font-size: .66rem; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--amber); margin-bottom: .5rem; font-weight: 500;
+  }
+  blockquote p + p { margin-top: .7rem; }
+
+  code {
+    font-size: .87em;
+    background: var(--sunken);
+    padding: .1em .35em;
+    border-radius: 2px;
+  }
+
+  /* --------------------------------------------------------------- charts */
+  figure { margin: 0; display: flex; flex-direction: column; gap: .9rem; }
+  figcaption { font-size: var(--step--1); color: var(--muted); line-height: 1.55; }
+
+  .chart { display: flex; flex-direction: column; gap: 1.15rem; }
+  .bar-row { display: flex; flex-direction: column; gap: .38rem; }
+  .bar-label {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+    font-family: Archivo, sans-serif; font-size: .78rem; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase;
+  }
+  .bar-label .sub { font-family: "IBM Plex Mono", monospace; font-weight: 400;
+                    letter-spacing: 0; text-transform: none; color: var(--faint); font-size: .74rem; }
+  /* 2px surface gaps between stacked segments; 3px rounded data-ends. The values live in text
+     tokens beneath the bar rather than inside the fills -- white on the amber step would sit
+     under 4.5:1, and a value is text, so it wears text colour. */
+  .bar { display: flex; height: 2.4rem; gap: 2px; }
+  .seg { overflow: hidden; }
+  .seg:first-child { border-radius: 3px 0 0 3px; }
+  .seg:last-child  { border-radius: 0 3px 3px 0; }
+  .seg.s-surface { background: var(--c-surface); }
+  .seg.s-sprite  { background: var(--c-sprite); }
+  .seg.s-decor   { background: var(--c-decor); }
+
+  .bar-values { display: flex; gap: 2px; }
+  .bv {
+    display: flex; flex-direction: column; gap: .05rem; min-width: 0;
+    font-size: .72rem; line-height: 1.35; color: var(--muted);
+  }
+  .bv .v {
+    font-family: "IBM Plex Mono", monospace; font-weight: 500;
+    font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  .bv .t { font-family: Archivo, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Segments too narrow to carry their own label hand it to a shared note. */
+  .bv.narrow .t { display: none; }
+  .bar-note {
+    font-family: "IBM Plex Mono", monospace; font-size: .72rem;
+    font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: .35rem 1.3rem; font-size: var(--step--1); }
+  .legend span { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); }
+  .swatch { width: .8rem; height: .8rem; border-radius: 2px; flex: none; }
+
+  /* Chart notes hang at the chart's own left edge, not centred in the wide block. */
+  .note { max-width: 52ch; }
+  details { font-size: var(--step--1); }
+  details summary {
+    cursor: pointer; color: var(--muted); font-family: Archivo, sans-serif;
+    font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; font-weight: 500;
+  }
+  details summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+  .tablewrap { overflow-x: auto; margin-top: .8rem; }
+  table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+  th, td { text-align: left; padding: .42rem .7rem; border-bottom: 1px solid var(--rule); }
+  th { font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  td.n, th.n { text-align: right; font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------------------------------------------------------- cause cards */
+  .causes { display: flex; flex-direction: column; gap: 1.4rem; }
+  .cause {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 2px solid var(--ink);
+    padding: 1.3rem 1.35rem 1.45rem;
+    display: flex; flex-direction: column; gap: .85rem;
+    box-shadow: var(--shadow);
+  }
+  .cause-head { display: flex; flex-direction: column; gap: .5rem; }
+  .cause-id { font-size: .68rem; letter-spacing: .15em; text-transform: uppercase; color: var(--faint); }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .chip {
+    font-size: .65rem; letter-spacing: .09em; text-transform: uppercase; font-weight: 600;
+    padding: .22rem .5rem; border: 1px solid var(--rule-hi); color: var(--muted);
+    border-radius: 2px; white-space: nowrap;
+  }
+  .chip.lev-high { border-color: var(--fail); color: var(--fail); background: var(--fail-bg); }
+  .chip.eng-no   { border-color: var(--rule-hi); color: var(--muted); }
+  .chip.eng-yes  { border-color: var(--amber); color: var(--amber); background: var(--amber-bg); }
+  .cause p { font-size: .97rem; }
+
+  /* ------------------------------------------------------------ checklist */
+  .rules { display: flex; flex-direction: column; gap: 1px; background: var(--rule);
+           border: 1px solid var(--rule); }
+  .rules li { background: var(--surface); padding: 1rem 1.15rem; display: flex; gap: 1rem; align-items: flex-start; }
+  ol.rules { list-style: none; margin: 0; padding: 0; counter-reset: r; }
+  ol.rules li::before {
+    counter-increment: r; content: counter(r, decimal-leading-zero);
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem; color: var(--faint);
+    padding-top: .18rem; flex: none;
+  }
+  .rules .rule-body { display: flex; flex-direction: column; gap: .25rem; }
+  .rules .rule-t { font-family: Archivo, sans-serif; font-weight: 600; font-size: .98rem; letter-spacing: -.005em; }
+  .rules .rule-d { font-size: .92rem; color: var(--muted); line-height: 1.55; }
+
+  .kept { display: flex; flex-direction: column; gap: .8rem; margin: 0; padding: 0; list-style: none; }
+  .kept li { display: flex; gap: .8rem; font-size: .97rem; }
+  .kept .tick { color: var(--amber); font-family: "IBM Plex Mono", monospace; flex: none; font-size: .9rem; padding-top: .12rem; }
+
+  .callout {
+    border: 1px solid var(--rule-hi);
+    border-left: 3px solid var(--ink);
+    background: var(--sunken);
+    padding: 1.15rem 1.3rem;
+    display: flex; flex-direction: column; gap: .6rem;
+  }
+
+  footer { color: var(--faint); font-size: var(--step--1); line-height: 1.6; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cause, .verdict-plate { transition: none; }
+  }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+</style>
+
+<header class="wrap">
+  <div class="stack-s">
+    <p class="eyebrow">Postmortem &middot; 28 hours &middot; 66 commits &middot; project closed</p>
+    <h1>What went wrong building Thornmarch</h1>
+  </div>
+  <p class="lede">A single-file Might &amp; Magic&nbsp;VI-class RPG, built from nothing in a day
+    and a night. The rules engine works. The game is unlookable. This is the account of
+    how twenty rounds of review failed to notice that, written from the project's own
+    records rather than from memory.</p>
+
+  <div class="verdict-plate">
+    <span class="big">38/38</span>
+    <span class="verdict">Verdict: fail &middot; round 14 of 20</span>
+    <span class="gloss">Three judges with no project context were shown 22 of our frames shuffled
+      with 16 real MM6 screenshots and asked which were which. They got every card right, unanimously,
+      across 114 judgements. The ship condition was 50%. The gate was never run again.</span>
+  </div>
+</header>
+
+<main class="wrap stack" style="gap:3.4rem; padding-top:3rem;">
+
+  <!-- ============================================================ what existed -->
+  <section>
+    <p class="eyebrow">The body</p>
+    <h2>What was actually built</h2>
+    <p>None of this is in dispute, and it is worth stating plainly before the criticism starts,
+      because the failure is not that nothing got made.</p>
+
+    <div class="facts" role="list">
+      <div class="fact" role="listitem"><span class="n">10,475</span><span class="k">lines, src</span></div>
+      <div class="fact" role="listitem"><span class="n">22</span><span class="k">maps</span></div>
+      <div class="fact" role="listitem"><span class="n">99</span><span class="k">spells</span></div>
+      <div class="fact" role="listitem"><span class="n">513</span><span class="k">checks green</span></div>
+      <div class="fact" role="listitem"><span class="n">932</span><span class="k">credits spent</span></div>
+      <div class="fact" role="listitem"><span class="n">936 KB</span><span class="k">one html file</span></div>
+    </div>
+
+    <p>Nine connected regions and thirteen dungeons. A campaign that can be completed. Save and load
+      that round-trips byte-identically. Deterministic seeded generation with no <code>Math.random</code>
+      anywhere in the source. A test that plays the game to the end and fails if the ending is
+      unreachable &mdash; which caught three genuine run-enders, including a quest turn-in that deleted
+      the item the campaign needed to finish.</p>
+
+    <p>The parts a player never sees are in good shape. Everything they do see is not.</p>
+  </section>
+
+  <!-- ============================================================ the gate -->
+  <section>
+    <p class="eyebrow">Cause of death</p>
+    <h2>The measurement was right, on time, and ignored</h2>
+
+    <p>Eleven rounds of cold review panels had produced scores &mdash; 2/10, 4/10, 5/10 &mdash; that
+      trended vaguely upward and meant nothing, because a panel scoring 4 and a panel scoring 5 cannot
+      tell you how far from the goal you are. So a discriminator was built: our screenshots shuffled
+      with real ones, opaque filenames, judges given no context and one question. It is the only
+      measurement in the project that could not be gamed by the party being measured.</p>
+
+    <p>It ran on round 14. It returned 38 out of 38, unanimous, and the project's own write-up of
+      it was clear-eyed:</p>
+
+    <blockquote>
+      <span class="plate-label">critique/r14_discriminator.md</span>
+      <p>&ldquo;This is the honest number and it is the most useful one this project has produced.
+        Eleven rounds of cold panels had it trending &lsquo;up&rsquo;; a panel scoring 4/10 and a
+        panel scoring 5/10 cannot tell you how far away you are. This can. <strong>50% is the ship
+        condition. We are at 100%.</strong>&rdquo;</p>
+      <p>&ldquo;The discriminator is now the ship gate and the panels are advisory. &hellip; Next round
+        runs after the mip/filtering work, which is Judge A's finding and the largest remaining
+        rendering gap.&rdquo;</p>
+    </blockquote>
+
+    <p>The judges named three root causes, and noted that none of the three had been mentioned once in
+      eleven previous rounds of critique. What happened to them over the following six rounds is the
+      whole autopsy in miniature:</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Named root cause</th><th>Cost to fix</th><th>Status six rounds later</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Typography &mdash; fixed-width cells, no kerning, no stroke modulation</td>
+              <td>One self-contained module</td><td><strong>Rebuilt.</strong> A real face in a day.</td></tr>
+          <tr><td>No mip chain and no texture filtering at any distance</td>
+              <td>Renderer surgery</td><td style="color:var(--fail)">Still open. Never started.</td></tr>
+          <tr><td>Everything on screen made by one process at one fidelity</td>
+              <td>Art pipeline rework</td><td style="color:var(--fail)">Still open. Never started.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The gate failed, named its causes, and declared itself blocking. Then the one cause that was a
+      tidy isolated module got fixed, the two that required real surgery were accepted and deferred,
+      and the gate was never run again. Nothing was suppressed &mdash; across all the review rounds,
+      140 findings are marked fixed, 47 accepted, and only 5 rejected. The queue simply sorted itself
+      by cost instead of by leverage, silently, and no one noticed because the sort was never written
+      down.</p>
+
+    <div class="callout">
+      <p><strong>A gate that can be deferred is not a gate.</strong> It is a suggestion with an
+        impressive name. If a failing verdict does not mechanically stop other work &mdash; a red build,
+        a refusal to merge &mdash; then under time pressure it will lose every time to work that is
+        cheaper and more visible.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ the chart -->
+  <section class="wide stack">
+    <div class="wrap stack-s">
+      <p class="eyebrow">Contributing cause</p>
+      <h2>Seventy-eight percent of the budget bought five percent of the screen</h2>
+      <p>The art budget was 1,000 credits. 932 were spent. Where they went was decided by which art
+        problem was interesting, not by which surface the player looks at.</p>
+    </div>
+
+    <figure>
+      <div class="chart">
+        <div class="bar-row">
+          <div class="bar-label"><span>Where the credits went</span><span class="sub">932 credits</span></div>
+          <div class="bar" role="img" aria-label="Credits: surface textures 22.2 percent, creature sprites 77.8 percent, procedural decor none.">
+            <div class="seg s-surface" style="flex:0 0 22.2%" title="Surface textures — 207 credits (22.2%)"></div>
+            <div class="seg s-sprite"  style="flex:0 0 77.8%" title="Creature sprites — 725 credits (77.8%)"></div>
+          </div>
+          <div class="bar-values" aria-hidden="true">
+            <div class="bv" style="flex:0 0 22.2%"><span class="v">22.2%</span><span class="t">Surfaces</span></div>
+            <div class="bv" style="flex:0 0 77.8%"><span class="v">77.8%</span><span class="t">Creature sprites</span></div>
+          </div>
+        </div>
+
+        <div class="bar-row">
+          <div class="bar-label"><span>Where the pixels are</span><span class="sub">66 random frames, measured</span></div>
+          <div class="bar" role="img" aria-label="Screen area: walls, ground and sky 87.9 percent, creature sprites 5.6 percent, procedural decor 6.5 percent.">
+            <div class="seg s-surface" style="flex:0 0 87.9%" title="Walls, ground, ceilings and sky — 87.9% of the viewport"></div>
+            <div class="seg s-sprite"  style="flex:0 0 5.6%" title="Creature and NPC sprites — 5.6% of the viewport"></div>
+            <div class="seg s-decor"   style="flex:0 0 6.5%" title="Procedural decor — 6.5% of the viewport"></div>
+          </div>
+          <div class="bar-values" aria-hidden="true">
+            <div class="bv" style="flex:0 0 87.9%"><span class="v">87.9%</span><span class="t">Surfaces</span></div>
+            <div class="bv narrow" style="flex:0 0 5.6%"><span class="v">5.6%</span></div>
+            <div class="bv narrow" style="flex:0 0 6.5%"><span class="v">6.5%</span></div>
+          </div>
+          <p class="bar-note">5.6% creature sprites &middot; 6.5% procedural decor</p>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--c-surface)"></i>Walls, ground, ceilings, sky</span>
+        <span><i class="swatch" style="background:var(--c-sprite)"></i>Creature &amp; NPC sprites</span>
+        <span><i class="swatch" style="background:var(--c-decor)"></i>Procedural decor</span>
+      </div>
+
+      <figcaption class="note">
+        Screen area measured by rendering all 66 uniformly-random camera positions twice &mdash; once
+        whole, once with the billboard lists emptied &mdash; and differencing the framebuffers. Exact,
+        not estimated. The measurement took four minutes and was run on the last day.
+      </figcaption>
+
+      <details class="note">
+        <summary>Table view</summary>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Category</th><th class="n">Credits</th><th class="n">Share of budget</th><th class="n">Share of screen</th></tr></thead>
+            <tbody>
+              <tr><td>Creature &amp; NPC sprites</td><td class="n">725</td><td class="n">77.8%</td><td class="n">5.6%</td></tr>
+              <tr><td>Walls, ground, ceilings, sky</td><td class="n">207</td><td class="n">22.2%</td><td class="n">87.9%</td></tr>
+              <tr><td>Procedural decor</td><td class="n">0</td><td class="n">0.0%</td><td class="n">6.5%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </figure>
+
+    <div class="wrap stack">
+      <p>The creature art is genuinely good &mdash; twenty textured 3D meshes generated from text
+        prompts, rendered on a turntable to eight-direction sprite sheets, quantised to the palette.
+        A judge said so, and then said the thing that should have redirected the entire budget:</p>
+
+      <blockquote>
+        <span class="plate-label">Judge B &middot; round 14</span>
+        <p>&ldquo;The goblin is genuinely well-shaded &hellip; the door beside it is a flat tan
+          rectangle with a single ring for a handle.&rdquo;</p>
+      </blockquote>
+
+      <p>Excellent art on 5% of the screen does not raise the average. It lowers it, by giving the eye
+        a reference for how good the other 95% is not.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ causes -->
+  <section>
+    <p class="eyebrow">Findings</p>
+    <h2>Eight root causes, ordered by leverage</h2>
+    <p>Each is tagged with whether building on a real game engine &mdash; Godot, Unity &mdash; would
+      have prevented it, because that is the open question about what to do next.</p>
+
+    <div class="causes">
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 01</p>
+          <h3>Nobody who worked on it ever played it</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: highest</span>
+            <span class="chip eng-no">Engine fixes it: partly</span>
+          </div>
+        </div>
+        <p>In twenty-eight hours the build was compiled hundreds of times, screenshotted, measured,
+          judged and written about. It was never <em>played</em> &mdash; opened, walked around in,
+          looked at the way a person looks at a game. The client did that once, for about thirty
+          seconds, and produced a better diagnosis than twenty rounds of structured review.</p>
+        <p>An engine helps here only indirectly, and the indirect help is large: a Godot or Unity
+          editor gives the client a viewport they can move themselves, which removes the reviewer's
+          ability to control what gets reviewed.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 02</p>
+          <h3>The reviewers only ever saw frames the author chose</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: highest</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>Every judging round for twenty rounds looked at the same twenty-two screenshots, framed
+          and positioned by the person being reviewed. The shot list states the rule in bold:</p>
+        <blockquote>
+          <span class="plate-label">critique/SHOTLIST.md</span>
+          <p>&ldquo;<strong>The shots never change.</strong> Same camera, same seed, same clock &mdash;
+            so a difference between rounds is a change we made, not a frame we got lucky with.&rdquo;</p>
+        </blockquote>
+        <p>That reasoning is correct about comparability and silent about representativeness. Twenty-two
+          hand-framed compositions across twenty-two maps is a portfolio, not a sample. The judges were
+          honest and the findings were acted on; the diligence was simply applied to the wrong
+          population. The very first time the cameras were drawn uniformly at random instead
+          &mdash; sixty-six frames, written on the final day &mdash; the frames surfaced defects that
+          twenty rounds had never once put in front of anyone.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 03</p>
+          <h3>The ship gate had no power to stop anything</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: highest</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>Covered above: 38/38 FAIL, three named causes, an explicit written commitment that the next
+          round would not run until the largest one was fixed, and then six rounds of other work. The
+          gate was advisory in practice while being described as blocking in prose. Nothing in the
+          build system enforced it, so under time pressure it lost to cheaper work every single time.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 04</p>
+          <h3>Proxy metrics moved; the thing they stood for did not</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: high</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>Progress was reported as measured deltas, and every one of them is true. Wall anisotropy
+          4.73&nbsp;&rarr;&nbsp;2.15. Dungeon colour count 74&nbsp;&rarr;&nbsp;125. Sky self-identity
+          99.0%&nbsp;&rarr;&nbsp;39.2%. Duplicate item icons 22&nbsp;&rarr;&nbsp;0. Glyph advance
+          overruns 40&nbsp;&rarr;&nbsp;0.</p>
+        <p>Not one of those numbers measures whether the game looks like a game. They were built
+          because they were the only thing that could be seen without eyes, and then they were
+          optimised, and optimising a proxy is exactly how a proxy stops tracking the thing it
+          proxies. The reports led with the deltas. They should have led with a picture.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 05</p>
+          <h3>The budget went to the interesting surface, not the large one</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: high</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>78% of the credits on 5.6% of the pixels. Creature meshes are a satisfying art problem with
+          a visible artefact at the end; a seamless wall texture is a chore. The allocation followed
+          the interest. Four minutes of measurement on day one would have moved roughly six hundred
+          credits onto walls, ground and ceilings, and the dungeons &mdash; thirteen of the
+          twenty-two maps, and the ones that came out nearly interchangeable &mdash; would look like
+          different places.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 06</p>
+          <h3>Breadth was taken literally, so nothing reached quality</h3>
+          <div class="chips">
+            <span class="chip lev-high">Leverage: high</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>The brief said nine regions and a massive campaign, and that is what got built: 22 maps, 99
+          spells, quests, shops, training, save/load. Breadth multiplies whatever your quality bar is
+          by your map count; it never raises the bar. A single region, a single town and a single
+          dungeon at the target standard &mdash; shown, approved, and only then replicated &mdash;
+          would have been a better answer to &ldquo;make it like MM6&rdquo; than twenty-two maps at
+          this standard. Proposing that trade was the job and it never happened.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 07</p>
+          <h3>A delivery constraint quietly bought a hand-written renderer</h3>
+          <div class="chips">
+            <span class="chip">Leverage: medium-high</span>
+            <span class="chip eng-yes">Engine fixes it: yes</span>
+          </div>
+        </div>
+        <p>One self-contained HTML file, no network, no external assets, playable on a phone. Each
+          clause is reasonable. Together they force a software rasteriser written from scratch in
+          JavaScript, which means personally reimplementing mipmapping, texture filtering, level of
+          detail, lighting, occlusion and collision &mdash; thirty years of solved problems, re-solved
+          badly, in a day. Most of the debugging time in this project went into that class of bug.</p>
+        <p>The constraint was accepted without ever being priced out loud. It should have been put to
+          the client on day one as a trade: <em>this constraint costs you roughly every rendering
+          feature shipped since 1996 &mdash; here is what that will look like.</em> This is the one
+          cause a real engine straightforwardly removes.</p>
+      </article>
+
+      <article class="cause">
+        <div class="cause-head">
+          <p class="cause-id">Cause 08</p>
+          <h3>Placeholders were given rationales instead of expiry dates</h3>
+          <div class="chips">
+            <span class="chip">Leverage: medium</span>
+            <span class="chip eng-no">Engine fixes it: no</span>
+          </div>
+        </div>
+        <p>The fallback creature painter carries this comment, written by its author, in the shipped
+          build:</p>
+        <blockquote>
+          <span class="plate-label">src/06b_sprites.js</span>
+          <p>&ldquo;Stand-in creature painter. Deliberately silhouette-first: a blob that reads at 40px
+            beats a detailed thing that does not.&rdquo;</p>
+        </blockquote>
+        <p>That is a defensible decision for a scaffold and an indefensible one for a shipped game, and
+          the comment is what let it be both. Three quest-giver roles and two monsters fell through to
+          it &mdash; including the archivist who hands out the main quest chain, the first person a
+          player ever talks to, rendered as a featureless brown mannequin with two dots for eyes. A
+          written justification is how a temporary thing becomes permanent: it converts a debt into a
+          decision, and decisions do not show up on any list of things still to do.</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============================================================ what worked -->
+  <section>
+    <p class="eyebrow">Salvage</p>
+    <h2>What worked, and should survive</h2>
+    <p>An autopsy that finds only failure is not being read carefully. Several things in this project
+      were right and are worth carrying into whatever comes next.</p>
+
+    <ul class="kept">
+      <li><span class="tick">&#9679;</span><span><strong>The discriminator design.</strong> Shuffling
+        your work with the real thing and asking a judge with no stake which is which is the best idea
+        in the project. It gives a single number, on a scale with a defined pass mark, that the person
+        being measured cannot flatter. It was correct. It was just not obeyed.</span></li>
+      <li><span class="tick">&#9679;</span><span><strong>The rules layer and its tests.</strong> 513
+        checks, byte-identical save/load, fully deterministic generation, and a campaign test that
+        plays to the ending and fails if the ending became unreachable. It caught three genuine
+        run-enders that no human tester would have found in the time available.</span></li>
+      <li><span class="tick">&#9679;</span><span><strong>The 3D asset pipeline.</strong> Text prompt
+        &rarr; textured mesh &rarr; eight-direction turnaround &rarr; palettised sprite, fully
+        automated. It produced the best-looking thing in the build. Forty meshes came out of it,
+        twenty of them in a T-pose ready to rig, and they are engine-agnostic.</span></li>
+      <li><span class="tick">&#9679;</span><span><strong>The spend discipline.</strong> A hard credit
+        ceiling checked before every paid call, never raised by the agent that was spending against it,
+        and a full per-call ledger. The budget did not overrun. It was misallocated, which is a
+        different failure with a different fix.</span></li>
+      <li><span class="tick">&#9679;</span><span><strong>Secret handling.</strong> API keys never left
+        a <code>chmod 600</code> file outside the repository, never entered an environment variable or
+        a command line, and a pre-commit scanner ran on every commit. Nothing leaked.</span></li>
+    </ul>
+
+    <div class="callout">
+      <p><strong>One near-miss worth recording.</strong> <code>assets/raw/</code> was gitignored on
+        the reasoning that generated output is a build input rather than an asset. That put 725 of the
+        932 credits &mdash; every mesh, every full-resolution texture &mdash; on a single ephemeral
+        container and nowhere else, one reclaim away from unrecoverable. It was caught on the last day
+        by accident. <em>If it cost money, it goes in the repository, whatever category it belongs
+        to.</em></p>
+    </div>
+  </section>
+
+  <!-- ============================================================ the question -->
+  <section>
+    <p class="eyebrow">The open question</p>
+    <h2>Should the next attempt be in Godot or Unity?</h2>
+
+    <p>Taking the eight causes at face value: an engine prevents one of them outright, helps
+      indirectly with a second, and does nothing at all for the other six. On that arithmetic alone
+      the answer is no, and the answer on that arithmetic alone is wrong.</p>
+
+    <p>What the arithmetic misses is that the one cause an engine removes &mdash; the hand-written
+      renderer &mdash; consumed most of the debugging hours, and that the indirect help is the largest
+      single lever in the list. An editor viewport makes the client a first-class reviewer. They can
+      move the camera themselves. That structurally destroys causes 01 and 02, which are the two
+      highest-leverage findings here, and it destroys them without depending on anyone's discipline.</p>
+
+    <div class="callout">
+      <p><strong>Use an engine next time &mdash; but not because the renderer was the problem.</strong>
+        Use it because it hands the person paying for the work a camera, and because every hour not
+        spent reimplementing mipmapping is an hour spent on art, which is what was actually
+        missing.</p>
+      <p>Go in with eyes open about what it does not solve: the walls looked like wallpaper because the
+        textures were procedural noise with no per-block variation, and they would look like wallpaper
+        in Unity too. Filtering is free in an engine. Art is not free anywhere.</p>
+    </div>
+
+    <p>And the delivery constraint has to be renegotiated explicitly, not silently. A Godot web export
+      is fifteen to forty megabytes of WebAssembly that needs a server &mdash; it is not one tappable
+      HTML file. That was the whole reason for the software renderer. If one file on a phone is the
+      hard requirement, an engine is not available and the honest plan is a much smaller game built
+      properly; if graphics are the hard requirement, the single file has to go. Both are fine. Picking
+      one out loud, on day one, is the part that did not happen.</p>
+  </section>
+
+  <!-- ============================================================ rules -->
+  <section>
+    <p class="eyebrow">Prescription</p>
+    <h2>Nine rules for the next attempt</h2>
+    <p>Ordered so that the ones which fail loudest come first.</p>
+
+    <ol class="rules">
+      <li><div class="rule-body">
+        <span class="rule-t">Play the build every round, before reading any number.</span>
+        <span class="rule-d">Not a capture of it. The build. If the person reviewing has not moved the
+          camera themselves that round, the review has not happened.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">The reviewed party never picks the sample.</span>
+        <span class="rule-d">Uniformly random camera positions, seeded so they are reproducible, across
+          every map. A fixed shot list is allowed only as a supplement, never as the sample.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Make the gate mechanically blocking.</span>
+        <span class="rule-d">A failing discriminator verdict fails the build. Not a note in a markdown
+          file &mdash; a red pipeline that refuses to produce an artefact. If it can be deferred, it
+          will be.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Measure coverage before allocating any art budget.</span>
+        <span class="rule-d">Render a hundred random frames, count what fraction of pixels each asset
+          class occupies, and spend in that proportion. Four minutes. It would have changed everything
+          about this project.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Vertical slice before breadth, with an explicit sign-off.</span>
+        <span class="rule-d">One region, one town, one dungeon at the target standard, shown and
+          approved. Nothing replicates until it is. Breadth multiplies the quality bar; it never raises
+          it.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Price every constraint out loud, on day one.</span>
+        <span class="rule-d">Name what a requirement forbids as well as what it requires, and give the
+          trade to the person whose call it is. &ldquo;One self-contained file&rdquo; is a rendering
+          decision wearing a packaging costume.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Placeholders get a failing test, never a justifying comment.</span>
+        <span class="rule-d">If it is temporary, something red says so until it is replaced. A comment
+          explaining why the stand-in is reasonable is how the stand-in ships.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Lead every report with an unedited frame.</span>
+        <span class="rule-d">Metrics go underneath, as supporting evidence. If the picture and the
+          number disagree, the picture is right and the number needs replacing.</span>
+      </div></li>
+      <li><div class="rule-body">
+        <span class="rule-t">Escalate a red verdict the hour it arrives.</span>
+        <span class="rule-d">A cold panel scored this project 2/10 thirteen hours before it ended.
+          That is the moment to stop and put the options to the client, not to start the next round of
+          the same loop.</span>
+      </div></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+
+  <footer class="stack-s">
+    <p>Compiled from the repository's own records: 66 commits, 764 lines of critique dispositions, the
+      120-entry spend ledger, and 66 uniformly-random frames captured after the project was closed.
+      Every figure quoted here is measured rather than recalled.</p>
+    <p>The generated art &mdash; 40 textured meshes, 22 source textures, 110 palettised sprites &mdash;
+      is preserved and engine-agnostic.</p>
+  </footer>
+</main>
